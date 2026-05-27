@@ -1,0 +1,16 @@
+project_id = "execute"
+
+[functions.invoke-llm]
+verify_jwt = true
+
+[functions.deleteUserData]
+verify_jwt = true
+
+[functions.stripeCreateCheckout]
+verify_jwt = true
+
+[functions.stripeCreatePortal]
+verify_jwt = true
+
+[functions.stripeWebhook]
+verify_jwt = false
