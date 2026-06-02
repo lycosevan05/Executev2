@@ -1,5 +1,10 @@
 // @ts-nocheck
 import { createClient } from '@supabase/supabase-js';
+import { getPlatform } from '@/lib/platform';
+
+// Custom URL scheme registered in ios/App/App/Info.plist. Must also be
+// allow-listed in Supabase Dashboard → Authentication → URL Configuration.
+const IOS_OAUTH_REDIRECT = 'com.executelabs.execute://login-callback';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -329,11 +334,33 @@ export const backend = {
       if (error) throw toBackendError(error, 400);
       return { ok: true };
     },
-    async loginWithOAuth(provider, redirectTo = window.location.origin) {
+    async loginWithOAuth(provider, redirectTo) {
       const client = requireSupabase();
+      const isIOS = getPlatform() === 'ios';
+
+      if (isIOS) {
+        // On iOS we can't let Supabase navigate window.location to a Google
+        // URL — that lands in Safari with no way back into the app. Instead
+        // we ask Supabase to build the URL, open it in an in-app browser,
+        // and rely on the appUrlOpen deep-link listener (AuthContext) to
+        // catch the callback and exchange the code for a session.
+        const { data, error } = await client.auth.signInWithOAuth({
+          provider,
+          options: {
+            redirectTo: IOS_OAUTH_REDIRECT,
+            skipBrowserRedirect: true,
+          },
+        });
+        if (error) throw toBackendError(error, 400);
+        if (!data?.url) throw toBackendError({ message: 'No OAuth URL returned by Supabase.' }, 500);
+        const { Browser } = await import('@capacitor/browser');
+        await Browser.open({ url: data.url, presentationStyle: 'popover' });
+        return { ok: true };
+      }
+
       const { error } = await client.auth.signInWithOAuth({
         provider,
-        options: { redirectTo },
+        options: { redirectTo: redirectTo || window.location.origin },
       });
       if (error) throw toBackendError(error, 400);
       return { ok: true };

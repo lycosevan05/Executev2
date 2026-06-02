@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { appCache } from '@/lib/appCache';
 import { backend, isSupabaseConfigured, supabase, supabaseConfigError } from '@/api/backendClient';
+import { getPlatform } from '@/lib/platform';
+import { bustSubscriptionCache } from '@/lib/subscription';
 
 const AuthContext = createContext();
 
@@ -111,6 +113,114 @@ export const AuthProvider = ({ children }) => {
 
     return () => data?.subscription?.unsubscribe();
   }, [checkUserAuth]);
+
+  // ─── iOS OAuth deep-link bridge ────────────────────────────────────────────
+  // When the user finishes Google/Apple sign-in inside the in-app Capacitor
+  // Browser, Supabase redirects to com.executelabs.execute://login-callback?...
+  // iOS hands that URL to the app via the `appUrlOpen` event. We close the
+  // browser and ask Supabase to exchange the auth code for a session.
+  useEffect(() => {
+    if (getPlatform() !== 'ios') return undefined;
+
+    let cleanup = null;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { App } = await import('@capacitor/app');
+        if (cancelled) return;
+        const handle = await App.addListener('appUrlOpen', async ({ url }) => {
+          if (!url || !url.startsWith('com.executelabs.execute://login-callback')) return;
+          try {
+            const { Browser } = await import('@capacitor/browser');
+            await Browser.close();
+          } catch { /* browser may already be closed */ }
+          try {
+            if (!supabase) return;
+            // Supabase returns auth payload either as a URL fragment
+            // (#access_token=...&refresh_token=... — "implicit" flow) or as a
+            // query (?code=... — PKCE). Handle both.
+            const hashIdx = url.indexOf('#');
+            if (hashIdx !== -1 && url.includes('access_token=')) {
+              const params = new URLSearchParams(url.slice(hashIdx + 1));
+              const access_token = params.get('access_token');
+              const refresh_token = params.get('refresh_token');
+              if (access_token && refresh_token) {
+                await supabase.auth.setSession({ access_token, refresh_token });
+                await checkUserAuth();
+                return;
+              }
+            }
+            if (url.includes('code=')) {
+              await supabase.auth.exchangeCodeForSession(url);
+              await checkUserAuth();
+            }
+          } catch (err) {
+            console.warn('[Auth] OAuth callback processing failed:', err);
+          }
+        });
+        cleanup = () => handle.remove();
+      } catch (err) {
+        console.warn('[Auth] could not attach appUrlOpen listener:', err);
+      }
+    })();
+
+    return () => { cancelled = true; cleanup?.(); };
+  }, [checkUserAuth]);
+
+  // ─── RevenueCat (iOS native IAP) ───────────────────────────────────────────
+  // Identify the signed-in user with RevenueCat so entitlements (and webhooks)
+  // are keyed by the same email we use in Supabase. Web/Android builds skip
+  // this entirely — the dynamic import is never resolved off-iOS.
+  useEffect(() => {
+    if (getPlatform() !== 'ios') return undefined;
+
+    let cancelled = false;
+    const email = user?.email;
+
+    (async () => {
+      try {
+        const rc = await import('@/lib/revenuecat');
+        if (cancelled) return;
+        if (email) {
+          await rc.loginRevenueCat(email);
+        } else {
+          // Signed out — drop the RC identity so the next sign-in re-attaches.
+          await rc.logoutRevenueCat();
+        }
+      } catch (err) {
+        console.warn('[RevenueCat] login/logout failed:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [user?.email]);
+
+  // Listen for out-of-band entitlement updates (renewal, cancellation, refund
+  // happening in iOS Settings while app is open). Busting the cache means the
+  // next useSubscription render fetches fresh data. The dispatched window
+  // event will be picked up by useSubscription once preview mode is removed.
+  useEffect(() => {
+    if (getPlatform() !== 'ios') return undefined;
+
+    let listenerHandle = null;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const rc = await import('@/lib/revenuecat');
+        if (cancelled) return;
+        listenerHandle = await rc.addCustomerInfoListener(() => {
+          bustSubscriptionCache();
+          window.dispatchEvent(new CustomEvent('execute:subscription-changed'));
+        });
+      } catch (err) {
+        console.warn('[RevenueCat] could not attach customerInfo listener:', err);
+      }
+    })();
+
+    return () => { cancelled = true; /* RC listener is process-lifetime; no remove API on the Capacitor plugin */ };
+  }, []);
 
   const loginWithOtp = useCallback(async (email) => {
     await backend.auth.loginWithOtp(email);

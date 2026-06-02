@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { useStripe, PaymentRequestButtonElement } from '@stripe/react-stripe-js';
 import { Loader2, Sparkles } from 'lucide-react';
+import { getPlatform } from '@/lib/platform';
 
 const ACCENT = '#c8e000';
 
@@ -19,7 +20,13 @@ export default function ApplePayButton({ priceAmountCents = 1499, onFallback, di
   const [canShow, setCanShow] = useState(false);
   const [checking, setChecking] = useState(true);
 
+  // On iOS (native app) Apple requires StoreKit IAP for digital subscriptions.
+  // The native StoreKit flow is rendered by Billing.jsx instead, so this
+  // Stripe-based component must not render.
+  const isIOSNative = getPlatform() === 'ios';
+
   useEffect(() => {
+    if (isIOSNative) return;
     if (!stripe) return;
 
     const pr = stripe.paymentRequest({
@@ -49,7 +56,9 @@ export default function ApplePayButton({ priceAmountCents = 1499, onFallback, di
       ev.complete('success');
       onFallback?.();
     });
-  }, [stripe]);
+  }, [stripe, isIOSNative]);
+
+  if (isIOSNative) return null;
 
   if (checking) {
     return (

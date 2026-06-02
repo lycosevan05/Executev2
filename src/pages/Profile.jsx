@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, LogOut, User, Target, Utensils, Dumbbell, ShieldAlert, Smartphone, Brain, Plus, X, Check, Ruler, Loader2, Crown, Sparkles, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useSubscription } from '@/hooks/useSubscription';
+import { upsertUserSubscription } from '@/lib/subscription';
 import { backend } from '@/api/backendClient';
 import { getUnitSystem, setUnitSystem, UNIT_SYSTEMS } from '@/lib/units';
 import {
@@ -684,7 +685,23 @@ function LimitationsPanel() {
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { isPremium, subscription, loading: subLoading } = useSubscription();
+  const { isPremium, subscription, loading: subLoading, refresh: refreshSubscription } = useSubscription();
+  const [grantingTestAccess, setGrantingTestAccess] = useState(false);
+
+  const handleTestAccess = async () => {
+    setGrantingTestAccess(true);
+    // Test-only bypass: grant Premium by writing the UserSubscription record the
+    // app gates on, without going through StoreKit/RevenueCat. Used while Apple
+    // is still processing the Paid Apps tax/banking info so the IAP rail is live.
+    await upsertUserSubscription({
+      plan: 'premium',
+      status: 'active',
+      provider: 'test_bypass',
+      current_period_end: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+    }).catch(() => {});
+    await refreshSubscription(true);
+    setGrantingTestAccess(false);
+  };
 
   const [activeSection, setActiveSection] = useState(() => {
     // Open section from query param on mount
@@ -879,6 +896,20 @@ export default function Profile() {
                   <ChevronRight size={16} style={{ color: isPremium ? '#4a4f4a' : '#d9d1c2' }} />
                 </button>
               </div>
+
+              {/* Test access — temporary bypass of StoreKit/RevenueCat while Apple
+                  processes the Paid Apps tax info. Lets test users unlock the full
+                  app now. Remove once in-app purchases are live. */}
+              {!isPremium && (
+                <button
+                  onClick={handleTestAccess}
+                  disabled={grantingTestAccess}
+                  className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold border"
+                  style={{ background: 'rgba(200,224,0,0.08)', borderColor: 'rgba(200,224,0,0.3)', color: ACCENT_DARK, opacity: grantingTestAccess ? 0.7 : 1 }}>
+                  {grantingTestAccess ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  {grantingTestAccess ? 'Unlocking…' : 'Unlock Full Access (Test)'}
+                </button>
+              )}
 
               {/* Reset app data */}
               <ResetAppDataButton />

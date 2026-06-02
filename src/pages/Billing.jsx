@@ -13,12 +13,13 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, CheckCircle2, AlertTriangle, ChevronLeft, Loader2,
-  Crown, CreditCard, Calendar,
+  Crown, CreditCard, Calendar, RotateCcw,
   Dumbbell, UtensilsCrossed, Camera, Activity, Brain, Target,
 } from 'lucide-react';
-import { backend } from '@/api/backendClient';
 import { useSubscription } from '@/hooks/useSubscription';
 import { bustSubscriptionCache } from '@/lib/subscription';
+import { purchase as startPurchase, openManageBilling, restorePurchases } from '@/lib/paymentClient';
+import { getPlatform } from '@/lib/platform';
 import PremiumPaywall from '@/components/premium/PremiumPaywall';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements } from '@stripe/react-stripe-js';
@@ -64,8 +65,10 @@ export default function Billing() {
   const { subscription, isPremium, hasBillingIssue, loading, refresh } = useSubscription();
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [showPaywall, setShowPaywall] = useState(false);
+  const isIOS = getPlatform() === 'ios';
 
   // Handle return from Stripe Checkout
   useEffect(() => {
@@ -81,14 +84,13 @@ export default function Billing() {
     setCheckoutLoading(true);
     setCheckoutError('');
     try {
-      const response = await backend.functions.invoke('stripeCreateCheckout', {});
-      if (response.data?.url) {
-        window.location.href = response.data.url;
-      } else {
-        setCheckoutError(response.data?.error || 'Could not start checkout. Please try again.');
+      // Web redirects to Stripe Checkout (never returns); iOS resolves inline.
+      const result = await startPurchase('monthly');
+      if (result?.ok && !result.redirected) {
+        await refresh(true);
       }
-    } catch {
-      setCheckoutError('Stripe is not yet configured. Please set up Stripe keys in the environment variables.');
+    } catch (err) {
+      setCheckoutError(err?.message || 'Could not start checkout. Please try again.');
     } finally {
       setCheckoutLoading(false);
     }
@@ -97,14 +99,24 @@ export default function Billing() {
   const handleManageBilling = async () => {
     setPortalLoading(true);
     try {
-      const response = await backend.functions.invoke('stripeCreatePortal', {});
-      if (response.data?.url) {
-        window.location.href = response.data.url;
-      }
+      await openManageBilling();
     } catch {
       // silently fail
     } finally {
       setPortalLoading(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    setRestoring(true);
+    setCheckoutError('');
+    try {
+      await restorePurchases();
+      await refresh(true);
+    } catch (err) {
+      setCheckoutError(err?.message || 'Could not restore purchases.');
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -250,13 +262,34 @@ export default function Billing() {
                         {checkoutError}
                       </p>
                     )}
-                    <Elements stripe={stripePromise}>
-                      <ApplePayButton
-                        priceAmountCents={1499}
-                        onFallback={handleUpgrade}
-                        disabled={checkoutLoading}
-                      />
-                    </Elements>
+                    {isIOS ? (
+                      <>
+                        <button
+                          onClick={handleUpgrade}
+                          disabled={checkoutLoading}
+                          className="w-full py-3.5 rounded-2xl text-sm font-black flex items-center justify-center gap-2"
+                          style={{ background: checkoutLoading ? 'rgba(200,224,0,0.5)' : ACCENT, color: '#141613' }}>
+                          {checkoutLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                          {checkoutLoading ? 'Starting…' : 'Upgrade to Premium — $14.99/month'}
+                        </button>
+                        <button
+                          onClick={handleRestore}
+                          disabled={restoring || checkoutLoading}
+                          className="w-full py-2.5 mt-1 text-xs font-semibold flex items-center justify-center gap-1.5"
+                          style={{ color: ACCENT_DARK }}>
+                          {restoring ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+                          {restoring ? 'Restoring…' : 'Restore Purchases'}
+                        </button>
+                      </>
+                    ) : (
+                      <Elements stripe={stripePromise}>
+                        <ApplePayButton
+                          priceAmountCents={1499}
+                          onFallback={handleUpgrade}
+                          disabled={checkoutLoading}
+                        />
+                      </Elements>
+                    )}
                     <p className="text-[10px] text-center mt-2" style={{ color: '#b8b4ac' }}>Cancel anytime. No hidden fees.</p>
                   </>
                 )}
@@ -306,19 +339,21 @@ export default function Billing() {
               </div>
             </div>
 
-            {/* Developer note */}
-            <div className="rounded-2xl border p-4"
-              style={{ background: 'rgba(176,90,58,0.04)', borderColor: 'rgba(176,90,58,0.15)' }}>
-              <p className="text-[10px] font-bold uppercase tracking-widest mb-1.5" style={{ color: '#b05a3a' }}>
-                Developer Note
-              </p>
-              <p className="text-xs leading-relaxed" style={{ color: '#91968e' }}>
-                To activate Stripe payments, add these to Supabase Dashboard → Settings → Environment Variables:
-                <br /><code className="font-mono">STRIPE_SECRET_KEY</code> · <code className="font-mono">STRIPE_PREMIUM_PRICE_ID</code> · <code className="font-mono">STRIPE_WEBHOOK_SECRET</code> · <code className="font-mono">APP_BASE_URL</code>
-                <br />Also set <code className="font-mono">VITE_STRIPE_PUBLISHABLE_KEY</code> for the frontend.
-                <br />Register the <code className="font-mono">stripeWebhook</code> function URL as a webhook in Stripe Dashboard.
-              </p>
-            </div>
+            {/* Developer note — web only (Stripe config) */}
+            {!isIOS && (
+              <div className="rounded-2xl border p-4"
+                style={{ background: 'rgba(176,90,58,0.04)', borderColor: 'rgba(176,90,58,0.15)' }}>
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-1.5" style={{ color: '#b05a3a' }}>
+                  Developer Note
+                </p>
+                <p className="text-xs leading-relaxed" style={{ color: '#91968e' }}>
+                  To activate Stripe payments, add these to Supabase Dashboard → Settings → Environment Variables:
+                  <br /><code className="font-mono">STRIPE_SECRET_KEY</code> · <code className="font-mono">STRIPE_PREMIUM_PRICE_ID</code> · <code className="font-mono">STRIPE_WEBHOOK_SECRET</code> · <code className="font-mono">APP_BASE_URL</code>
+                  <br />Also set <code className="font-mono">VITE_STRIPE_PUBLISHABLE_KEY</code> for the frontend.
+                  <br />Register the <code className="font-mono">stripeWebhook</code> function URL as a webhook in Stripe Dashboard.
+                </p>
+              </div>
+            )}
 
           </>
         )}

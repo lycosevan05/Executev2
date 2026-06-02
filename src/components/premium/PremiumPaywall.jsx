@@ -5,8 +5,10 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Sparkles, X, Zap, Dumbbell, UtensilsCrossed, Camera, Activity, Check } from 'lucide-react';
-import { backend } from '@/api/backendClient';
+import { Sparkles, X, Zap, Dumbbell, UtensilsCrossed, Camera, Activity, Check, RotateCcw } from 'lucide-react';
+import { purchase as startPurchase, restorePurchases } from '@/lib/paymentClient';
+import { getPlatform } from '@/lib/platform';
+import { useSubscription } from '@/hooks/useSubscription';
 
 const ACCENT = '#c8e000';
 const ACCENT_DARK = '#8ea400';
@@ -36,23 +38,44 @@ const BENEFITS = [
 
 export default function PremiumPaywall({ onClose, context = '' }) {
   const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState('');
+  const [step, setStep] = useState('');
   const [plan, setPlan] = useState('annual');
+  const { refresh } = useSubscription();
+  const isIOS = getPlatform() === 'ios';
 
   const handleUpgrade = async () => {
     setLoading(true);
     setError('');
+    setStep('');
     try {
-      const response = await backend.functions.invoke('stripeCreateCheckout', { plan });
-      if (response.data?.url) {
-        window.location.href = response.data.url;
-      } else {
-        setError(response.data?.error || 'Could not start checkout. Please try again.');
+      const result = await startPurchase(plan, setStep);
+      // Web path redirects to Stripe Checkout and never resolves here.
+      // iOS path resolves inline after StoreKit completes — refresh entitlement and close.
+      if (result?.ok) {
+        await refresh?.(true);
+        onClose?.();
       }
     } catch (err) {
-      setError('Stripe is not yet configured. Please contact support or try again later.');
+      setError(err?.message || 'Could not start checkout. Please try again.');
     } finally {
       setLoading(false);
+      setStep('');
+    }
+  };
+
+  const handleRestore = async () => {
+    setRestoring(true);
+    setError('');
+    try {
+      await restorePurchases();
+      await refresh?.(true);
+      onClose?.();
+    } catch (err) {
+      setError(err?.message || 'Could not restore purchases.');
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -206,6 +229,20 @@ export default function PremiumPaywall({ onClose, context = '' }) {
               <><Sparkles size={16} /> Start My Plan</>
             )}
           </motion.button>
+
+          {loading && step && (
+            <p className="text-[11px] text-center font-mono" style={{ color: '#91968e' }}>{step}</p>
+          )}
+
+          {isIOS && (
+            <button onClick={handleRestore}
+              disabled={restoring || loading}
+              className="w-full py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"
+              style={{ color: ACCENT_DARK }}>
+              {restoring ? <Zap size={12} className="animate-pulse" /> : <RotateCcw size={12} />}
+              {restoring ? 'Restoring…' : 'Restore Purchases'}
+            </button>
+          )}
 
           {onClose && (
             <button onClick={onClose}

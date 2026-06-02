@@ -10,6 +10,16 @@ export default defineConfig({
   plugins: [
     react(),
   ],
+  build: {
+    // Bundle all CSS into a single stylesheet loaded upfront from index.html
+    // instead of per-async-chunk CSS. Capacitor's WKWebView (capacitor://
+    // scheme) sometimes never fires the `load` event on dynamically injected
+    // <link rel="stylesheet"> elements, which makes Vite's preload helper hang
+    // forever — freezing any dynamic import() whose chunk carries a CSS dep
+    // (e.g. @revenuecat/purchases-capacitor's web paywall CSS). Disabling CSS
+    // code-splitting removes the CSS dep from async chunks so imports resolve.
+    cssCodeSplit: false,
+  },
   resolve: {
     alias: [
       { find: '@', replacement: path.resolve(__dirname, './src') },
