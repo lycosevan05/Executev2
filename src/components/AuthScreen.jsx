@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Mail, Loader2, CheckCircle2, AlertTriangle, Apple } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 
@@ -138,6 +139,12 @@ export default function AuthScreen({ missingConfig = false }) {
             {error ? <p className="text-xs text-red-600 pt-1">{error}</p> : null}
           </div>
         )}
+
+        <div className="flex items-center justify-center gap-3 pt-5 mt-4 border-t" style={{ borderColor: '#e8e1d4' }}>
+          <Link to="/privacy" className="text-[11px] font-medium underline" style={{ color: '#91968e' }}>Privacy Policy</Link>
+          <span className="text-[11px]" style={{ color: '#d9d1c2' }}>·</span>
+          <Link to="/terms" className="text-[11px] font-medium underline" style={{ color: '#91968e' }}>Terms</Link>
+        </div>
       </div>
     </div>
   );

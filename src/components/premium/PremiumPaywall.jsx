@@ -4,6 +4,7 @@
  */
 
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Sparkles, X, Zap, Dumbbell, UtensilsCrossed, Camera, Activity, Check, RotateCcw } from 'lucide-react';
 import { purchase as startPurchase, restorePurchases } from '@/lib/paymentClient';
@@ -43,7 +44,10 @@ export default function PremiumPaywall({ onClose, context = '' }) {
   const [step, setStep] = useState('');
   const [plan, setPlan] = useState('annual');
   const { refresh } = useSubscription();
+  const navigate = useNavigate();
   const isIOS = getPlatform() === 'ios';
+
+  const goTo = (path) => { onClose?.(); navigate(path); };
 
   const handleUpgrade = async () => {
     setLoading(true);
@@ -252,9 +256,14 @@ export default function PremiumPaywall({ onClose, context = '' }) {
             </button>
           )}
 
-          <p className="text-xs text-center pb-2" style={{ color: '#b8b4ac' }}>
-            Cancel anytime. No hidden fees.
+          <p className="text-[11px] leading-relaxed text-center" style={{ color: '#b8b4ac' }}>
+            Subscriptions auto-renew until canceled. Cancel anytime in your account settings. Payment is charged to your App Store account.
           </p>
+          <div className="flex items-center justify-center gap-3 pb-2">
+            <button onClick={() => goTo('/privacy')} className="text-[11px] font-medium underline" style={{ color: '#91968e' }}>Privacy Policy</button>
+            <span className="text-[11px]" style={{ color: '#d9d1c2' }}>·</span>
+            <button onClick={() => goTo('/terms')} className="text-[11px] font-medium underline" style={{ color: '#91968e' }}>Terms</button>
+          </div>
         </div>
       </motion.div>
     </motion.div>

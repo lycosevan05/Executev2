@@ -7,7 +7,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, LogOut, User, Target, Utensils, Dumbbell, ShieldAlert, Smartphone, Brain, Plus, X, Check, Ruler, Loader2, Crown, Sparkles, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useSubscription } from '@/hooks/useSubscription';
-import { upsertUserSubscription } from '@/lib/subscription';
 import { backend } from '@/api/backendClient';
 import { getUnitSystem, setUnitSystem, UNIT_SYSTEMS } from '@/lib/units';
 import {
@@ -614,7 +613,7 @@ function UnitsPanel() {
 
 function IntegrationsPanel() {
   const PROVIDERS = [
-    { id: 'apple_health', label: 'Apple Health', desc: 'Steps, sleep, heart rate, calories, workouts', icon: '🍎', available: true },
+    { id: 'apple_health', label: 'Apple Health', desc: 'Steps, sleep, heart rate, calories, workouts', icon: '🍎', available: false },
     { id: 'oura', label: 'Oura Ring', desc: 'HRV, readiness, sleep stages, recovery score', icon: '💍', available: false },
     { id: 'garmin', label: 'Garmin', desc: 'Workouts, GPS, stress, body battery', icon: '⌚', available: false },
   ];
@@ -685,23 +684,7 @@ function LimitationsPanel() {
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { isPremium, subscription, loading: subLoading, refresh: refreshSubscription } = useSubscription();
-  const [grantingTestAccess, setGrantingTestAccess] = useState(false);
-
-  const handleTestAccess = async () => {
-    setGrantingTestAccess(true);
-    // Test-only bypass: grant Premium by writing the UserSubscription record the
-    // app gates on, without going through StoreKit/RevenueCat. Used while Apple
-    // is still processing the Paid Apps tax/banking info so the IAP rail is live.
-    await upsertUserSubscription({
-      plan: 'premium',
-      status: 'active',
-      provider: 'test_bypass',
-      current_period_end: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-    }).catch(() => {});
-    await refreshSubscription(true);
-    setGrantingTestAccess(false);
-  };
+  const { isPremium, subscription, loading: subLoading } = useSubscription();
 
   const [activeSection, setActiveSection] = useState(() => {
     // Open section from query param on mount
@@ -897,20 +880,6 @@ export default function Profile() {
                 </button>
               </div>
 
-              {/* Test access — temporary bypass of StoreKit/RevenueCat while Apple
-                  processes the Paid Apps tax info. Lets test users unlock the full
-                  app now. Remove once in-app purchases are live. */}
-              {!isPremium && (
-                <button
-                  onClick={handleTestAccess}
-                  disabled={grantingTestAccess}
-                  className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold border"
-                  style={{ background: 'rgba(200,224,0,0.08)', borderColor: 'rgba(200,224,0,0.3)', color: ACCENT_DARK, opacity: grantingTestAccess ? 0.7 : 1 }}>
-                  {grantingTestAccess ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                  {grantingTestAccess ? 'Unlocking…' : 'Unlock Full Access (Test)'}
-                </button>
-              )}
-
               {/* Reset app data */}
               <ResetAppDataButton />
 
@@ -930,7 +899,12 @@ export default function Profile() {
 
               <div className="text-center py-3">
                 <p className="text-xs font-medium" style={{ color: '#91968e' }}>Execute · Personal Performance OS</p>
-                <p className="text-[10px] mt-0.5" style={{ color: '#d9d1c2' }}>v2.0</p>
+                <div className="flex items-center justify-center gap-3 mt-2">
+                  <button onClick={() => navigate('/privacy')} className="text-[11px] font-medium underline" style={{ color: '#91968e' }}>Privacy Policy</button>
+                  <span className="text-[11px]" style={{ color: '#d9d1c2' }}>·</span>
+                  <button onClick={() => navigate('/terms')} className="text-[11px] font-medium underline" style={{ color: '#91968e' }}>Terms</button>
+                </div>
+                <p className="text-[10px] mt-1.5" style={{ color: '#d9d1c2' }}>v2.0</p>
               </div>
             </motion.div>
           ) : (
