@@ -40,3 +40,6 @@ xcuserdata/
 
 # Supabase local metadata
 supabase/.temp/
+
+# Claude Code local tooling
+.claude/
