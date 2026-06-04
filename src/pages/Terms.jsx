@@ -9,7 +9,7 @@ import { ChevronLeft } from 'lucide-react';
 const ACCENT_DARK = '#8ea400';
 const EFFECTIVE_DATE = 'June 3, 2026';
 const CONTACT_EMAIL = 'support@executelabs.app';
-const GOVERNING_LAW = '[Your State/Country]';
+const GOVERNING_LAW = 'British Columbia, Canada';
 
 function Section({ title, children }) {
   return (
