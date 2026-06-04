@@ -3,11 +3,11 @@
  * when they attempt to access a Premium AI feature.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Sparkles, X, Zap, Dumbbell, UtensilsCrossed, Camera, Activity, Check, RotateCcw } from 'lucide-react';
-import { purchase as startPurchase, restorePurchases } from '@/lib/paymentClient';
+import { purchase as startPurchase, restorePurchases, getOfferings } from '@/lib/paymentClient';
 import { getPlatform } from '@/lib/platform';
 import { useSubscription } from '@/hooks/useSubscription';
 
@@ -43,9 +43,31 @@ export default function PremiumPaywall({ onClose, context = '' }) {
   const [error, setError] = useState('');
   const [step, setStep] = useState('');
   const [plan, setPlan] = useState('annual');
+  // Live StoreKit prices on iOS so the displayed price matches App Store Connect
+  // and is localized to the user's storefront. Falls back to defaults on web or
+  // if offerings can't be loaded.
+  const [prices, setPrices] = useState({ annual: '$99.99', monthly: '$14.99' });
   const { refresh } = useSubscription();
   const navigate = useNavigate();
   const isIOS = getPlatform() === 'ios';
+
+  useEffect(() => {
+    if (!isIOS) return;
+    let cancelled = false;
+    getOfferings()
+      .then((offerings) => {
+        const pkgs = offerings?.current?.availablePackages || [];
+        const annual = pkgs.find(p => p.packageType === 'ANNUAL')?.product?.priceString;
+        const monthly = pkgs.find(p => p.packageType === 'MONTHLY')?.product?.priceString;
+        if (cancelled) return;
+        setPrices(prev => ({
+          annual: annual || prev.annual,
+          monthly: monthly || prev.monthly,
+        }));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isIOS]);
 
   const goTo = (path) => { onClose?.(); navigate(path); };
 
@@ -114,16 +136,12 @@ export default function PremiumPaywall({ onClose, context = '' }) {
           {/* Price */}
           <div className="flex items-baseline gap-2 mb-1">
             <span className="text-4xl font-black" style={{ color: '#ffffff' }}>
-              {plan === 'annual' ? '$99.99' : '$14.99'}
+              {plan === 'annual' ? prices.annual : prices.monthly}
             </span>
             <span className="text-base font-medium" style={{ color: '#91968e' }}>
               {plan === 'annual' ? '/ year' : '/ month'}
             </span>
           </div>
-          {plan === 'annual' && (
-            <p className="text-sm font-semibold mb-3" style={{ color: ACCENT }}>Only $8.33 / month</p>
-          )}
-
           <h2 className="text-xl font-black tracking-tight" style={{ color: '#ffffff', letterSpacing: '-0.02em' }}>
             Your adaptive performance plan
           </h2>
@@ -153,8 +171,7 @@ export default function PremiumPaywall({ onClose, context = '' }) {
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-sm font-bold" style={{ color: '#141613' }}>$99.99 <span className="font-normal text-xs" style={{ color: '#91968e' }}>/ year</span></p>
-                <p className="text-xs font-semibold" style={{ color: ACCENT_DARK }}>Save 44%</p>
+                <p className="text-sm font-bold" style={{ color: '#141613' }}>{prices.annual} <span className="font-normal text-xs" style={{ color: '#91968e' }}>/ year</span></p>
               </div>
             </button>
 
@@ -179,7 +196,7 @@ export default function PremiumPaywall({ onClose, context = '' }) {
                 <p className="text-sm font-bold" style={{ color: '#141613' }}>Monthly</p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-bold" style={{ color: '#141613' }}>$14.99 <span className="font-normal text-xs" style={{ color: '#91968e' }}>/ month</span></p>
+                <p className="text-sm font-bold" style={{ color: '#141613' }}>{prices.monthly} <span className="font-normal text-xs" style={{ color: '#91968e' }}>/ month</span></p>
                 <p className="text-xs" style={{ color: '#91968e' }}>Flexible access</p>
               </div>
             </button>

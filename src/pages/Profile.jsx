@@ -4,7 +4,7 @@ import ResetAppDataButton from '@/components/plan/ResetAppDataButton';
 
 const PAGE_KEY = 'profile';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, LogOut, User, Target, Utensils, Dumbbell, ShieldAlert, Smartphone, Brain, Plus, X, Check, Ruler, Loader2, Crown, Sparkles, Trash2 } from 'lucide-react';
+import { ChevronRight, LogOut, User, Target, Utensils, Dumbbell, ShieldAlert, Brain, Plus, X, Check, Ruler, Loader2, Crown, Sparkles, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useSubscription } from '@/hooks/useSubscription';
 import { backend } from '@/api/backendClient';
@@ -96,7 +96,6 @@ const SECTIONS = [
   { id: 'limitations', icon: ShieldAlert, label: 'Limitations', subtitle: 'Injuries and movement cautions' },
   { id: 'coaching', icon: Brain, label: 'Coaching Style', subtitle: 'How Execute coaches you' },
   { id: 'units', icon: Ruler, label: 'Units', subtitle: 'Imperial or metric measurements' },
-  { id: 'integrations', icon: Smartphone, label: 'Connected Data', subtitle: 'Apple Health, Oura, Garmin' },
 ];
 
 const GOAL_CATEGORIES = ['body', 'fitness', 'sleep', 'energy', 'nutrition', 'recovery', 'mental', 'habit'];
@@ -611,48 +610,6 @@ function UnitsPanel() {
   );
 }
 
-function IntegrationsPanel() {
-  const PROVIDERS = [
-    { id: 'apple_health', label: 'Apple Health', desc: 'Steps, sleep, heart rate, calories, workouts', icon: '🍎', available: false },
-    { id: 'oura', label: 'Oura Ring', desc: 'HRV, readiness, sleep stages, recovery score', icon: '💍', available: false },
-    { id: 'garmin', label: 'Garmin', desc: 'Workouts, GPS, stress, body battery', icon: '⌚', available: false },
-  ];
-  const [connected, setConnected] = useState({});
-
-  return (
-    <div className="space-y-3">
-      <p className="text-xs" style={{ color: '#91968e' }}>Connect devices and apps to reduce manual logging and improve recommendation accuracy.</p>
-      {PROVIDERS.map(p => (
-        <div key={p.id} className="p-4 rounded-2xl border" style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
-          <div className="flex items-start justify-between mb-2">
-            <div className="flex items-center gap-3">
-              <span className="text-xl">{p.icon}</span>
-              <div>
-                <p className="text-sm font-semibold" style={{ color: '#141613' }}>{p.label}</p>
-                <p className="text-xs" style={{ color: '#91968e' }}>{p.desc}</p>
-              </div>
-            </div>
-            {p.available ? (
-              <button onClick={() => setConnected(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
-                className="px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={{ background: connected[p.id] ? 'rgba(200,224,0,0.12)' : '#f2efe7', color: connected[p.id] ? ACCENT_DARK : '#91968e', border: `1px solid ${connected[p.id] ? 'rgba(200,224,0,0.3)' : '#e8e1d4'}` }}>
-                {connected[p.id] ? 'Connected' : 'Connect'}
-              </button>
-            ) : (
-              <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold" style={{ background: '#f2efe7', color: '#91968e' }}>Coming soon</span>
-            )}
-          </div>
-          {connected[p.id] && (
-            <div className="mt-2 pt-2 border-t text-xs" style={{ borderColor: '#f2efe7', color: '#5d635d' }}>
-              Connected · Syncing sleep, steps, heart rate. Last sync: just now.
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // -------- Limitations panel (reads InjuryProfile) --------
 
 function LimitationsPanel() {
@@ -732,7 +689,6 @@ export default function Profile() {
     limitations: <LimitationsPanel />,
     coaching: <CoachingPanel onSaved={handleSaved} />,
     units: <UnitsPanel />,
-    integrations: <IntegrationsPanel />,
   };
 
   return (
