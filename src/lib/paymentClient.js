@@ -21,17 +21,17 @@ import { bustSubscriptionCache } from '@/lib/subscription';
 
 const PLAN_TO_RC_IDENTIFIER = {
   annual: '$rc_annual',
-  monthly: '$rc_monthly',
+  monthly: '$rc_month',
 };
 
-// Reject if a native RevenueCat call doesn't settle — a silent hang here
-// almost always means StoreKit can't load the product (still propagating,
-// agreement not active, etc). A visible timeout beats a frozen button.
-function withTimeout(promise, ms, label) {
+// Reject if a native RevenueCat call doesn't settle. A visible timeout beats a
+// frozen button. The hint is step-specific so failures point at the real cause
+// instead of always blaming StoreKit/the Paid Apps agreement.
+function withTimeout(promise, ms, label, hint = '') {
   return Promise.race([
     promise,
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s — StoreKit could not load the product. Check that the Paid Apps agreement is active and products have propagated to sandbox.`)), ms)
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s.${hint ? ` ${hint}` : ''}`)), ms)
     ),
   ]);
 }
@@ -49,30 +49,35 @@ async function purchaseIOS(plan, onStep = () => {}) {
   }
 
   onStep('loading billing module…');
-  const rc = await withTimeout(import('@/lib/revenuecat'), 15000, 'Loading billing module');
+  const rc = await withTimeout(import('@/lib/revenuecat'), 15000, 'Loading billing module', 'The RevenueCat JS bundle failed to load in the WebView.');
 
   onStep('configuring RevenueCat (build v3)…');
   // Ensure the SDK is configured even if the startup login effect never ran
   // (e.g. session restored before the iOS effects mounted). Idempotent.
-  await withTimeout(rc.initRevenueCat(undefined, onStep), 15000, 'Configuring RevenueCat');
+  await withTimeout(rc.initRevenueCat(undefined, onStep), 15000, 'Configuring RevenueCat', 'The native SDK did not initialize — verify the API key and that Purchases is configured at launch.');
 
   onStep('fetching offerings…');
-  const offerings = await withTimeout(rc.getOfferingsRevenueCat(), 20000, 'Fetching offerings');
+  const offerings = await withTimeout(rc.getOfferingsRevenueCat(), 20000, 'Fetching offerings', 'StoreKit could not load products — check the Paid Apps agreement is active, the products are approved, and an offering is marked Current.');
   const current = offerings?.current;
   if (!current) {
     const ids = Object.keys(offerings?.all || {}).join(', ') || 'none';
     throw new Error(`No "current" offering in RevenueCat. Offerings found: ${ids}. Mark an offering as Current in the dashboard.`);
   }
   const identifier = PLAN_TO_RC_IDENTIFIER[plan] || PLAN_TO_RC_IDENTIFIER.annual;
+  const wantType = plan === 'monthly' ? 'MONTHLY' : 'ANNUAL';
   const available = current.availablePackages || [];
   onStep(`offering "${current.identifier}": ${available.length} pkg(s)`);
-  const pkg = available.find(p => p.identifier === identifier);
+  // Match by packageType first (robust to $rc_month vs $rc_monthly naming),
+  // then fall back to the literal package identifier.
+  const pkg =
+    available.find(p => p.packageType === wantType) ||
+    available.find(p => p.identifier === identifier);
   if (!pkg) {
     const have = available.map(p => p.identifier).join(', ') || 'none';
-    throw new Error(`Package ${identifier} not in offering "${current.identifier}". Available: ${have}.`);
+    throw new Error(`No ${wantType} package in offering "${current.identifier}". Available: ${have}.`);
   }
   onStep('presenting StoreKit sheet…');
-  const result = await withTimeout(rc.purchasePackageRevenueCat(pkg), 60000, 'StoreKit purchase');
+  const result = await withTimeout(rc.purchasePackageRevenueCat(pkg), 60000, 'StoreKit purchase', 'The App Store purchase sheet did not complete.');
   bustSubscriptionCache();
   return { ok: true, transaction: result };
 }

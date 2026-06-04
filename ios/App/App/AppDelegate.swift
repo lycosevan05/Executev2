@@ -7,7 +7,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // RevenueCat is configured through the Capacitor plugin in JS
+        // (src/lib/revenuecat.js → ensureConfigured → Purchases.configure).
+        // Do NOT configure RevenueCat natively here: AppDelegate's own
+        // RevenueCat instance is not the instance the plugin's
+        // PurchasesHybridCommon checks, so a native configure leaves the
+        // plugin unconfigured and logIn/getOfferings fatalError.
         return true
     }
 

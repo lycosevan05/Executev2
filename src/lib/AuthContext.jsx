@@ -9,6 +9,10 @@ const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Live, read-only RevenueCat customerInfo for instant-unlock gating.
+  // NEVER persisted by the client; the webhook remains the sole writer of the
+  // user_subscription table. This only mirrors the SDK's current entitlements.
+  const [rcCustomerInfo, setRcCustomerInfo] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isLoadingPublicSettings, setIsLoadingPublicSettings] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
@@ -183,10 +187,13 @@ export const AuthProvider = ({ children }) => {
         const rc = await import('@/lib/revenuecat');
         if (cancelled) return;
         if (email) {
-          await rc.loginRevenueCat(email);
+          // logIn returns LogInResult { customerInfo, created } — seed the live signal.
+          const res = await rc.loginRevenueCat(email);
+          if (!cancelled) setRcCustomerInfo(res?.customerInfo ?? null);
         } else {
           // Signed out — drop the RC identity so the next sign-in re-attaches.
           await rc.logoutRevenueCat();
+          if (!cancelled) setRcCustomerInfo(null);
         }
       } catch (err) {
         console.warn('[RevenueCat] login/logout failed:', err);
@@ -210,7 +217,9 @@ export const AuthProvider = ({ children }) => {
       try {
         const rc = await import('@/lib/revenuecat');
         if (cancelled) return;
-        listenerHandle = await rc.addCustomerInfoListener(() => {
+        listenerHandle = await rc.addCustomerInfoListener((info) => {
+          // Retain the pushed customerInfo as the freshest live unlock signal.
+          setRcCustomerInfo(info?.customerInfo ?? info ?? null);
           bustSubscriptionCache();
           window.dispatchEvent(new CustomEvent('execute:subscription-changed'));
         });
@@ -252,6 +261,7 @@ export const AuthProvider = ({ children }) => {
     <AuthContext.Provider value={{
       user,
       isAuthenticated,
+      rcCustomerInfo,
       isLoadingAuth,
       isLoadingPublicSettings,
       authChecked,

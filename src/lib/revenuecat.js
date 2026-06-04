@@ -7,73 +7,85 @@
  * web bundle never pulls the native plugin. Only call into this module
  * when `getPlatform() === 'ios'` (see paymentClient.js).
  *
- * Env var required (set in .env / Vercel for native builds):
- *   VITE_REVENUECAT_IOS_KEY=appl_xxxxxxxxxxxx
+ * The SDK is configured THROUGH the Capacitor plugin here (ensureConfigured),
+ * not natively in AppDelegate. A native `Purchases.configure` in AppDelegate
+ * configures the app target's own RevenueCat instance, which is NOT the same
+ * instance the plugin's PurchasesHybridCommon checks — so the plugin would
+ * fatalError with "Purchases has not been configured" on the first logIn.
  */
 
-const REVENUECAT_IOS_KEY = import.meta.env.VITE_REVENUECAT_IOS_KEY || '';
+let _modulePromise = null;
+let _configurePromise = null;
 
-let _initialized = false;
-let _purchasesPromise = null;
+// Resolve to the ES module *namespace*, never to the Capacitor `Purchases`
+// proxy. The proxy from registerPlugin() returns a native-method wrapper for
+// ANY property access — including `then` — so if a Promise (or an async
+// function's return) ever resolves *to* the proxy, the Promise machinery's
+// thenable check calls `proxy.then(resolve, reject)`, which dispatches a
+// phantom native bridge call that never calls back and deadlocks the await.
+// The module namespace has no `then`, so awaiting it is safe; callers then read
+// `.Purchases` synchronously and only await its methods (which return plain
+// objects).
+function loadModule() {
+  if (!_modulePromise) _modulePromise = import('@revenuecat/purchases-capacitor');
+  return _modulePromise;
+}
 
-async function loadPurchases() {
-  if (!_purchasesPromise) {
-    _purchasesPromise = import('@revenuecat/purchases-capacitor').then(m => m.Purchases);
+// Configure the plugin's RevenueCat instance exactly once. EVERY native call
+// (logIn, getOfferings, purchasePackage, listeners) requires this first, or the
+// plugin fatalErrors with "Purchases has not been configured". Guarded by a
+// shared promise so concurrent callers configure only once.
+function ensureConfigured() {
+  if (!_configurePromise) {
+    _configurePromise = (async () => {
+      const { Purchases } = await loadModule();
+      const apiKey = import.meta.env.VITE_REVENUECAT_IOS_KEY;
+      if (!apiKey) throw new Error('VITE_REVENUECAT_IOS_KEY is empty — cannot configure RevenueCat.');
+      await Purchases.configure({ apiKey });
+    })();
   }
-  return _purchasesPromise;
+  return _configurePromise;
 }
 
 /**
  * Configure the RevenueCat SDK. Idempotent — safe to call repeatedly.
- * Pass the signed-in user's email as `appUserId` so RevenueCat webhooks
- * arrive at our backend keyed by the same identifier we use in Supabase.
  */
 export async function initRevenueCat(appUserId, onStep = () => {}) {
-  if (_initialized) return;
-  if (!REVENUECAT_IOS_KEY) {
-    console.warn('[RevenueCat] VITE_REVENUECAT_IOS_KEY not set; skipping init.');
-    return;
-  }
-  onStep('rc: importing plugin…');
-  const Purchases = await loadPurchases();
-  onStep('rc: plugin imported, dispatching configure…');
-  // The native `configure` method is registered with CAPPluginReturnNone, so
-  // it sends no callback to JS — awaiting it never resolves under Capacitor 8
-  // (the promise hangs forever). Native configuration is synchronous, so we
-  // fire it without awaiting and immediately treat the SDK as configured.
-  Purchases.configure({
-    apiKey: REVENUECAT_IOS_KEY,
-    appUserID: appUserId || undefined,
-  });
-  onStep('rc: configure dispatched');
-  _initialized = true;
+  onStep('rc: configuring plugin…');
+  await ensureConfigured();
+  onStep('rc: ready (configured)');
 }
 
 export async function loginRevenueCat(appUserId) {
   if (!appUserId) return null;
-  const Purchases = await loadPurchases();
-  if (!_initialized) await initRevenueCat(appUserId);
+  await ensureConfigured();
+  const { Purchases } = await loadModule();
   return Purchases.logIn({ appUserID: appUserId });
 }
 
 export async function logoutRevenueCat() {
-  if (!_initialized) return null;
-  const Purchases = await loadPurchases();
+  // Nothing to log out of if we never configured (e.g. startup while signed out).
+  if (!_configurePromise) return null;
+  await ensureConfigured();
+  const { Purchases } = await loadModule();
   return Purchases.logOut();
 }
 
 export async function getOfferingsRevenueCat() {
-  const Purchases = await loadPurchases();
+  await ensureConfigured();
+  const { Purchases } = await loadModule();
   return Purchases.getOfferings();
 }
 
 export async function purchasePackageRevenueCat(aPackage) {
-  const Purchases = await loadPurchases();
+  await ensureConfigured();
+  const { Purchases } = await loadModule();
   return Purchases.purchasePackage({ aPackage });
 }
 
 export async function restorePurchasesRevenueCat() {
-  const Purchases = await loadPurchases();
+  await ensureConfigured();
+  const { Purchases } = await loadModule();
   return Purchases.restorePurchases();
 }
 
@@ -82,11 +94,13 @@ export async function restorePurchasesRevenueCat() {
  * removeCustomerInfoListener() for cleanup.
  */
 export async function addCustomerInfoListener(callback) {
-  const Purchases = await loadPurchases();
+  await ensureConfigured();
+  const { Purchases } = await loadModule();
   return Purchases.addCustomerInfoUpdateListener(callback);
 }
 
 export async function getCustomerInfo() {
-  const Purchases = await loadPurchases();
+  await ensureConfigured();
+  const { Purchases } = await loadModule();
   return Purchases.getCustomerInfo();
 }
