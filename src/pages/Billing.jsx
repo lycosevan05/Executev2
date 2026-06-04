@@ -290,7 +290,14 @@ export default function Billing() {
                         />
                       </Elements>
                     )}
-                    <p className="text-[10px] text-center mt-2" style={{ color: '#b8b4ac' }}>Cancel anytime. No hidden fees.</p>
+                    <p className="text-[10px] leading-relaxed text-center mt-2" style={{ color: '#b8b4ac' }}>
+                      Subscriptions auto-renew until canceled. Cancel anytime in your account settings. Payment is charged to your App Store account.
+                    </p>
+                    <div className="flex items-center justify-center gap-3 mt-2">
+                      <button onClick={() => navigate('/privacy')} className="text-[10px] font-medium underline" style={{ color: '#91968e' }}>Privacy Policy</button>
+                      <span className="text-[10px]" style={{ color: '#d9d1c2' }}>·</span>
+                      <button onClick={() => navigate('/terms')} className="text-[10px] font-medium underline" style={{ color: '#91968e' }}>Terms</button>
+                    </div>
                   </>
                 )}
               </div>

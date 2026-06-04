@@ -30,6 +30,8 @@ import TrackingHistoryPage from './pages/TrackingHistoryPage';
 import PersonalizeQuestionnaire from './pages/PersonalizeQuestionnaire';
 import Billing from './pages/Billing';
 import Progress from './pages/Progress';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import Terms from './pages/Terms';
 
 
 // Auto-resume: if user has an in-progress workout and isn't already on the session screen, redirect them
@@ -178,7 +180,13 @@ function useIsMobileApp() {
 const AuthenticatedApp = () => {
   const { isAuthenticated, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
   const isMobileApp = useIsMobileApp();
+  const location = useLocation();
   useAutoResumeWorkout(isAuthenticated);
+
+  // Public legal pages are reachable without authentication so links on the
+  // sign-in screen (and the App Store metadata) always resolve.
+  if (location.pathname === '/privacy') return <PrivacyPolicy />;
+  if (location.pathname === '/terms') return <Terms />;
 
   // Run one-time migration of localStorage data → Supabase entities
   // Also pre-warm critical caches on boot so first navigation is instant
@@ -236,6 +244,8 @@ const AuthenticatedApp = () => {
         <Route path="/personalize" element={<PersonalizeQuestionnaire />} />
         <Route path="/billing" element={<Billing />} />
         <Route path="/progress" element={<Progress />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<Terms />} />
         <Route path="*" element={<PageNotFound />} />
       </Routes>
     </AppShell>
