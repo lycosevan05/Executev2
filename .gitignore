@@ -43,3 +43,6 @@ supabase/.temp/
 
 # Claude Code local tooling
 .claude/
+
+# Deep-review / analysis artifacts (may embed keys & transcripts)
+.analysis/

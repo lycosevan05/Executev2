@@ -340,7 +340,7 @@ function NutritionHistory() {
               <div className="min-w-0">
                 <p className="text-sm font-bold" style={{ color: '#141613' }}>{formatHistoryDateLabel(log.date)}</p>
                 <p className="text-[11px] mt-0.5" style={{ color: '#91968e' }}>
-                  {cals} kcal · {protein}g P · {carbs}g C · {fats}g F
+                  {Math.round(cals)} kcal · {Math.round(protein)}g P · {Math.round(carbs)}g C · {Math.round(fats)}g F
                 </p>
               </div>
               {isOpen
@@ -370,7 +370,7 @@ function NutritionHistory() {
                         <div key={m.label} className="text-center p-2 rounded-xl"
                           style={{ background: '#f9f7f3', border: '1px solid #e8e1d4' }}>
                           <div className="text-sm font-black" style={{ color: m.color }}>
-                            {m.val}<span className="text-[9px] font-normal">{m.unit === 'kcal' ? '' : m.unit}</span>
+                            {Math.round(m.val)}<span className="text-[9px] font-normal">{m.unit === 'kcal' ? '' : m.unit}</span>
                           </div>
                           <div className="text-[9px]" style={{ color: '#91968e' }}>{m.label}</div>
                         </div>
@@ -418,7 +418,7 @@ function NutritionHistory() {
                                   )}
                                 </div>
                                 <p className="text-xs font-bold ml-2 flex-shrink-0" style={{ color: ACCENT_DARK }}>
-                                  {f.total_calories || 0} kcal
+                                  {Math.round(f.total_calories || 0)} kcal
                                 </p>
                               </div>
                             );
@@ -869,13 +869,13 @@ export default function Nutrition() {
                         <div className="flex gap-2">
                           {CALORIE_GOAL && (
                             <div className="flex-1 px-3 py-2 rounded-xl border text-center" style={{ background: '#f9f7f3', borderColor: '#e8e1d4' }}>
-                              <p className="text-sm font-black" style={{ color: '#141613' }}>{CALORIE_GOAL}</p>
+                              <p className="text-sm font-black" style={{ color: '#141613' }}>{Math.round(CALORIE_GOAL)}</p>
                               <p className="text-[10px]" style={{ color: '#91968e' }}>kcal target</p>
                             </div>
                           )}
                           {PROTEIN_GOAL && (
                             <div className="flex-1 px-3 py-2 rounded-xl border text-center" style={{ background: '#f9f7f3', borderColor: '#e8e1d4' }}>
-                              <p className="text-sm font-black" style={{ color: '#141613' }}>{PROTEIN_GOAL}g</p>
+                              <p className="text-sm font-black" style={{ color: '#141613' }}>{Math.round(PROTEIN_GOAL)}g</p>
                               <p className="text-[10px]" style={{ color: '#91968e' }}>protein target</p>
                             </div>
                           )}
@@ -975,7 +975,7 @@ export default function Nutrition() {
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-xs font-bold uppercase tracking-widest" style={{ color: '#91968e' }}>Today's Targets</p>
                       <span className="text-xs font-bold" style={{ color: ACCENT_DARK }}>
-                        {totalCals}{CALORIE_GOAL ? ` / ${CALORIE_GOAL}` : ''} kcal
+                        {Math.round(totalCals)}{CALORIE_GOAL ? ` / ${Math.round(CALORIE_GOAL)}` : ''} kcal
                       </span>
                     </div>
                     <div className="h-2 rounded-full overflow-hidden mb-3" style={{ background: '#e8e1d4' }}>
@@ -986,8 +986,8 @@ export default function Nutrition() {
                     <div className="grid grid-cols-3 gap-2">
                       {[{ label: 'Protein', v: totalProtein, g: PROTEIN_GOAL }, { label: 'Carbs', v: totalCarbs, g: CARBS_GOAL }, { label: 'Fats', v: totalFats, g: FATS_GOAL }].map(m => (
                         <div key={m.label} className="text-center">
-                          <div className="text-sm font-bold" style={{ color: '#141613' }}>{m.v}<span className="text-[10px] font-normal">g</span></div>
-                          <div className="text-[10px]" style={{ color: '#91968e' }}>{m.label}{m.g ? ` · ${m.g}g` : ''}</div>
+                          <div className="text-sm font-bold" style={{ color: '#141613' }}>{Math.round(m.v)}<span className="text-[10px] font-normal">g</span></div>
+                          <div className="text-[10px]" style={{ color: '#91968e' }}>{m.label}{m.g ? ` · ${Math.round(m.g)}g` : ''}</div>
                           <div className="h-1 rounded-full mt-1 overflow-hidden" style={{ background: '#e8e1d4' }}>
                             <div className="h-full rounded-full" style={{ width: m.g ? `${Math.min((m.v / m.g) * 100, 100)}%` : '0%', background: ACCENT_DARK }} />
                           </div>
@@ -1110,8 +1110,8 @@ export default function Nutrition() {
                             </div>
                         </div>
                         <div className="flex gap-3 mb-2.5">
-                          <span className="text-xs font-semibold" style={{ color: '#141613' }}>{meal?.calories} kcal</span>
-                          <span className="text-xs" style={{ color: '#91968e' }}>{meal?.protein}g P · {meal?.carbs}g C · {meal?.fats || meal?.fat}g F</span>
+                          <span className="text-xs font-semibold" style={{ color: '#141613' }}>{Math.round(meal?.calories || 0)} kcal</span>
+                          <span className="text-xs" style={{ color: '#91968e' }}>{Math.round(meal?.protein || 0)}g P · {Math.round(meal?.carbs || 0)}g C · {Math.round(meal?.fats || meal?.fat || 0)}g F</span>
                         </div>
                         <MealIngredients ingredients={meal?.ingredients} />
                         {meal?.notes && <p className="text-xs leading-relaxed" style={{ color: '#91968e' }}>{meal.notes}</p>}
@@ -1203,7 +1203,7 @@ export default function Nutrition() {
                                 <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: '#91968e' }}>{dateLabel}</p>
                               </div>
                               {plan.total_calories && (
-                                <p className="text-sm font-bold mt-0.5" style={{ color: '#141613' }}>{plan.total_calories} kcal · {plan.total_protein_g}g protein</p>
+                                <p className="text-sm font-bold mt-0.5" style={{ color: '#141613' }}>{Math.round(plan.total_calories)} kcal · {Math.round(plan.total_protein_g || 0)}g protein</p>
                               )}
                             </div>
                             <button onClick={() => { navigate(`/nutrition?date=${date}`); setActiveTab('plan'); }}
@@ -1220,7 +1220,7 @@ export default function Nutrition() {
                                     <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#91968e' }}>{type}</p>
                                     <p className="text-sm font-medium" style={{ color: '#141613' }}>{meal?.name}</p>
                                   </div>
-                                  <p className="text-xs font-semibold" style={{ color: '#5d635d' }}>{meal?.calories} kcal</p>
+                                  <p className="text-xs font-semibold" style={{ color: '#5d635d' }}>{Math.round(meal?.calories || 0)} kcal</p>
                                 </div>
                               ))}
                             </div>

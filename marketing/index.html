@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Execute — Your nutrition & training coach in one app</title>
+<meta name="description" content="Snap a photo to log your meals, follow AI workouts that adapt to your recovery, and hit your goals faster. Execute is your nutrition and training coach in one app.">
+<meta property="og:title" content="Execute — Your nutrition & training coach in one app">
+<meta property="og:description" content="Photo meal tracking, AI training plans that adapt to your recovery, and a clear daily plan. All in one app.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f2e8;
+    --bg-warm: #fbf8f1;
+    --card: #ffffff;
+    --border: #e8e1d4;
+    --ink: #141613;
+    --body: #5d635d;
+    --muted: #91968e;
+    --accent: #8ea400;
+    --accent-dark: #768a00;
+    --radius: 28px;
+    --shadow: 0 24px 60px -28px rgba(20,22,19,0.28);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--body);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  h1, h2, h3 { color: var(--ink); letter-spacing: -0.03em; line-height: 1.08; margin: 0; }
+  .eyebrow { color: var(--accent-dark); font-weight: 700; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; font-size: 15px; padding: 14px 24px; border-radius: 999px; transition: transform .15s ease, box-shadow .15s ease, background .15s ease; cursor: pointer; border: none; }
+  .btn-primary { background: var(--ink); color: #fff; }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 16px 30px -16px rgba(20,22,19,0.6); }
+  .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: var(--bg-warm); }
+
+  /* Nav */
+  nav { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(20px); background: rgba(246,242,232,0.82); border-bottom: 1px solid rgba(232,225,212,0.7); }
+  nav .row { display: flex; align-items: center; justify-content: space-between; height: 68px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 900; color: var(--ink); font-size: 19px; letter-spacing: -0.02em; }
+  .brand .mark { width: 30px; height: 30px; border-radius: 9px; background: var(--ink); color: var(--accent); display: grid; place-items: center; font-size: 17px; font-weight: 900; }
+  nav .links { display: flex; align-items: center; gap: 28px; }
+  nav .links a.navlink { color: var(--body); font-weight: 600; font-size: 14px; }
+  nav .links a.navlink:hover { color: var(--ink); }
+  @media (max-width: 760px) { nav .links a.navlink { display: none; } }
+
+  /* Hero */
+  .hero { padding: 72px 0 40px; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 48px; align-items: center; }
+  .hero h1 { font-size: 56px; font-weight: 900; }
+  .hero p.lede { font-size: 19px; max-width: 30em; margin: 22px 0 0; }
+  .hero .cta-row { display: flex; gap: 14px; margin-top: 32px; flex-wrap: wrap; align-items: center; }
+  .hero .reassure { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  @media (max-width: 900px) {
+    .hero-grid { grid-template-columns: 1fr; gap: 36px; }
+    .hero h1 { font-size: 42px; }
+    .hero p.lede { font-size: 17px; }
+  }
+
+  /* Phone mockup */
+  .phone-stage { position: relative; display: grid; place-items: center; }
+  .phone-stage::before { content: ""; position: absolute; width: 360px; height: 360px; background: radial-gradient(circle, rgba(142,164,0,0.18), transparent 65%); filter: blur(8px); }
+  .phone { position: relative; width: 280px; height: 580px; background: var(--ink); border-radius: 46px; padding: 12px; box-shadow: var(--shadow); }
+  .phone .screen { width: 100%; height: 100%; background: var(--bg-warm); border-radius: 36px; overflow: hidden; display: flex; flex-direction: column; }
+  .phone .notch { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: 110px; height: 26px; background: var(--ink); border-radius: 0 0 16px 16px; z-index: 3; }
+  .sc-head { padding: 40px 20px 14px; }
+  .sc-head .hello { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .sc-head .title { font-size: 20px; font-weight: 800; color: var(--ink); letter-spacing: -0.02em; }
+  .sc-body { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  .sc-card { background: #fff; border: 1px solid var(--border); border-radius: 18px; padding: 14px; }
+  .sc-card .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 700; }
+  .sc-ring { display: flex; align-items: center; gap: 14px; margin-top: 8px; }
+  .ring { width: 56px; height: 56px; border-radius: 50%; background: conic-gradient(var(--accent) 72%, #eee 0); display: grid; place-items: center; flex-shrink: 0; }
+  .ring .inner { width: 42px; height: 42px; border-radius: 50%; background: #fff; display: grid; place-items: center; font-size: 13px; font-weight: 800; color: var(--ink); }
+  .macros { display: flex; gap: 10px; flex: 1; }
+  .macro { flex: 1; }
+  .macro .m-val { font-size: 14px; font-weight: 800; color: var(--ink); }
+  .macro .m-bar { height: 5px; border-radius: 3px; background: #eee; margin-top: 4px; overflow: hidden; }
+  .macro .m-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .macro .m-name { font-size: 9px; color: var(--muted); margin-top: 3px; font-weight: 600; }
+  .sc-row { display: flex; align-items: center; gap: 10px; }
+  .sc-pill { font-size: 11px; font-weight: 700; color: var(--accent-dark); background: rgba(142,164,0,0.12); padding: 4px 10px; border-radius: 999px; }
+  .sc-mission { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .sc-mission:last-child { border-bottom: none; }
+  .sc-check { width: 20px; height: 20px; border-radius: 7px; border: 2px solid var(--accent); flex-shrink: 0; display: grid; place-items: center; color: var(--accent); font-size: 12px; font-weight: 900; }
+  .sc-check.done { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .sc-mission .mt { font-size: 12px; font-weight: 600; color: var(--ink); }
+
+  /* Section scaffolding */
+  section.block { padding: 72px 0; }
+  .section-head { text-align: center; max-width: 36em; margin: 0 auto 44px; }
+  .section-head h2 { font-size: 38px; font-weight: 900; }
+  .section-head p { font-size: 17px; margin-top: 14px; }
+  @media (max-width: 760px) { .section-head h2 { font-size: 30px; } }
+
+  /* Feature grid */
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 900px) { .features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .features { grid-template-columns: 1fr; } }
+  .feature { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px; transition: transform .15s ease, box-shadow .15s ease; }
+  .feature:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+  .feature .ico { width: 46px; height: 46px; border-radius: 13px; background: rgba(142,164,0,0.12); display: grid; place-items: center; margin-bottom: 16px; }
+  .feature .ico svg { width: 24px; height: 24px; stroke: var(--accent-dark); }
+  .feature h3 { font-size: 18px; font-weight: 800; }
+  .feature p { font-size: 14.5px; margin-top: 8px; }
+
+  /* How it works */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  @media (max-width: 760px) { .steps { grid-template-columns: 1fr; } }
+  .step { text-align: center; padding: 8px; }
+  .step .num { width: 52px; height: 52px; border-radius: 50%; background: var(--ink); color: var(--accent); font-weight: 900; font-size: 20px; display: grid; place-items: center; margin: 0 auto 16px; }
+  .step h3 { font-size: 19px; font-weight: 800; }
+  .step p { font-size: 15px; margin-top: 8px; }
+
+  /* Goals */
+  .goals-band { background: var(--ink); border-radius: 36px; padding: 56px 40px; text-align: center; }
+  .goals-band h2 { color: #fff; font-size: 34px; font-weight: 900; }
+  .goals-band p { color: rgba(255,255,255,0.7); margin-top: 12px; font-size: 16px; }
+  .goal-chips { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 28px; }
+  .goal-chip { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); color: #fff; font-weight: 700; font-size: 15px; padding: 12px 22px; border-radius: 999px; }
+  .goal-chip .dot { color: var(--accent); }
+
+  /* Pricing */
+  .price-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 760px; margin: 0 auto; }
+  @media (max-width: 700px) { .price-grid { grid-template-columns: 1fr; } }
+  .price { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; }
+  .price.featured { border: 2px solid var(--accent); position: relative; }
+  .price.featured .tag { position: absolute; top: -13px; left: 32px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 12px; border-radius: 999px; }
+  .price h3 { font-size: 22px; font-weight: 900; }
+  .price .sub { font-size: 14px; color: var(--muted); margin-top: 4px; }
+  .price ul { list-style: none; padding: 0; margin: 20px 0 0; }
+  .price li { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; margin-bottom: 10px; }
+  .price li .ck { color: var(--accent-dark); font-weight: 900; flex-shrink: 0; }
+
+  /* FAQ */
+  .faq { max-width: 760px; margin: 0 auto; }
+  details { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 4px 22px; margin-bottom: 12px; }
+  details summary { cursor: pointer; list-style: none; padding: 16px 0; font-weight: 700; color: var(--ink); font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::after { content: "+"; color: var(--accent-dark); font-size: 22px; font-weight: 700; }
+  details[open] summary::after { content: "–"; }
+  details p { margin: 0 0 18px; font-size: 14.5px; }
+
+  /* CTA band */
+  .cta-final { text-align: center; background: linear-gradient(160deg, #fbf8f1, #efe9da); border: 1px solid var(--border); border-radius: 36px; padding: 60px 32px; }
+  .cta-final h2 { font-size: 36px; font-weight: 900; }
+  .cta-final p { font-size: 17px; margin: 14px auto 0; max-width: 30em; }
+  .cta-final .cta-row { display: flex; gap: 14px; justify-content: center; margin-top: 28px; flex-wrap: wrap; }
+
+  /* App Store badge */
+  .appstore { display: inline-flex; align-items: center; gap: 10px; background: var(--ink); color: #fff; padding: 11px 20px 11px 18px; border-radius: 14px; transition: transform .15s ease; }
+  .appstore:hover { transform: translateY(-2px); }
+  .appstore svg { width: 26px; height: 26px; fill: #fff; }
+  .appstore .t1 { font-size: 10px; line-height: 1; opacity: 0.85; }
+  .appstore .t2 { font-size: 17px; font-weight: 700; line-height: 1.1; letter-spacing: -0.01em; }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--border); margin-top: 24px; padding: 40px 0; }
+  footer .row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  footer .flinks { display: flex; gap: 22px; flex-wrap: wrap; }
+  footer .flinks a { color: var(--body); font-weight: 600; font-size: 14px; }
+  footer .flinks a:hover { color: var(--ink); }
+  footer .copy { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+  <nav>
+    <div class="wrap row">
+      <a class="brand" href="#top"><span class="mark">E</span>Execute</a>
+      <div class="links">
+        <a class="navlink" href="#features">Features</a>
+        <a class="navlink" href="#how">How it works</a>
+        <a class="navlink" href="#pricing">Pricing</a>
+        <a class="navlink" href="#faq">FAQ</a>
+        <a class="btn btn-primary" href="#download">Get the app</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero wrap" id="top">
+    <div class="hero-grid">
+      <div>
+        <span class="eyebrow">Nutrition · Training · Recovery</span>
+        <h1 style="margin-top:16px;">Your coach for nutrition and training, in one app.</h1>
+        <p class="lede">Snap a photo to log your meals, follow AI workouts that adapt to your recovery, and hit your goals faster — without juggling five different apps.</p>
+        <div class="cta-row" id="download">
+          <a class="appstore" href="#" aria-label="Download on the App Store">
+            <svg viewBox="0 0 24 24"><path d="M16.365 1.43c0 1.14-.42 2.2-1.12 3.02-.84.99-2.22 1.76-3.38 1.67-.13-1.1.43-2.27 1.1-3.04.76-.86 2.13-1.5 3.4-1.65zM20.7 17.2c-.62 1.43-.92 2.06-1.72 3.32-1.12 1.77-2.7 3.97-4.66 3.99-1.74.02-2.19-1.13-4.55-1.12-2.36.01-2.85 1.14-4.6 1.13-1.96-.02-3.45-2-4.57-3.77C-.86 16.6-1.3 11.18 1.05 8.3 2.18 6.9 3.85 6 5.66 6c1.84 0 3 .99 4.52 .99 1.48 0 2.38-.99 4.51-.99 1.6 0 3.3.87 4.5 2.38-3.96 2.17-3.32 7.83.51 8.82z"/></svg>
+            <span><span class="t1">Download on the</span><br><span class="t2">App Store</span></span>
+          </a>
+          <a class="btn btn-ghost" href="#features">See features</a>
+        </div>
+        <p class="reassure">Free to start · Premium plans available · Cancel anytime</p>
+      </div>
+
+      <div class="phone-stage" aria-hidden="true">
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="screen">
+            <div class="sc-head">
+              <div class="hello">Friday · Today</div>
+              <div class="title">Today's performance plan</div>
+            </div>
+            <div class="sc-body">
+              <div class="sc-card">
+                <div class="label">Nutrition</div>
+                <div class="sc-ring">
+                  <div class="ring"><div class="inner">72%</div></div>
+                  <div class="macros">
+                    <div class="macro"><div class="m-val">142g</div><div class="m-bar"><i style="width:78%"></i></div><div class="m-name">Protein</div></div>
+                    <div class="macro"><div class="m-val">186g</div><div class="m-bar"><i style="width:64%"></i></div><div class="m-name">Carbs</div></div>
+                    <div class="macro"><div class="m-val">52g</div><div class="m-bar"><i style="width:58%"></i></div><div class="m-name">Fat</div></div>
+                  </div>
+                </div>
+              </div>
+              <div class="sc-card">
+                <div class="sc-row" style="justify-content:space-between;">
+                  <div class="label">Readiness</div>
+                  <div class="sc-pill">Push day · 88%</div>
+                </div>
+                <div style="font-size:12px;color:var(--body);margin-top:8px;">Recovery looks strong. Good day to train hard.</div>
+              </div>
+              <div class="sc-card">
+                <div class="label" style="margin-bottom:6px;">Daily missions</div>
+                <div class="sc-mission"><div class="sc-check done">✓</div><div class="mt">Log breakfast</div></div>
+                <div class="sc-mission"><div class="sc-check done">✓</div><div class="mt">Upper body — Push</div></div>
+                <div class="sc-mission"><div class="sc-check">○</div><div class="mt">Hit protein target</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="block wrap" id="features">
+    <div class="section-head">
+      <span class="eyebrow">What you can do</span>
+      <h2 style="margin-top:12px;">Everything you need to hit your goals</h2>
+      <p>Execute learns your body, goals, and schedule — then builds a daily plan and adapts it as you go.</p>
+    </div>
+    <div class="features">
+      <div class="feature">
+        <div class="ico"><svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+        <h3>Photo meal tracking</h3>
+        <p>Estimate a full meal's macros from a single photo in seconds — or scan a barcode for fast, accurate logging.</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M6.5 6.5h11v11h-11z"/><path d="M2 9v6M22 9v6M9 2h6M9 22h6"/></svg></div>
+        <h3>AI workouts that adapt</h3>
+        <p>Personalized training plans built around your goals and equipment — and adjusted as your progress and recovery change.</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+        <h3>Readiness insights</h3>
+        <p>Daily check-ins tell you when to push, recover, or adjust — based on your recent sleep, activity, and calorie balance.</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+        <h3>A clear daily plan</h3>
+        <p>Wake up to today's performance plan and daily missions — nutrition, training, and recovery in one focused checklist.</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <h3>Built around you</h3>
+        <p>A quick, personalized setup sets your starting targets — accounting for your activity level, eating habits, and any injuries.</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg></div>
+        <h3>Real progress</h3>
+        <p>Macro and calorie guidance tailored to your body, plus insights that show what's actually moving you toward your goal.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="how">
+    <div class="section-head">
+      <span class="eyebrow">How it works</span>
+      <h2 style="margin-top:12px;">From goal to daily routine in minutes</h2>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <h3>Tell us your goal</h3>
+        <p>Build muscle, get stronger, lose fat, or just feel better. Execute calculates your starting targets from your answers.</p>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <h3>Log and check in</h3>
+        <p>Snap a photo of your meal, scan a barcode, and do a quick daily check-in so the app knows how you're recovering.</p>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <h3>Execute your plan</h3>
+        <p>Follow a daily plan that adapts to your progress and recovery — and watch the results compound over time.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap">
+    <div class="goals-band">
+      <h2>Whatever you're training for</h2>
+      <p>Execute adapts to your goal, your schedule, and your body.</p>
+      <div class="goal-chips">
+        <span class="goal-chip"><span class="dot">●</span> Build muscle</span>
+        <span class="goal-chip"><span class="dot">●</span> Get stronger</span>
+        <span class="goal-chip"><span class="dot">●</span> Lose body fat</span>
+        <span class="goal-chip"><span class="dot">●</span> Improve fitness</span>
+        <span class="goal-chip"><span class="dot">●</span> Feel better</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="pricing">
+    <div class="section-head">
+      <span class="eyebrow">Pricing</span>
+      <h2 style="margin-top:12px;">Start free. Upgrade when you're ready.</h2>
+      <p>Core tracking is free forever. Premium unlocks the AI coaching that makes Execute adapt to you.</p>
+    </div>
+    <div class="price-grid">
+      <div class="price">
+        <h3>Free</h3>
+        <div class="sub">Everything you need to start tracking</div>
+        <ul>
+          <li><span class="ck">✓</span> Manual nutrition & macro tracking</li>
+          <li><span class="ck">✓</span> Barcode scanning</li>
+          <li><span class="ck">✓</span> Workout logging</li>
+          <li><span class="ck">✓</span> Daily check-ins & missions</li>
+        </ul>
+      </div>
+      <div class="price featured">
+        <span class="tag">Most popular</span>
+        <h3>Premium</h3>
+        <div class="sub">Monthly or annual · billed through the App Store</div>
+        <ul>
+          <li><span class="ck">✓</span> Estimate macros from a meal photo</li>
+          <li><span class="ck">✓</span> AI-generated, adaptive training plans</li>
+          <li><span class="ck">✓</span> Personalized meal & macro guidance</li>
+          <li><span class="ck">✓</span> Readiness & recovery insights</li>
+          <li><span class="ck">✓</span> Coach insights, every day</li>
+        </ul>
+        <a class="btn btn-primary" href="#download" style="margin-top:22px;width:100%;">Get Execute</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="faq">
+    <div class="section-head">
+      <span class="eyebrow">FAQ</span>
+      <h2 style="margin-top:12px;">Questions, answered</h2>
+    </div>
+    <div class="faq">
+      <details open>
+        <summary>Is Execute free to use?</summary>
+        <p>Yes. Core manual tracking — nutrition, macros, barcode scanning, workout logging, and daily check-ins — is free. Premium unlocks AI training plans, photo macro estimation, and personalized guidance.</p>
+      </details>
+      <details>
+        <summary>How does photo meal tracking work?</summary>
+        <p>Tap to log a meal and snap a photo. Execute estimates the meal's macros in seconds so you can log without weighing or searching a database. You can always adjust the result.</p>
+      </details>
+      <details>
+        <summary>What makes the workouts "adaptive"?</summary>
+        <p>Execute builds plans around your goals and equipment, then adjusts based on your progress and daily readiness — so you train hard when you're recovered and back off when you're not.</p>
+      </details>
+      <details>
+        <summary>Can I cancel anytime?</summary>
+        <p>Yes. Premium is an auto-renewing subscription you manage through your Apple ID. Cancel anytime in Settings → your name → Subscriptions, and you keep access until the end of the period.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="block wrap">
+    <div class="cta-final">
+      <span class="eyebrow">Ready when you are</span>
+      <h2 style="margin-top:12px;">Log a meal, check in, and execute.</h2>
+      <p>Turn your goals into a daily routine that adapts as you do.</p>
+      <div class="cta-row">
+        <a class="appstore" href="#" aria-label="Download on the App Store">
+          <svg viewBox="0 0 24 24"><path d="M16.365 1.43c0 1.14-.42 2.2-1.12 3.02-.84.99-2.22 1.76-3.38 1.67-.13-1.1.43-2.27 1.1-3.04.76-.86 2.13-1.5 3.4-1.65zM20.7 17.2c-.62 1.43-.92 2.06-1.72 3.32-1.12 1.77-2.7 3.97-4.66 3.99-1.74.02-2.19-1.13-4.55-1.12-2.36.01-2.85 1.14-4.6 1.13-1.96-.02-3.45-2-4.57-3.77C-.86 16.6-1.3 11.18 1.05 8.3 2.18 6.9 3.85 6 5.66 6c1.84 0 3 .99 4.52 .99 1.48 0 2.38-.99 4.51-.99 1.6 0 3.3.87 4.5 2.38-3.96 2.17-3.32 7.83.51 8.82z"/></svg>
+          <span><span class="t1">Download on the</span><br><span class="t2">App Store</span></span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap row">
+      <a class="brand" href="#top"><span class="mark">E</span>Execute</a>
+      <div class="flinks">
+        <a href="/privacy.html">Privacy</a>
+        <a href="/terms.html">Terms</a>
+        <a href="/support.html">Support</a>
+        <a href="mailto:support@executelabs.ca">Contact</a>
+      </div>
+    </div>
+    <div class="wrap" style="margin-top:18px;">
+      <div class="copy">© 2026 Execute Labs. All rights reserved. Execute is a fitness and performance tool, not a medical device. Always consult a qualified professional before starting any exercise or nutrition program.</div>
+    </div>
+  </footer>
+
+</body>
+</html>
