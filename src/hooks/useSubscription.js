@@ -34,6 +34,12 @@ export function useSubscription() {
   // Live, read-only unlock signal: any non-empty active entitlement set.
   // Count-based on purpose — we don't key on an entitlement identifier so the
   // gate is immune to the actual id string ("Execute Performance Premium").
+  //
+  // ASSUMPTION: "has any active entitlement" === "is premium". This holds only
+  // while premium is the ONLY entitlement the RC project can grant. Before
+  // adding a second entitlement (a free promo, a different tier, a temporary
+  // grant), make this gate identifier-specific — otherwise that entitlement
+  // would silently unlock full premium.
   const liveEntitled = Object.keys(rcCustomerInfo?.entitlements?.active ?? {}).length > 0;
 
   return {
