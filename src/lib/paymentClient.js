@@ -21,7 +21,7 @@ import { bustSubscriptionCache } from '@/lib/subscription';
 
 const PLAN_TO_RC_IDENTIFIER = {
   annual: '$rc_annual',
-  monthly: '$rc_month',
+  monthly: '$rc_monthly',
 };
 
 // Reject if a native RevenueCat call doesn't settle. A visible timeout beats a
