@@ -235,6 +235,12 @@ export const AuthProvider = ({ children }) => {
     await backend.auth.loginWithOtp(email);
   }, []);
 
+  const verifyOtp = useCallback(async (email, token) => {
+    await backend.auth.verifyOtp(email, token);
+    // The onAuthStateChange listener picks up the new session and refreshes
+    // user state; nothing else to do here.
+  }, []);
+
   const loginWithOAuth = useCallback(async (provider) => {
     await backend.auth.loginWithOAuth(provider);
   }, []);
@@ -268,6 +274,7 @@ export const AuthProvider = ({ children }) => {
       authError,
       appPublicSettings,
       loginWithOtp,
+      verifyOtp,
       loginWithOAuth,
       logout,
       navigateToLogin,

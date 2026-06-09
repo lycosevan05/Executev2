@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Mail, Loader2, CheckCircle2, AlertTriangle, Apple } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
+import { isIOS } from '@/lib/platform';
 
 const ACCENT = '#c8e000';
 
@@ -17,20 +18,29 @@ function GoogleLogo({ size = 18 }) {
 }
 
 export default function AuthScreen({ missingConfig = false }) {
-  const { loginWithOtp, loginWithOAuth, authError } = useAuth();
+  const { loginWithOtp, verifyOtp, loginWithOAuth, authError } = useAuth();
   const [oauthLoading, setOauthLoading] = useState(null); // 'google' | 'apple' | null
   const [showEmail, setShowEmail] = useState(false);
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
+  // iOS uses a 6-digit code (verifyOtp) instead of a magic link, which can't
+  // hand the session back to the native app.
+  const useCode = isIOS();
+  const [code, setCode] = useState('');
+  const [verifying, setVerifying] = useState(false);
 
   const handleOAuth = async (provider) => {
     setError('');
     setOauthLoading(provider);
     try {
       await loginWithOAuth(provider);
-      // Supabase redirects the page on success; no further action needed.
+      // On web, Supabase redirects the page on success. On iOS, control hands
+      // off to the in-app browser and the appUrlOpen deep-link bridge finishes
+      // the flow — so clear the spinner here, otherwise it spins forever if the
+      // user dismisses the browser without completing sign-in.
+      setOauthLoading(null);
     } catch (err) {
       setError(err.message || `Unable to sign in with ${provider}.`);
       setOauthLoading(null);
@@ -48,6 +58,20 @@ export default function AuthScreen({ missingConfig = false }) {
       setError(err.message || 'Unable to send sign-in link.');
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleVerify = async (event) => {
+    event.preventDefault();
+    setError('');
+    setVerifying(true);
+    try {
+      await verifyOtp(email.trim(), code.trim());
+      // On success the auth listener swaps in the authenticated app; this
+      // component unmounts, so no further state update is needed.
+    } catch (err) {
+      setError(err.message || 'Invalid or expired code.');
+      setVerifying(false);
     }
   };
 
@@ -71,6 +95,34 @@ export default function AuthScreen({ missingConfig = false }) {
             <p>Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in your environment, then restart the dev server.</p>
             <p className="text-xs" style={{ color: '#91968e' }}>{authError?.message}</p>
           </div>
+        ) : sent && useCode ? (
+          <form onSubmit={handleVerify} className="space-y-3">
+            <div className="flex items-start gap-3 rounded-xl border p-3" style={{ borderColor: '#d9e4a2', background: 'rgba(200,224,0,0.08)' }}>
+              <CheckCircle2 size={18} style={{ color: '#8ea400' }} />
+              <p className="text-sm" style={{ color: '#343831' }}>Enter the 6-digit code we emailed to {email.trim()}.</p>
+            </div>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              required
+              value={code}
+              onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="123456"
+              className="w-full rounded-xl border px-4 py-3 text-sm text-center tracking-[0.5em] outline-none"
+              style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#141613' }}
+            />
+            <button
+              type="submit"
+              disabled={verifying || code.length < 6}
+              className="w-full rounded-xl px-4 py-3 text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-60"
+              style={{ background: ACCENT, color: '#141613' }}
+            >
+              {verifying ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+              Verify code
+            </button>
+            {error ? <p className="text-xs text-red-600">{error}</p> : null}
+          </form>
         ) : sent ? (
           <div className="flex items-start gap-3 rounded-xl border p-3" style={{ borderColor: '#d9e4a2', background: 'rgba(200,224,0,0.08)' }}>
             <CheckCircle2 size={18} style={{ color: '#8ea400' }} />
@@ -122,7 +174,7 @@ export default function AuthScreen({ missingConfig = false }) {
                   style={{ background: ACCENT, color: '#141613' }}
                 >
                   {sending ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />}
-                  Send sign-in link
+                  {useCode ? 'Send code' : 'Send sign-in link'}
                 </button>
               </form>
             ) : (

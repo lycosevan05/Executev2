@@ -37,6 +37,7 @@ export const supabase = isSupabaseConfigured
         autoRefreshToken: true,
         detectSessionInUrl: true,
         persistSession: true,
+        flowType: 'pkce',
       },
       realtime: {
         params: {
@@ -321,10 +322,12 @@ export const backend = {
     },
     async loginWithOtp(email, redirectTo = window.location.href) {
       const client = requireSupabase();
-      const { error } = await client.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: redirectTo },
-      });
+      const isIOS = getPlatform() === 'ios';
+      // On iOS a magic-link redirect can't hand the session back to the native
+      // app, so omit emailRedirectTo: Supabase then delivers a 6-digit code the
+      // user enters in-app (verified via verifyOtp). Web keeps the link flow.
+      const options = isIOS ? {} : { emailRedirectTo: redirectTo };
+      const { error } = await client.auth.signInWithOtp({ email, options });
       if (error?.message === 'Failed to fetch') {
         throw toBackendError({
           message: 'Could not reach Supabase Auth. Check that VITE_SUPABASE_URL is the project API URL and restart npm run dev.',
@@ -333,6 +336,16 @@ export const backend = {
       }
       if (error) throw toBackendError(error, 400);
       return { ok: true };
+    },
+    async verifyOtp(email, token) {
+      const client = requireSupabase();
+      const { data, error } = await client.auth.verifyOtp({
+        email,
+        token,
+        type: 'email',
+      });
+      if (error) throw toBackendError(error, 400);
+      return normalizeUser(data?.user);
     },
     async loginWithOAuth(provider, redirectTo) {
       const client = requireSupabase();
