@@ -2,6 +2,8 @@
 
 Capacitor-wrapped React/Vite iOS app. Bundle id `com.executelabs.execute`, appName "Execute".
 
+> **Why is it this way?** Architecture/provider/direction/compliance decisions and their reasoning live in [`docs/DECISIONS.md`](docs/DECISIONS.md) (append-only). When a commit encodes a decision, add an entry there (or run `/log-decision`). This file holds the *current rule*; DECISIONS.md holds *why*.
+
 ## Stack
 - React 18 + Vite 6, ESM (`"type": "module"`). Tailwind + Radix UI + framer-motion; lucide-react icons.
 - Data/state: TanStack Query (`@tanstack/react-query`), react-hook-form, react-router-dom v6.
