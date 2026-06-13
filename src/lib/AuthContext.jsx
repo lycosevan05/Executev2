@@ -156,11 +156,23 @@ export const AuthProvider = ({ children }) => {
               }
             }
             if (url.includes('code=')) {
-              await supabase.auth.exchangeCodeForSession(url);
-              await checkUserAuth();
+              // exchangeCodeForSession expects the auth-code value, NOT the
+              // full deep-link URL. Passing the URL makes the token exchange
+              // fail, leaving the app stuck on the login screen.
+              const code = new URL(url).searchParams.get('code');
+              if (code) {
+                await supabase.auth.exchangeCodeForSession(code);
+                await checkUserAuth();
+              }
             }
           } catch (err) {
-            console.warn('[Auth] OAuth callback processing failed:', err);
+            // Surface the failure: a swallowed error here looks like an
+            // endless authenticate→login loop with no clue why.
+            console.error('[Auth] OAuth callback processing failed:', err);
+            setAuthError({
+              type: 'auth_required',
+              message: err?.message || 'Sign-in could not be completed.',
+            });
           }
         });
         cleanup = () => handle.remove();
