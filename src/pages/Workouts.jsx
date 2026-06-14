@@ -11,7 +11,9 @@ import WorkoutCompleteAnimation from '@/components/workouts/WorkoutCompleteAnima
 import WorkoutHeroCard from '@/components/workouts/WorkoutHeroCard';
 import CustomSplitSheet from '@/components/workouts/CustomSplitSheet';
 import { getOrCreateWorkoutPlanForDate } from '@/lib/plans/getOrCreateWorkoutPlanForDate';
+import { buildWorkoutPlansForDates } from '@/lib/plans/buildWorkoutPlansForDates';
 import { loadActiveAIPlan, userScopedFilter } from '@/lib/personalizationSync';
+import { toast } from '@/components/ui/use-toast';
 import PremiumPaywall from '@/components/premium/PremiumPaywall';
 import { PremiumBadge } from '@/components/premium/PremiumBadge';
 import { useSubscription } from '@/hooks/useSubscription';
@@ -840,13 +842,22 @@ export default function Workouts() {
         return merged;
       });
     };
-    for (const day of pending) {
-      try {
-        const result = await getOrCreateWorkoutPlanForDate(day.date, { generate: true });
-        writeDay(day.date, { status: result.status, workoutPlan: result.workoutPlan });
-      } catch {
-        writeDay(day.date, { status: 'needs_generation', workoutPlan: null });
-      }
+    // Concurrent, capped build with invariant context hoisted once. A single
+    // failed day is isolated and surfaced; the rest still succeed.
+    const results = await buildWorkoutPlansForDates(
+      pending.map(d => d.date),
+      { masterPlan: activePlan || undefined },
+    );
+    for (const r of results) {
+      writeDay(r.date, { status: r.status, workoutPlan: r.workoutPlan });
+    }
+    const failed = results.filter(r => r.error);
+    if (failed.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: `Couldn't build ${failed.length} day${failed.length > 1 ? 's' : ''}`,
+        description: `Failed: ${failed.map(r => r.date).join(', ')}. Tap to retry.`,
+      });
     }
     setBuildingAllSplit(false);
   };

@@ -1,6 +1,67 @@
 import { handleCors, json } from '../_shared/cors.ts';
 import { getUser } from '../_shared/records.ts';
 
+// Backoff tuning for transient OpenAI 429 (TPM) / 5xx responses.
+const LLM_MAX_ATTEMPTS = 5;
+const LLM_BASE_MS = 500;
+const LLM_PER_WAIT_CAP_MS = 20_000;
+const LLM_DEADLINE_MS = 45_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Parse Retry-After (seconds) / retry-after-ms (ms) from OpenAI response headers. */
+function parseRetryAfterMs(headers: Headers): number {
+  const ms = headers.get('retry-after-ms');
+  if (ms && !Number.isNaN(Number(ms))) return Number(ms);
+  const secs = headers.get('retry-after');
+  if (secs && !Number.isNaN(Number(secs))) return Number(secs) * 1000;
+  return 0;
+}
+
+/**
+ * POST to OpenAI with full-jitter backoff. Retries on 429 and >=500.
+ * Honors Retry-After as a minimum wait. Returns the final Response (which may
+ * still be an error after exhausting attempts).
+ * `forceFailures` returns a synthetic 429 for the first N attempts (testing).
+ */
+async function fetchOpenAIWithBackoff(
+  url: string,
+  init: RequestInit,
+  forceFailures = 0,
+): Promise<Response> {
+  const start = Date.now();
+  let lastResponse: Response | null = null;
+
+  for (let attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
+    if (attempt <= forceFailures) {
+      lastResponse = new Response(
+        JSON.stringify({ error: { message: `Synthetic 429 (attempt ${attempt})` } }),
+        { status: 429, headers: { 'Content-Type': 'application/json', 'retry-after': '0' } },
+      );
+    } else {
+      lastResponse = await fetch(url, init);
+    }
+
+    const status = lastResponse.status;
+    const retryable = status === 429 || status >= 500;
+    if (!retryable) return lastResponse;
+
+    const elapsed = Date.now() - start;
+    if (attempt >= LLM_MAX_ATTEMPTS || elapsed >= LLM_DEADLINE_MS) return lastResponse;
+
+    const expo = Math.min(LLM_PER_WAIT_CAP_MS, LLM_BASE_MS * 2 ** (attempt - 1));
+    const jittered = Math.random() * expo;
+    let wait = Math.max(parseRetryAfterMs(lastResponse.headers), jittered);
+    wait = Math.min(wait, Math.max(0, LLM_DEADLINE_MS - elapsed));
+    console.warn(`[invoke-llm] ${status} on attempt ${attempt}; backing off ${Math.round(wait)}ms`);
+    // Drain the body so the connection can be reused.
+    await lastResponse.body?.cancel().catch(() => {});
+    await sleep(wait);
+  }
+
+  return lastResponse as Response;
+}
+
 function extractOutputText(response: Record<string, unknown>) {
   if (typeof response.output_text === 'string') return response.output_text;
 
@@ -63,14 +124,15 @@ Deno.serve(async (req) => {
       };
     }
 
-    const openaiResponse = await fetch('https://api.openai.com/v1/responses', {
+    const forceFailures = Number(Deno.env.get('FORCE_LLM_429') || 0) || 0;
+    const openaiResponse = await fetchOpenAIWithBackoff('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(requestBody),
-    });
+    }, forceFailures);
 
     const responseJson = await openaiResponse.json().catch(() => ({}));
     if (!openaiResponse.ok) {

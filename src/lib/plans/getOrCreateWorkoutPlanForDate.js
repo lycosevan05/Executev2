@@ -9,6 +9,7 @@
 import { backend } from '@/api/backendClient';
 import { loadActiveAIPlan, userScopedFilter, withUserEmail } from '@/lib/personalizationSync';
 import { getPlanDaySessionTitle } from '@/lib/planDayDisplay';
+import { withBackoff } from '@/lib/withBackoff';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -124,11 +125,11 @@ function validateWorkout(w) {
 
 /**
  * @param {string} date - YYYY-MM-DD
- * @param {{ planId?: string, generate?: boolean, masterPlan?: object }} options
+ * @param {{ planId?: string, generate?: boolean, masterPlan?: object, context?: { userProfile?: object, workoutProfile?: object, activeInjuries?: object[], readinessRecord?: object } }} options
  * @returns {Promise<{ status: string, workoutPlan: object|null, masterPlan: object|null, overviewDay: object|null }>}
  */
 export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
-  const { planId, generate = false } = options;
+  const { planId, generate = false, context } = options;
 
   // A. If planId provided, try to load directly — if found with exercises, return immediately
   if (planId) {
@@ -161,9 +162,10 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
   // below picks the best match by source_plan_id + generation_batch_id, so the
   // extra batch/source filters are redundant — and 3 parallel queries per day
   // was the main contributor to 429 rate-limit errors.
-  const existingPlans = await backend.entities.WorkoutPlan
-    .filter(await userScopedFilter({ date }))
-    .catch(() => []);
+  const existingFilter = await userScopedFilter({ date });
+  const existingPlans = await withBackoff(
+    () => backend.entities.WorkoutPlan.filter(existingFilter),
+  ).catch(() => []);
 
   const existing = chooseBestWorkoutPlan(existingPlans, masterPlan);
   if (existing && hasExercises(existing)) {
@@ -192,28 +194,45 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
     }
   }
 
-  // I. Generate workout via AI
-  const [
-    userProfiles,
-    workoutProfiles,
-    injuries,
-    readinessToday,
-    readinessLatest,
-  ] = await Promise.allSettled([
-    backend.entities.UserProfile.filter(await userScopedFilter(), '-updated_date', 1),
-    backend.entities.WorkoutProfile.filter(await userScopedFilter(), '-updated_date', 1),
-    backend.entities.InjuryProfile.filter(await userScopedFilter({ is_active: true })),
-    backend.entities.ReadinessCheckIn.filter(await userScopedFilter({ date })),
-    backend.entities.ReadinessCheckIn.filter(await userScopedFilter(), '-date', 1),
-  ]);
+  // I. Generate workout via AI.
+  // Invariant context (user profile, workout profile, injuries, readiness) is
+  // identical across days. When the orchestrator passes a pre-fetched `context`
+  // (multi-day build), we skip ALL invariant reads here — zero per-day fan-out.
+  // Otherwise (single-day callers) we fetch them ourselves, preserving the
+  // original exact per-date readiness lookup.
+  let userProfile;
+  let workoutProfile;
+  let activeInjuries;
+  let readinessRecord;
 
-  const userProfile = userProfiles.status === 'fulfilled' ? userProfiles.value?.[0] : null;
-  const workoutProfile = workoutProfiles.status === 'fulfilled' ? workoutProfiles.value?.[0] : null;
-  const activeInjuries = injuries.status === 'fulfilled' ? injuries.value : [];
-  const readinessRecord =
-    (readinessToday.status === 'fulfilled' && readinessToday.value?.[0]) ||
-    (readinessLatest.status === 'fulfilled' && readinessLatest.value?.[0]) ||
-    null;
+  if (context) {
+    userProfile = context.userProfile || null;
+    workoutProfile = context.workoutProfile || null;
+    activeInjuries = context.activeInjuries || [];
+    readinessRecord = context.readinessRecord || null;
+  } else {
+    const [
+      userProfiles,
+      workoutProfiles,
+      injuries,
+      readinessToday,
+      readinessLatest,
+    ] = await Promise.allSettled([
+      backend.entities.UserProfile.filter(await userScopedFilter(), '-updated_date', 1),
+      backend.entities.WorkoutProfile.filter(await userScopedFilter(), '-updated_date', 1),
+      backend.entities.InjuryProfile.filter(await userScopedFilter({ is_active: true })),
+      backend.entities.ReadinessCheckIn.filter(await userScopedFilter({ date })),
+      backend.entities.ReadinessCheckIn.filter(await userScopedFilter(), '-date', 1),
+    ]);
+
+    userProfile = userProfiles.status === 'fulfilled' ? userProfiles.value?.[0] : null;
+    workoutProfile = workoutProfiles.status === 'fulfilled' ? workoutProfiles.value?.[0] : null;
+    activeInjuries = injuries.status === 'fulfilled' ? injuries.value : [];
+    readinessRecord =
+      (readinessToday.status === 'fulfilled' && readinessToday.value?.[0]) ||
+      (readinessLatest.status === 'fulfilled' && readinessLatest.value?.[0]) ||
+      null;
+  }
 
   const planSummary = masterPlan.plan_summary || masterPlan.plan_payload?.plan_summary || {};
   const trainingSplit = masterPlan.training_split || masterPlan.plan_payload?.training_split || {};
@@ -300,6 +319,9 @@ Include 4 to 8 exercises. Every exercise must have name, sets, reps, rest, and n
 
   const aiResponse = await backend.integrations.Core.InvokeLLM({
     prompt,
+    // Real per-day output is ~600-1200 tokens; 2000 gives headroom while keeping
+    // the TPM reservation footprint small under concurrent multi-day builds.
+    max_output_tokens: 2000,
     response_json_schema: {
       type: 'object',
       properties: {
@@ -323,7 +345,7 @@ Include 4 to 8 exercises. Every exercise must have name, sets, reps, rest, and n
   validateWorkout(aiResponse);
 
   // Save WorkoutPlan
-  const createdPlan = await backend.entities.WorkoutPlan.create(await withUserEmail({
+  const workoutPlanPayload = await withUserEmail({
     date,
     name: aiResponse.name,
     type: aiResponse.type,
@@ -345,13 +367,21 @@ Include 4 to 8 exercises. Every exercise must have name, sets, reps, rest, and n
     modifications: aiResponse.modifications || [],
     safety_notes: aiResponse.safety_notes || [],
     generation_status: 'ready',
-  }));
+  });
+  const createdPlan = await withBackoff(
+    () => backend.entities.WorkoutPlan.create(workoutPlanPayload),
+  );
 
   // Optionally update existing DailyLog with planned_workout_id (do not create one)
   try {
-    const dailyLogs = await backend.entities.DailyLog.filter(await userScopedFilter({ date })).catch(() => []);
+    const dailyLogFilter = await userScopedFilter({ date });
+    const dailyLogs = await withBackoff(
+      () => backend.entities.DailyLog.filter(dailyLogFilter),
+    ).catch(() => []);
     if (dailyLogs.length > 0) {
-      await backend.entities.DailyLog.update(dailyLogs[0].id, { planned_workout_id: createdPlan.id }).catch(() => {});
+      await withBackoff(
+        () => backend.entities.DailyLog.update(dailyLogs[0].id, { planned_workout_id: createdPlan.id }),
+      ).catch(() => {});
     }
   } catch {
     // Non-critical — silently skip
