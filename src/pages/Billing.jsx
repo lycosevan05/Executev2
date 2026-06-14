@@ -265,12 +265,11 @@ export default function Billing() {
                     {isIOS ? (
                       <>
                         <button
-                          onClick={handleUpgrade}
-                          disabled={checkoutLoading}
+                          onClick={() => setShowPaywall(true)}
                           className="w-full py-3.5 rounded-2xl text-sm font-black flex items-center justify-center gap-2"
-                          style={{ background: checkoutLoading ? 'rgba(200,224,0,0.5)' : ACCENT, color: '#141613' }}>
-                          {checkoutLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                          {checkoutLoading ? 'Starting…' : 'Upgrade to Premium — $14.99/month'}
+                          style={{ background: ACCENT, color: '#141613' }}>
+                          <Sparkles size={14} />
+                          Upgrade to Premium
                         </button>
                         <button
                           onClick={handleRestore}
