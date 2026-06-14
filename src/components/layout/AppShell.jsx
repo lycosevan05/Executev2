@@ -139,7 +139,7 @@ export default function AppShell({ children }) {
           <div className="flex items-center justify-center pb-0 px-5 w-screen">
             <div className="flex items-center justify-around px-2.5 py-2 rounded-full w-full max-w-sm" style={{ background: '#ffffff', boxShadow: '0 8px 32px rgba(20,22,19,0.15), 0 2px 8px rgba(20,22,19,0.08)', border: '1px solid rgba(200,224,0,0.08)' }}>
               {navItems.map(({ path, icon: Icon, label, isCenter }) => {
-              const isActive = location.pathname === path || (!isCenter && location.pathname.startsWith(path + '/'));
+              const isActive = isCenter ? location.pathname === path : currentTab === path;
 
               if (isCenter) {
                 return (
