@@ -4,6 +4,7 @@ import { Sparkles, Loader2, ChevronDown, ChevronUp, Droplets, UtensilsCrossed, C
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { backend } from '@/api/backendClient';
 import { getOrCreateMealPlanForDate } from '@/lib/plans/getOrCreateMealPlanForDate';
+import { buildMealPlansForDates } from '@/lib/plans/buildMealPlansForDates';
 import { loadActiveAIPlan, upsertDailyLog, getTodayISODate } from '@/lib/personalizationSync';
 import PremiumPaywall from '@/components/premium/PremiumPaywall';
 import MealIngredients from '@/components/nutrition/MealIngredients';
@@ -541,25 +542,26 @@ export default function Nutrition() {
       const built = [];
       const failed = [];
 
-      for (let i = 0; i < toProcess.length; i++) {
-        const { date } = toProcess[i];
-        setBuildProgress({ current: i + 1, total: toProcess.length });
+      // Concurrent, rate-limit-safe build: invariant context is fetched once and
+      // per-day generation runs under a bounded pool inside the orchestrator.
+      const results = await buildMealPlansForDates(toProcess.map(t => t.date), { masterPlan });
 
-        const generated = await getOrCreateMealPlanForDate(date, { generate: true, masterPlan });
+      for (const { date, status, mealPlan } of results) {
+        const generated = { status, mealPlan, masterPlan, overviewDay: null };
 
-        // Update just this day's entry in the list immediately
+        // Update this day's entry in the list
         setWeekMealPlans(prev => prev.map(e =>
           e.date === date ? { ...e, result: generated } : e
         ));
 
-        if (generated.status === 'ready') {
+        if (status === 'ready') {
           built.push(date);
           // If it's today, also update the Today tab
-          if (date === targetDate && generated.mealPlan) {
+          if (date === targetDate && mealPlan) {
             setMealStatus('ready');
-            setMealPlanRaw(generated.mealPlan);
-            setMealPlan(normalizeMealsForDisplay(generated.mealPlan.meals));
-            setNutritionTargets(extractNutritionTargets(generated.masterPlan, generated.mealPlan));
+            setMealPlanRaw(mealPlan);
+            setMealPlan(normalizeMealsForDisplay(mealPlan.meals));
+            setNutritionTargets(extractNutritionTargets(masterPlan, mealPlan));
             appCache.invalidate(cacheKey);
           }
         } else {
@@ -567,6 +569,7 @@ export default function Nutrition() {
         }
       }
 
+      setBuildProgress({ current: toProcess.length, total: toProcess.length });
       setWeekBuildResult({ built, failed });
       setMissingDaysCount(failed.length);
     } catch (err) {

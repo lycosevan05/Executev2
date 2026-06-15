@@ -10,6 +10,7 @@ import { backend } from '@/api/backendClient';
 import { loadActiveAIPlan, userScopedFilter, withUserEmail } from '@/lib/personalizationSync';
 import { resolveCalorieTarget } from '@/lib/calorieGoal';
 import { appCache } from '@/lib/appCache';
+import { withBackoff } from '@/lib/withBackoff';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -101,11 +102,11 @@ function validateMealPlan(m) {
 
 /**
  * @param {string} date - YYYY-MM-DD
- * @param {{ planId?: string, generate?: boolean, masterPlan?: object }} options
- * @returns {Promise<{ status: string, mealPlan: object|null, masterPlan: object|null, overviewDay: object|null }>}
+ * @param {{ planId?: string, generate?: boolean, masterPlan?: object, context?: { userProfile?: object, nutritionProfile?: object } }} options
+ * @returns {Promise<{ status: string, mealPlan: object|null, masterPlan: object|null, overviewDay: object|null, error?: string }>}
  */
 export async function getOrCreateMealPlanForDate(date, options = {}) {
-  const { planId, generate = false } = options;
+  const { planId, generate = false, context } = options;
   const mealCacheKey = `meal-plan:${date}`;
 
   try {
@@ -149,16 +150,23 @@ export async function getOrCreateMealPlanForDate(date, options = {}) {
       {};
     const nutritionTargets = normalizeNutritionTargets(rawTargets);
 
-    // E. Check for existing MealPlan — run both queries in parallel
+    // E. Check for existing MealPlan — run both queries in parallel.
+    // withBackoff wraps the RAW filter so a 429 retries to exhaustion; the
+    // error-swallowing .catch sits OUTSIDE the wrapper, so it only fires on a
+    // post-exhaustion failure (never converting the first 429 into "no plan").
+    const exactFilter = masterPlan.id && masterPlan.generation_batch_id
+      ? await userScopedFilter({
+          date,
+          source_plan_id: masterPlan.id,
+          generation_batch_id: masterPlan.generation_batch_id,
+        })
+      : null;
+    const dateFilter = await userScopedFilter({ date });
     const [exactPlans, datePlans] = await Promise.all([
-      masterPlan.id && masterPlan.generation_batch_id
-        ? backend.entities.MealPlan.filter(await userScopedFilter({
-            date,
-            source_plan_id: masterPlan.id,
-            generation_batch_id: masterPlan.generation_batch_id,
-          })).catch(() => [])
+      exactFilter
+        ? withBackoff(() => backend.entities.MealPlan.filter(exactFilter)).catch(() => [])
         : Promise.resolve([]),
-      backend.entities.MealPlan.filter(await userScopedFilter({ date })).catch(() => []),
+      withBackoff(() => backend.entities.MealPlan.filter(dateFilter)).catch(() => []),
     ]);
 
     const existingPlans = exactPlans.length ? exactPlans : datePlans;
@@ -177,20 +185,36 @@ export async function getOrCreateMealPlanForDate(date, options = {}) {
       return result;
     }
 
-    // G. Generate meal plan via AI — load supporting context in parallel
-    const [
-      userProfiles,
-      nutritionProfiles,
-      recentFoodLogs,
-    ] = await Promise.allSettled([
-      backend.entities.UserProfile.filter(await userScopedFilter(), '-updated_date', 1),
-      backend.entities.NutritionProfile.filter(await userScopedFilter(), '-updated_date', 1),
-      backend.entities.FoodLog.filter(await userScopedFilter({ date }), '-created_date', 10),
-    ]);
+    // G. Generate meal plan via AI — load supporting context.
+    // UserProfile + NutritionProfile are day-invariant. When the orchestrator passes
+    // a pre-fetched `context` (multi-day build), we skip those reads entirely — zero
+    // per-day fan-out. FoodLog is genuinely per-date, so it always stays per-day.
+    let userProfile;
+    let nutritionProfile;
+    let foodLogs;
 
-    const userProfile = userProfiles.status === 'fulfilled' ? userProfiles.value?.[0] : null;
-    const nutritionProfile = nutritionProfiles.status === 'fulfilled' ? nutritionProfiles.value?.[0] : null;
-    const foodLogs = recentFoodLogs.status === 'fulfilled' ? recentFoodLogs.value : [];
+    if (context) {
+      userProfile = context.userProfile || null;
+      nutritionProfile = context.nutritionProfile || null;
+      const foodLogFilter = await userScopedFilter({ date });
+      foodLogs = await withBackoff(
+        () => backend.entities.FoodLog.filter(foodLogFilter, '-created_date', 10),
+      ).catch(() => []);
+    } else {
+      const [
+        userProfiles,
+        nutritionProfiles,
+        recentFoodLogs,
+      ] = await Promise.allSettled([
+        backend.entities.UserProfile.filter(await userScopedFilter(), '-updated_date', 1),
+        backend.entities.NutritionProfile.filter(await userScopedFilter(), '-updated_date', 1),
+        backend.entities.FoodLog.filter(await userScopedFilter({ date }), '-created_date', 10),
+      ]);
+
+      userProfile = userProfiles.status === 'fulfilled' ? userProfiles.value?.[0] : null;
+      nutritionProfile = nutritionProfiles.status === 'fulfilled' ? nutritionProfiles.value?.[0] : null;
+      foodLogs = recentFoodLogs.status === 'fulfilled' ? recentFoodLogs.value : [];
+    }
 
     const planSummary = masterPlan.plan_summary || masterPlan.plan_payload?.plan_summary || {};
     const recoveryStrategy = masterPlan.recovery_strategy || masterPlan.plan_payload?.recovery_strategy || {};
@@ -316,6 +340,10 @@ Breakfast, lunch, and dinner are required. Snack is preferred. Every meal must h
 
     const aiResponse = await backend.integrations.Core.InvokeLLM({
       prompt,
+      // Real per-day output is ~1000–1600 tokens (4 meals w/ ingredients +
+      // instructions + grocery_items); 2500 gives headroom while keeping the TPM
+      // reservation footprint small under concurrent multi-day builds.
+      max_output_tokens: 2500,
       response_json_schema: {
         type: 'object',
         properties: {
@@ -334,8 +362,10 @@ Breakfast, lunch, and dinner are required. Snack is preferred. Every meal must h
 
     validateMealPlan(aiResponse);
 
-    // Save exactly one MealPlan record
-    const createdPlan = await backend.entities.MealPlan.create(await withUserEmail({
+    // Save exactly one MealPlan record. withBackoff wraps the create so a 429
+    // retries to exhaustion before the function's top-level catch converts it to
+    // a {status:'error'} result. No swallowing .catch here — propagate to that catch.
+    const mealPlanPayload = await withUserEmail({
       date,
       plan_type: 'daily',
       total_calories: aiResponse.total_calories,
@@ -351,7 +381,10 @@ Breakfast, lunch, and dinner are required. Snack is preferred. Every meal must h
       grocery_items: aiResponse.grocery_items || [],
       hydration_liters: aiResponse.hydration_liters || nutritionTargets.hydration_liters || 2.5,
       notes: aiResponse.notes || '',
-    }));
+    });
+    const createdPlan = await withBackoff(
+      () => backend.entities.MealPlan.create(mealPlanPayload),
+    );
 
     const generated = { status: 'ready', mealPlan: createdPlan, masterPlan, overviewDay };
     appCache.set(mealCacheKey, generated);
