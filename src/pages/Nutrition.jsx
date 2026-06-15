@@ -474,7 +474,6 @@ export default function Nutrition() {
   const [loggedTotals, setLoggedTotals] = useState(cachedToday.loggedTotals || { cals: 0, protein: 0, carbs: 0, fats: 0 });
   // Rolling 7-day build state
   const [buildingWeek, setBuildingWeek] = useState(false);
-  const [buildProgress, setBuildProgress] = useState({ current: 0, total: 0 });
   const [weekBuildResult, setWeekBuildResult] = useState(null);
   const [weekBuildError, setWeekBuildError] = useState('');
   const [missingDaysCount, setMissingDaysCount] = useState(0);
@@ -537,7 +536,6 @@ export default function Nutrition() {
           ? { ...e, result: { ...e.result, status: 'loading' } }
           : e
       ));
-      setBuildProgress({ current: 0, total: toProcess.length });
 
       const built = [];
       const failed = [];
@@ -569,7 +567,6 @@ export default function Nutrition() {
         }
       }
 
-      setBuildProgress({ current: toProcess.length, total: toProcess.length });
       setWeekBuildResult({ built, failed });
       setMissingDaysCount(failed.length);
     } catch (err) {
@@ -909,7 +906,7 @@ export default function Nutrition() {
                       className="w-full py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-2 mb-3"
                       style={{ background: buildingWeek ? 'rgba(200,224,0,0.5)' : ACCENT, color: '#141613', boxShadow: buildingWeek ? 'none' : '0 5px 20px rgba(200,224,0,0.38)' }}>
                       {buildingWeek
-                        ? <><Loader2 size={15} className="animate-spin" /> Building {buildProgress.current} of {buildProgress.total}…</>
+                        ? <><Loader2 size={15} className="animate-spin" /> Building weekly nutrition plan…</>
                         : <><Sparkles size={15} /> Build 7 days</>}
                     </motion.button>
 
@@ -962,7 +959,7 @@ export default function Nutrition() {
                       style={{ background: 'rgba(200,224,0,0.07)', borderColor: 'rgba(200,224,0,0.25)' }}>
                       <Loader2 size={13} className="animate-spin" style={{ color: ACCENT_DARK }} />
                       <p className="text-xs font-semibold" style={{ color: '#5d635d' }}>
-                        Building day {buildProgress.current} of {buildProgress.total}…
+                        Building weekly nutrition plan…
                       </p>
                     </div>
                   )}
@@ -1171,7 +1168,7 @@ export default function Nutrition() {
                       style={{ background: 'rgba(200,224,0,0.07)', borderColor: 'rgba(200,224,0,0.25)' }}>
                       <Loader2 size={13} className="animate-spin" style={{ color: ACCENT_DARK }} />
                       <p className="text-xs font-semibold" style={{ color: '#5d635d' }}>
-                        Building day {buildProgress.current} of {buildProgress.total}…
+                        Building weekly nutrition plan…
                       </p>
                     </div>
                   )}
