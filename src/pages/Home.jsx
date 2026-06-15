@@ -25,6 +25,7 @@ import MacroTrackerCard from '@/components/home/MacroTrackerCard';
 import { resolveCalorieTarget } from '@/lib/calorieGoal';
 import ProgressSnapshotCard from '@/components/home/ProgressSnapshotCard';
 import { appCache } from '@/lib/appCache';
+import { useCacheHydrated } from '@/hooks/useCacheHydrated';
 import { getPlanDaySessionTitle } from '@/lib/planDayDisplay';
 
 const PAGE_KEY = 'home';
@@ -247,10 +248,22 @@ function NutritionCard({ activePlan, mealPlan, overviewDay, todayStr }) {
 
 // ─── Plan status hero banner ──────────────────────────────────────────────────
 
-function PlanHeroBanner({ activePlan, overviewDay, personalizationSaved, onPersonalize, onShowInfo }) {
+function PlanHeroBanner({ activePlan, overviewDay, personalizationSaved, onPersonalize, onShowInfo, planResolved }) {
   const navigate = useNavigate();
 
   if (!activePlan) {
+    // Loading floor: until the durable cache has hydrated AND the first load has
+    // settled, we don't yet know whether a plan exists — render a skeleton, never
+    // the "Build my plan" CTA, so an existing plan can't flash the empty state.
+    if (!planResolved) {
+      return (
+        <div className="p-4 rounded-2xl border space-y-3"
+          style={{ background: 'rgba(200,224,0,0.07)', borderColor: 'rgba(200,224,0,0.3)' }}>
+          <div className="h-3 w-24 rounded-full animate-pulse" style={{ background: 'rgba(142,164,0,0.25)' }} />
+          <div className="h-10 w-full rounded-xl animate-pulse" style={{ background: 'rgba(200,224,0,0.18)' }} />
+        </div>
+      );
+    }
     return (
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
         className="p-4 rounded-2xl border space-y-2"
@@ -309,6 +322,7 @@ export default function Home() {
   const navigate = useNavigate();
   const [greeting, setGreeting] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
@@ -334,6 +348,12 @@ export default function Home() {
   const vitals = useVitalsLayout();
   const todayStr = getTodayStr();
 
+  // Loading floor: the empty-state CTA may only render once the durable cache
+  // has hydrated AND the first load has settled. Until then we can't tell a
+  // plan-less user from a not-yet-loaded one, so we show a skeleton.
+  const cacheReady = useCacheHydrated();
+  const planResolved = cacheReady && loadedOnce;
+
   useEffect(() => {
     const h = new Date().getHours();
     setGreeting(h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening');
@@ -348,10 +368,30 @@ export default function Home() {
 
   const loadDashboard = useCallback(async (silent = false) => {
     setLoadError(false);
+    // The durable cache replays into appCache asynchronously at boot. Wait for it
+    // so a cold launch reads the persisted plan instead of an empty cache, then
+    // re-seed state (the useState initializers ran pre-hydration and saw null).
+    await appCache.whenHydrated();
+    // Capture the owning user; if an account switch lands while this load runs,
+    // the late response must not write the new user's screen (Invariant 1).
+    const uid = appCache.getActiveUid();
+    const hydrated = appCache.get(HOME_CACHE_KEY);
+    if (hydrated) {
+      setActivePlan(hydrated.activePlan || null);
+      setOverviewDay(hydrated.overviewDay || null);
+      setDailyLog(hydrated.dailyLog || null);
+      setWorkoutPlan(hydrated.workoutPlan || null);
+      setMealPlan(hydrated.mealPlan || null);
+      setReadiness(hydrated.readiness || null);
+      setUserProfile(hydrated.userProfile || null);
+      setNutritionProfile(hydrated.nutritionProfile || null);
+      setPersonalizationSaved(Boolean(hydrated.userProfile?.profile_setup_completed || hydrated.userProfile?.plan_questionnaire_completed));
+    }
     // If we have fresh cached data with a valid plan, skip the network round-trip entirely.
     // The longer TTL in appCache means this stays fresh across many tab switches.
     if (!silent && appCache.isFresh(HOME_CACHE_KEY) && appCache.get(HOME_CACHE_KEY)?.activePlan) {
       setLoading(false);
+      setLoadedOnce(true);
       return;
     }
     try {
@@ -364,6 +404,9 @@ export default function Home() {
         backend.entities.DailyLog.filter(await userScopedFilter({ date: todayStr })).catch(() => []),
         backend.entities.FoodLog.filter(await userScopedFilter({ date: todayStr })).catch(() => []),
       ]);
+
+      // Bail if the active user changed mid-fetch — don't paint stale data.
+      if (appCache.getActiveUid() !== uid) { setLoading(false); setLoadedOnce(true); return; }
 
       const up = userProfiles?.[0] || null;
       const baseLog = dailyLogs?.[0] || null;
@@ -395,6 +438,9 @@ export default function Home() {
             ? backend.entities.MealPlan.filter(await userScopedFilter({ date: todayStr, source_plan_id: plan.id })).catch(() => []).then(r => r?.[0] || null)
             : backend.entities.MealPlan.filter(await userScopedFilter({ date: todayStr })).catch(() => []).then(r => r?.[0] || null),
       ]);
+      // Re-check after the second round-trip: a switch may have landed since.
+      if (appCache.getActiveUid() !== uid) { setLoading(false); setLoadedOnce(true); return; }
+
       const finalWorkoutPlan = wpResult?.status === 'ready' ? wpResult.workoutPlan : null;
       setWorkoutPlan(finalWorkoutPlan);
       setMealPlan(mpResult);
@@ -418,6 +464,7 @@ export default function Home() {
       setLoadError(true);
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
     }
   }, [todayStr]);
 
@@ -527,7 +574,7 @@ export default function Home() {
   const widgetContent = {
     ai_summary: (
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.03 }}>
-        <PlanHeroBanner activePlan={activePlan} overviewDay={overviewDay} personalizationSaved={personalizationSaved} onPersonalize={() => setShowStarterProfile(true)} onShowInfo={() => setShowStarterProfile(true)} />
+        <PlanHeroBanner activePlan={activePlan} overviewDay={overviewDay} personalizationSaved={personalizationSaved} planResolved={planResolved} onPersonalize={() => setShowStarterProfile(true)} onShowInfo={() => setShowStarterProfile(true)} />
       </motion.div>
     ),
 

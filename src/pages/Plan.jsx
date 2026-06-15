@@ -20,8 +20,9 @@ import PlanGeneratingOverlay from '@/components/plan/PlanGeneratingOverlay';
 import StarterProfileModal from '@/components/profile/StarterProfileModal';
 
 import { backend } from '@/api/backendClient';
-import { loadActiveAIPlan, loadPlanQuestionnaireDefaults, getTodayISODate } from '@/lib/personalizationSync';
+import { loadActiveAIPlan, loadPlanQuestionnaireDefaults, getTodayISODate, bustPlanCache } from '@/lib/personalizationSync';
 import { appCache } from '@/lib/appCache';
+import { useCacheHydrated } from '@/hooks/useCacheHydrated';
 import {
   startGeneration, subscribeToGeneration, isGenerating, loadPendingAnswers, loadPendingStep, clearPendingAnswers,
 } from '@/lib/planGenerationState';
@@ -99,6 +100,11 @@ export default function Plan() {
   const { isPremium, loading: subLoading } = useSubscription();
   const [showPremiumPaywall, setShowPremiumPaywall] = useState(false);
 
+  // Loading floor: on an iOS cold launch the sync cache reads above return null
+  // until the durable cache replays into appCache. Keep the skeleton (never the
+  // empty state) until hydration settles so an existing plan can't flash the CTA.
+  const cacheReady = useCacheHydrated();
+
   useEffect(() => {
     if (searchParams.get('generate') === 'true' && !subLoading) {
       isPremium ? setShowQuestionnaire(true) : setShowPremiumPaywall(true);
@@ -111,44 +117,70 @@ export default function Plan() {
   }, [subLoading]);
 
   useEffect(() => {
-    // Skip network entirely if cached plan is fresh
-    if (appCache.isFresh('plan-page') && cachedPlan.activePlan) {
-      setPlanLoading(false);
-    } else {
-      const load = async () => {
-        if (!cachedPlan.activePlan) setPlanLoading(true);
-        const [plan, readinessCheckins] = await Promise.all([
-          loadActiveAIPlan().catch(() => null),
-          backend.entities.ReadinessCheckIn.filter({ date: todayStr }).catch(() => []),
-        ]);
-
-        const saved = plan ? {
-          training: plan.summary || '',
-          nutrition: plan.nutrition_guidance || '',
-          recovery: plan.recovery_advice || '',
-          savedAt: plan.generated_at,
-        } : null;
-        const r = readinessCheckins?.[0] || null;
-
-        if (plan) {
-          setActivePlan(plan);
-          setActivePlanId(plan.id);
-          setSavedPlan(saved);
-        }
-        setReadiness(r);
-        setPlanLoading(false);
-
-        if (plan) appCache.set('ai-plan:daily', plan);
-        appCache.set('plan-page', {
-          activePlan: plan,
-          activePlanId: plan?.id || null,
-          savedPlan: saved,
-          readiness: r,
+    const load = async () => {
+      // Wait for the durable cache to replay into appCache, then re-read it: the
+      // useState initializers above ran pre-hydration and saw null on cold launch.
+      await appCache.whenHydrated();
+      // Capture the owning user so a response landing after an account switch
+      // can't overwrite the new user's plan state (Invariant 1).
+      const uid = appCache.getActiveUid();
+      const hydratedPage = appCache.get('plan-page') || {};
+      const hydratedAI = appCache.get('ai-plan:daily');
+      const seeded = hydratedPage.activePlan || hydratedAI || null;
+      if (seeded) {
+        setActivePlan(seeded);
+        setActivePlanId(hydratedPage.activePlanId || seeded.id || null);
+        setSavedPlan(hydratedPage.savedPlan || {
+          training: seeded.summary || '',
+          nutrition: seeded.nutrition_guidance || '',
+          recovery: seeded.recovery_advice || '',
+          savedAt: seeded.generated_at,
         });
-      };
+        if (hydratedPage.readiness) setReadiness(hydratedPage.readiness);
+        setPlanLoading(false);
+      }
 
-      load();
-    }
+      // Skip network entirely if cached plan is fresh
+      if (appCache.isFresh('plan-page') && appCache.get('plan-page')?.activePlan) {
+        setPlanLoading(false);
+        return;
+      }
+
+      if (!seeded) setPlanLoading(true);
+      const [plan, readinessCheckins] = await Promise.all([
+        loadActiveAIPlan().catch(() => null),
+        backend.entities.ReadinessCheckIn.filter({ date: todayStr }).catch(() => []),
+      ]);
+
+      // Bail if the active user changed mid-fetch — don't write their state/cache.
+      if (appCache.getActiveUid() !== uid) { setPlanLoading(false); return; }
+
+      const saved = plan ? {
+        training: plan.summary || '',
+        nutrition: plan.nutrition_guidance || '',
+        recovery: plan.recovery_advice || '',
+        savedAt: plan.generated_at,
+      } : null;
+      const r = readinessCheckins?.[0] || null;
+
+      if (plan) {
+        setActivePlan(plan);
+        setActivePlanId(plan.id);
+        setSavedPlan(saved);
+      }
+      setReadiness(r);
+      setPlanLoading(false);
+
+      if (plan) appCache.setForUser(uid, 'ai-plan:daily', plan);
+      appCache.setForUser(uid, 'plan-page', {
+        activePlan: plan,
+        activePlanId: plan?.id || null,
+        savedPlan: saved,
+        readiness: r,
+      });
+    };
+
+    load();
     loadPlanQuestionnaireDefaults().then(({ initialAnswers, completedStepIds }) => {
       setProfileQuestionnaireAnswers(initialAnswers || {});
       setProfileSkippedStepIds(completedStepIds || []);
@@ -437,6 +469,9 @@ export default function Plan() {
                         </button>
                         <button onClick={async () => {
                           if (activePlanId) await backend.entities.AIPlan.delete(activePlanId).catch(() => {});
+                          // Drop every cache derived from the deleted plan so it
+                          // can't be re-hydrated on the next mount (Invariant 3).
+                          bustPlanCache('daily'); bustPlanCache('weekly');
                           setSavedPlan(null); setActivePlan(null); setActivePlanId(null);
                           setConfirmDelete(false); setShowProfile(false);
                         }} className="flex-1 py-3 rounded-xl text-sm font-bold"
@@ -495,19 +530,19 @@ export default function Plan() {
       {/* ── Main content ── */}
       <div className="px-5 pb-8 pt-5 space-y-4">
 
-        {/* Loading skeleton */}
-        {planLoading && (
+        {/* Loading skeleton — also held until the durable cache has hydrated */}
+        {(planLoading || !cacheReady) && (
           <div className="flex flex-col items-center py-20 gap-3">
             <Loader2 size={22} className="animate-spin" style={{ color: ACCENT_DARK }} />
             <p className="text-sm" style={{ color: '#91968e' }}>Loading your plan…</p>
           </div>
         )}
 
-        {!planLoading && !hasPlan && !generating && (
+        {cacheReady && !planLoading && !hasPlan && !generating && (
           <EmptyPlanState onGenerate={openQuestionnaire} />
         )}
 
-        {!planLoading && hasPlan && !generating && (
+        {cacheReady && !planLoading && hasPlan && !generating && (
           <>
             {/* Focus card */}
             <PlanFocusCard

@@ -510,7 +510,21 @@ export function bustPlanCache(planType = 'daily') {
 // Backward-compatible alias
 export const bustAIPlanCache = bustPlanCache;
 
+/**
+ * Clear the module-level caches that survive appCache.clear() — the in-memory
+ * AIPlan cache and the cached user email. Call on logout and account switch so
+ * a new session never reads the previous user's plan or email (Invariants 1, 5).
+ */
+export function resetPersonalizationCaches() {
+  for (const key of Object.keys(_aiPlanCache)) delete _aiPlanCache[key];
+  _cachedUserEmail = null;
+  _cachedUserEmailFetchedAt = 0;
+}
+
 export async function loadActivePlan(planType = 'daily') {
+  // Capture the owning user at start. If an account switch lands while this
+  // fetch is in flight, the late response must not write the new user's cache.
+  const uid = appCache.getActiveUid();
   const cacheKey = await getScopedPlanCacheKey(planType);
   const appCacheKey = `ai-plan:${planType}`;
   const cached = _aiPlanCache[cacheKey];
@@ -539,14 +553,20 @@ export async function loadActivePlan(planType = 'daily') {
     return fallback;
   }
 
+  // An account switch landed mid-fetch — this result belongs to the previous
+  // user. Discard it (don't write the new user's cache) and return the stale
+  // fallback for the original caller (Invariant 1).
+  if (appCache.getActiveUid() !== uid) {
+    return cached?.plan || storedPlan || null;
+  }
+
   if (!Array.isArray(records) || records.length === 0) {
-    // Empty result — only replace cache if we had no stale plan (avoid wiping valid data)
-    const fallback = cached?.plan || storedPlan || null;
-    if (!fallback) {
-      _aiPlanCache[cacheKey] = { plan: null, fetchedAt: Date.now() };
-      appCache.set(appCacheKey, null);
-    }
-    return fallback;
+    // Authoritative empty (the filter returned, didn't throw) — the active plan
+    // was deleted server-side. Overwrite the cache with null so the deletion
+    // cannot persist past this single revalidation (Invariant 3).
+    _aiPlanCache[cacheKey] = { plan: null, fetchedAt: Date.now() };
+    appCache.setForUser(uid, appCacheKey, null);
+    return null;
   }
 
   const safeRecords = records.filter(Boolean).sort((a, b) => {
@@ -567,7 +587,7 @@ export async function loadActivePlan(planType = 'daily') {
     : (safeRecords[0] || null);
 
   _aiPlanCache[cacheKey] = { plan, fetchedAt: Date.now() };
-  appCache.set(appCacheKey, plan); // persist to sessionStorage
+  appCache.setForUser(uid, appCacheKey, plan); // persist (no-op if user switched)
   return plan;
 }
 

@@ -3,6 +3,7 @@ import { appCache } from '@/lib/appCache';
 import { backend, isSupabaseConfigured, supabase, supabaseConfigError } from '@/api/backendClient';
 import { getPlatform } from '@/lib/platform';
 import { bustSubscriptionCache } from '@/lib/subscription';
+import { resetPersonalizationCaches } from '@/lib/personalizationSync';
 
 const AuthContext = createContext();
 
@@ -29,6 +30,9 @@ export const AuthProvider = ({ children }) => {
       setUser(currentUser);
       setIsAuthenticated(true);
       setAuthError(null);
+      // Reconcile the cache to this user. Idempotent: same uid is a no-op, a
+      // different uid purges the previous user's cache behind the loading floor.
+      if (currentUser?.id) appCache.activateUser(currentUser.id);
     } catch (error) {
       setUser(null);
       setIsAuthenticated(false);
@@ -68,6 +72,10 @@ export const AuthProvider = ({ children }) => {
       const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
       if (data?.session) {
+        // getSession() is LOCAL (no network) — reconcile the cache off the local
+        // uid so an offline cold launch activates the right user even if the
+        // networked me() in checkUserAuth fails.
+        if (data.session.user?.id) appCache.activateUser(data.session.user.id);
         await checkUserAuth();
       } else {
         setUser(null);
@@ -102,8 +110,15 @@ export const AuthProvider = ({ children }) => {
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
+        // Reconcile the cache off the LOCAL event uid (no extra network). The
+        // switch decision is delegated to activateUser, which is idempotent on
+        // the same uid (so a token refresh / INITIAL_SESSION won't purge) and
+        // only purges + re-hydrates behind the loading floor on a real switch.
+        appCache.activateUser(session.user.id);
         checkUserAuth().catch(() => {});
       } else {
+        appCache.deactivate();
+        resetPersonalizationCaches();
         setUser(null);
         setIsAuthenticated(false);
         setAuthError({
@@ -261,6 +276,10 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setIsAuthenticated(false);
     appCache.clear();
+    // clear() empties the durable store but not the module-level caches; tear
+    // those down too and drop the active uid so the next sign-in re-activates.
+    appCache.deactivate();
+    resetPersonalizationCaches();
     await backend.auth.logout();
     setAuthError({
       type: 'auth_required',

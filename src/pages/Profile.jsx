@@ -8,6 +8,7 @@ import { ChevronRight, LogOut, User, Target, Utensils, Dumbbell, ShieldAlert, Br
 import { useNavigate } from 'react-router-dom';
 import { useSubscription } from '@/hooks/useSubscription';
 import { backend } from '@/api/backendClient';
+import { useAuth } from '@/lib/AuthContext';
 import { getUnitSystem, setUnitSystem, UNIT_SYSTEMS } from '@/lib/units';
 import {
   saveUserProfile, saveWorkoutProfile, saveNutritionProfile,
@@ -18,7 +19,7 @@ import { loadProfileEffectiveValues } from '@/lib/profilePlanSync';
 const ACCENT = '#c8e000';
 const ACCENT_DARK = '#8ea400';
 
-function DeleteAccountModal({ onConfirm, onCancel }) {
+function DeleteAccountModal({ onConfirm, onCancel, logout }) {
   const [confirming, setConfirming] = useState(false);
 
   const handleConfirm = async () => {
@@ -26,8 +27,8 @@ function DeleteAccountModal({ onConfirm, onCancel }) {
     try {
       // Delete all user entity data via backend function
       await backend.functions.invoke('deleteUserData', {});
-      // Then log out
-      await backend.auth.logout();
+      // Then log out via AuthContext so appCache + module caches are cleared.
+      await logout();
       onConfirm?.();
     } catch (err) {
       console.error('Delete account failed:', err);
@@ -641,6 +642,7 @@ function LimitationsPanel() {
 
 export default function Profile() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const { isPremium, subscription, loading: subLoading } = useSubscription();
 
   const [activeSection, setActiveSection] = useState(() => {
@@ -847,7 +849,7 @@ export default function Profile() {
               </button>
 
               {/* Sign out */}
-              <button onClick={() => backend.auth.logout()}
+              <button onClick={() => logout()}
                 className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold border"
                 style={{ background: 'rgba(176,90,58,0.06)', borderColor: 'rgba(176,90,58,0.2)', color: '#b05a3a' }}>
                 <LogOut size={16} /> Sign Out
@@ -874,6 +876,7 @@ export default function Profile() {
       <AnimatePresence>
         {showDeleteModal && (
           <DeleteAccountModal
+            logout={logout}
             onConfirm={() => setShowDeleteModal(false)}
             onCancel={() => setShowDeleteModal(false)}
           />
