@@ -148,10 +148,12 @@ export default function Recovery() {
   const [activeTab, setActiveTab] = useState(isFromMyWeek ? 'guidance' : 'checkin');
   const [checkin, setCheckin] = useState({ energy: 7, soreness: 3, sleep: 7, stress: 3, motivation: 7 });
   const [submitted, setSubmitted] = useState(false);
+  const [hydrating, setHydrating] = useState(true);
   const { injuries, setInjuries, loadingInjuries } = useInjuries();
   const [showAddInjury, setShowAddInjury] = useState(false);
   const [newInjury, setNewInjury] = useState({ area: '', severity: '', severityLabel: '', notes: '' });
   const [guidance, setGuidance] = useState(null);
+  const [guidanceInputs, setGuidanceInputs] = useState(null);
   const [generatingGuidance, setGeneratingGuidance] = useState(false);
   const [isCustomizing, setIsCustomizing] = useState(false);
   const [plannedRecoveryTasks, setPlannedRecoveryTasks] = useState([]);
@@ -180,6 +182,40 @@ export default function Recovery() {
       const sorted = logs.sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || ''));
       setWorkoutLogForDrivers(sorted[0] || null);
     }).catch(() => {});
+  }, [targetDate]);
+
+  // Hydrate from an existing readiness check-in so a completed day opens on the
+  // saved score + guidance instead of the blank data-entry form.
+  useEffect(() => {
+    let cancelled = false;
+    setHydrating(true);
+
+    backend.entities.ReadinessCheckIn.filter({ date: targetDate })
+      .then(records => {
+        if (cancelled) return;
+        const record = records?.[0];
+        if (!record) return;
+
+        setCheckin(prev => ({
+          energy: record.energy ?? prev.energy,
+          soreness: record.soreness ?? prev.soreness,
+          sleep: record.sleep_quality ?? prev.sleep,
+          stress: record.stress ?? prev.stress,
+          motivation: record.motivation ?? prev.motivation,
+        }));
+        setSubmitted(true);
+        setGuidance(record.guidance ?? null);
+        setGuidanceInputs(record.guidance_inputs ?? null);
+        setActiveTab('guidance');
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setHydrating(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [targetDate]);
 
   // Load planned recovery tasks from the canonical DailyLog for this date.
@@ -217,6 +253,11 @@ export default function Recovery() {
   // After submission, use dynamic score (includes workout/sleep/nutrition signals)
   const displayScore = submitted && dynamicScore != null ? dynamicScore : previewScore;
   const { label: readinessLabel, color: readinessColor, emoji } = getReadinessLabelLocal(displayScore);
+  // Guidance is stale when the current sliders differ from the inputs it was generated from.
+  const guidanceStale = Boolean(
+    guidance && guidanceInputs &&
+    CHECK_IN_FIELDS.some(field => checkin[field.key] !== guidanceInputs[field.key])
+  );
 
   const generateGuidance = async () => {
     setGeneratingGuidance(true);
@@ -263,8 +304,12 @@ Use safety language always: "guidance", "recommendation", "consider consulting a
         }
       }
     });
+    const inputsSnapshot = { ...checkin };
     setGuidance(result);
+    setGuidanceInputs(inputsSnapshot);
     setGeneratingGuidance(false);
+
+    upsertReadinessCheckIn(targetDate, { guidance: result, guidance_inputs: inputsSnapshot }).catch(() => {});
   };
 
   const handleSubmitCheckin = async () => {
@@ -372,6 +417,11 @@ Use safety language always: "guidance", "recommendation", "consider consulting a
       </div>
 
       <div className="px-5 pb-32 pt-4">
+        {hydrating ? (
+          <div className="flex justify-center py-20">
+            <Loader2 size={20} className="animate-spin" style={{ color: '#8ea400' }} />
+          </div>
+        ) : (
         <AnimatePresence mode="wait">
 
           {/* CHECK-IN */}
@@ -646,8 +696,20 @@ Use safety language always: "guidance", "recommendation", "consider consulting a
                 </div>
               )}
 
+              {guidanceStale && !generatingGuidance && (
+                <div className="p-4 rounded-2xl border mb-4" style={{ background: 'rgba(176,90,58,0.07)', borderColor: 'rgba(176,90,58,0.25)' }}>
+                  <p className="text-xs font-bold mb-1" style={{ color: '#b05a3a' }}>Inputs changed</p>
+                  <p className="text-sm mb-3" style={{ color: '#5d635d' }}>Your check-in has been edited since this guidance was generated.</p>
+                  <button onClick={generateGuidance}
+                    className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2"
+                    style={{ background: ACCENT, color: '#141613' }}>
+                    <Sparkles size={13} /> Regenerate Guidance
+                  </button>
+                </div>
+              )}
+
               {guidance && !generatingGuidance && (
-                <div className="space-y-4">
+                <div className="space-y-4" style={{ opacity: guidanceStale ? 0.5 : 1 }}>
                   <div className="p-4 rounded-2xl border" style={{ background: 'rgba(200,224,0,0.08)', borderColor: 'rgba(200,224,0,0.3)' }}>
                     <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: ACCENT_DARK }}>Training Today</p>
                     <p className="text-sm leading-relaxed font-medium" style={{ color: '#141613' }}>{guidance.training_recommendation}</p>
@@ -695,6 +757,7 @@ Use safety language always: "guidance", "recommendation", "consider consulting a
           )}
 
         </AnimatePresence>
+        )}
       </div>
 
     </div>

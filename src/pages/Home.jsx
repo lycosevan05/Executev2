@@ -554,49 +554,27 @@ export default function Home() {
     ),
 
     score_row: (
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.07 }}
-        className="grid grid-cols-2 gap-3">
-        {/* Readiness — tap to check in */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.07 }}>
+        {/* Readiness — full-width, tap to check in */}
         <button onClick={() => navigate('/recovery')} className="text-left w-full">
           <div className="p-4 rounded-2xl border" style={{ background: '#ffffff', borderColor: '#e0d9cc', boxShadow: '0 2px 10px rgba(20,22,19,0.08)' }}>
-            <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: '#a09a90' }}>Readiness</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#a09a90' }}>Readiness</p>
+              {readinessScore != null && (
+                <p className="text-[10px] font-semibold leading-tight" style={{ color: ACCENT_DARK }}>{readinessLabel?.split(' —')[0]}</p>
+              )}
+            </div>
             {readinessScore != null ? (
               <>
-                <div className="flex items-end gap-2 mb-1.5">
-                  <span className="text-2xl font-black" style={{ color: '#141613' }}>{Math.round(readinessScore)}</span>
-                  <span className="text-xs mb-0.5" style={{ color: '#91968e' }}>/100</span>
+                <div className="flex items-end gap-2 mb-2">
+                  <span className="text-3xl font-black" style={{ color: '#141613' }}>{Math.round(readinessScore)}</span>
+                  <span className="text-xs mb-1" style={{ color: '#91968e' }}>/100</span>
                 </div>
-                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#e8e1d4' }}>
+                <div className="h-2 rounded-full overflow-hidden" style={{ background: '#e8e1d4' }}>
                   <motion.div className="h-full rounded-full" style={{ background: ACCENT }}
                     initial={{ width: 0 }} animate={{ width: `${Math.min(readinessScore, 100)}%` }}
                     transition={{ duration: 1.2 }} />
                 </div>
-                <p className="text-[10px] mt-1.5 leading-tight" style={{ color: ACCENT_DARK }}>{readinessLabel?.split(' —')[0]}</p>
-              </>
-            ) : (
-              <p className="text-xs font-semibold" style={{ color: ACCENT_DARK }}>Tap to check in →</p>
-            )}
-          </div>
-        </button>
-
-        {/* Energy — tap to check in */}
-        <button onClick={() => navigate('/recovery')} className="text-left w-full">
-          <div className="p-4 rounded-2xl border" style={{ background: '#ffffff', borderColor: '#e0d9cc', boxShadow: '0 2px 10px rgba(20,22,19,0.08)' }}>
-            <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: '#a09a90' }}>Energy</p>
-            {readiness?.energy != null ? (
-              <>
-                <div className="flex items-end gap-2 mb-1.5">
-                  <span className="text-2xl font-black" style={{ color: '#141613' }}>{readiness.energy}</span>
-                  <span className="text-xs mb-0.5" style={{ color: '#91968e' }}>/10</span>
-                </div>
-                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#e8e1d4' }}>
-                  <motion.div className="h-full rounded-full" style={{ background: readiness.energy >= 7 ? ACCENT : '#b05a3a' }}
-                    initial={{ width: 0 }} animate={{ width: `${Math.min(readiness.energy * 10, 100)}%` }}
-                    transition={{ duration: 1.2 }} />
-                </div>
-                <p className="text-[10px] mt-1.5 leading-tight" style={{ color: readiness.energy >= 7 ? ACCENT_DARK : '#b05a3a' }}>
-                  {readiness.energy >= 8 ? 'Fully charged' : readiness.energy >= 6 ? 'Feeling good' : readiness.energy >= 4 ? 'Moderate' : 'Low energy'}
-                </p>
               </>
             ) : (
               <p className="text-xs font-semibold" style={{ color: ACCENT_DARK }}>Tap to check in →</p>

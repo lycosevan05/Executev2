@@ -377,6 +377,9 @@ export async function upsertReadinessCheckIn(date, checkInData) {
   } else {
     result = await backend.entities.ReadinessCheckIn.create(await withUserEmail({ date, ...checkInData }));
   }
+  // Home reads readiness from a cached dashboard snapshot; invalidate it so the
+  // readiness widget reflects this check-in on the next Home mount.
+  appCache.invalidate('home-dashboard');
   await invalidatePersonalizationContext();
   return result;
 }
