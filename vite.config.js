@@ -11,6 +11,14 @@ export default defineConfig({
     react(),
   ],
   build: {
+    // Pin the build entry to the root index.html so Rollup/Vite's scanner can
+    // never crawl into ios/ (DerivedData, or the iOS-bundled copy of the app in
+    // ios/App/App/public). server.fs.deny below is dev-server only and does NOT
+    // apply to `vite build`, so without this the build can walk thousands of
+    // native/build-output files and take minutes.
+    rollupOptions: {
+      input: path.resolve(__dirname, 'index.html'),
+    },
     // Bundle all CSS into a single stylesheet loaded upfront from index.html
     // instead of per-async-chunk CSS. Capacitor's WKWebView (capacitor://
     // scheme) sometimes never fires the `load` event on dynamically injected
