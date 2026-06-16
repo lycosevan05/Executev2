@@ -183,11 +183,6 @@ const AuthenticatedApp = () => {
   const location = useLocation();
   useAutoResumeWorkout(isAuthenticated);
 
-  // Public legal pages are reachable without authentication so links on the
-  // sign-in screen (and the App Store metadata) always resolve.
-  if (location.pathname === '/privacy') return <PrivacyPolicy />;
-  if (location.pathname === '/terms') return <Terms />;
-
   // Run one-time migration of localStorage data → Supabase entities
   // Also pre-warm critical caches on boot so first navigation is instant
   useEffect(() => {
@@ -198,6 +193,12 @@ const AuthenticatedApp = () => {
       runMigrationIfNeeded().catch(() => {});
     }
   }, [isAuthenticated]);
+
+  // Public legal pages are reachable without authentication so links on the
+  // sign-in screen (and the App Store metadata) always resolve. This check must
+  // run AFTER all hooks above so render never calls fewer hooks (Rules of Hooks).
+  if (location.pathname === '/privacy') return <PrivacyPolicy />;
+  if (location.pathname === '/terms') return <Terms />;
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (

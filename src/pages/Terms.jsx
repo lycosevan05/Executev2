@@ -3,12 +3,12 @@
  * Styled to match the rest of the app (Billing-style sticky header + back button).
  */
 
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 
 const ACCENT_DARK = '#8ea400';
 const EFFECTIVE_DATE = 'June 3, 2026';
-const CONTACT_EMAIL = 'support@executelabs.app';
+const CONTACT_EMAIL = 'support@executelabs.ca';
 const GOVERNING_LAW = 'British Columbia, Canada';
 
 function Section({ title, children }) {
@@ -24,6 +24,11 @@ function Section({ title, children }) {
 
 export default function Terms() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1);
+    else navigate('/');
+  };
 
   return (
     <div className="min-h-screen" style={{ background: '#f6f2e8' }}>
@@ -31,7 +36,7 @@ export default function Terms() {
       <div className="sticky top-0 z-40 px-5 pb-4"
         style={{ paddingTop: 'max(3rem, calc(env(safe-area-inset-top) + 1rem))', background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(-1)}
+          <button onClick={goBack}
             className="w-8 h-8 rounded-xl flex items-center justify-center border"
             style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
             <ChevronLeft size={14} style={{ color: '#5d635d' }} />
@@ -147,6 +152,8 @@ export default function Terms() {
             <a href={`mailto:${CONTACT_EMAIL}`} className="font-semibold underline" style={{ color: ACCENT_DARK }}>{CONTACT_EMAIL}</a>.
           </p>
         </Section>
+
+        <p className="text-xs text-center pt-2" style={{ color: '#91968e' }}>© Execute Labs. All rights reserved.</p>
       </div>
     </div>
   );
