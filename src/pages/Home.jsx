@@ -322,7 +322,11 @@ export default function Home() {
   const navigate = useNavigate();
   const [greeting, setGreeting] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loadedOnce, setLoadedOnce] = useState(false);
+  // Warm-nav optimization: a populated in-memory STORE means we already have a
+  // definitive plan/no-plan snapshot, so skip the floor on remount. On a true
+  // cold launch STORE is still empty here (boot hydration is async) → false →
+  // step in loadDashboard lifts it after whenHydrated().
+  const [loadedOnce, setLoadedOnce] = useState(() => Boolean(appCache.get(HOME_CACHE_KEY)));
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
@@ -386,6 +390,11 @@ export default function Home() {
       setUserProfile(hydrated.userProfile || null);
       setNutritionProfile(hydrated.nutritionProfile || null);
       setPersonalizationSaved(Boolean(hydrated.userProfile?.profile_setup_completed || hydrated.userProfile?.plan_questionnaire_completed));
+      // A cached HOME_CACHE_KEY snapshot is a definitive plan/no-plan answer
+      // (activePlan may be null). Lift the loading floor now; the network fetch
+      // below refreshes in the background (SWR). Only the first-ever launch, with
+      // no cached entry, must wait for the network to learn plan existence.
+      setLoadedOnce(true);
     }
     // If we have fresh cached data with a valid plan, skip the network round-trip entirely.
     // The longer TTL in appCache means this stays fresh across many tab switches.
