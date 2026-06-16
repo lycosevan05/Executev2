@@ -26,9 +26,19 @@ import { useCacheHydrated } from '@/hooks/useCacheHydrated';
 import {
   startGeneration, subscribeToGeneration, isGenerating, loadPendingAnswers, loadPendingStep, clearPendingAnswers,
 } from '@/lib/planGenerationState';
+import { clearByoDraft } from '@/lib/plans/byoDraft';
 
 const ACCENT = '#c8e000';
 const ACCENT_DARK = '#8ea400';
+
+// Human label for a BYO fallback notice (which supplied side(s) we couldn't read).
+function byoFallbackLabel(sides) {
+  const set = new Set(sides);
+  if (set.has('workout') && set.has('nutrition')) return 'training and nutrition';
+  if (set.has('workout')) return 'training';
+  if (set.has('nutrition')) return 'nutrition';
+  return 'plan';
+}
 
 const PLAN_SECTIONS = [
   { key: 'training', label: 'Training', color: '#b05a3a' },
@@ -204,9 +214,12 @@ export default function Plan() {
         : (err?.message || 'Something went wrong. Please try again.'));
       setGenerating(false);
       setShowQuestionnaire(false);
+      // On failure, LEAVE the BYO durable draft intact so the user never re-types
+      // a long pasted plan — only cleared on a committed plan below.
       return;
     }
     clearPendingAnswers();
+    clearByoDraft();
     const plan = result.aiPlan || result.masterPlan;
     const saved = {
       training: plan.summary || plan.workout_suggestion || '',
@@ -544,6 +557,16 @@ export default function Plan() {
 
         {cacheReady && !planLoading && hasPlan && !generating && (
           <>
+            {/* BYO ("Input your own plan") — non-blocking notice when a supplied
+                side couldn't be faithfully read and was built from goals instead. */}
+            {Array.isArray(activePlan?.plan_payload?.byo_fallback_sides) && activePlan.plan_payload.byo_fallback_sides.length > 0 && (
+              <div className="mb-4 p-3.5 rounded-2xl border text-xs leading-relaxed"
+                style={{ background: '#fbfaf6', borderColor: '#e8e1d4', color: '#5d635d' }}>
+                We couldn't faithfully read your {byoFallbackLabel(activePlan.plan_payload.byo_fallback_sides)} input,
+                so we built that side from your goals. You can edit it anytime.
+              </div>
+            )}
+
             {/* Focus card */}
             <PlanFocusCard
               activePlan={activePlan}

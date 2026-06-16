@@ -11,6 +11,7 @@ import { loadActiveAIPlan, userScopedFilter, withUserEmail } from '@/lib/persona
 import { resolveCalorieTarget } from '@/lib/calorieGoal';
 import { appCache } from '@/lib/appCache';
 import { withBackoff } from '@/lib/withBackoff';
+import { resolveByoMealFocus } from '@/lib/plans/byoCadence';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -235,6 +236,24 @@ export async function getOrCreateMealPlanForDate(date, options = {}) {
     const resolvedCalories = resolveCalorieTarget({ nutritionProfile, userProfile, activePlan: masterPlan });
     const effectiveCalories = resolvedCalories.calories ?? nutritionTargets.calories;
 
+    // BYO ("Input your own plan"): inject ONLY today's nutrition-focus slice.
+    // Pre-mapped in the overview for the first 7 days; resolved for later dates.
+    // Calories already flow from nutrition_targets (set from the user's stated
+    // calories at generation time), so no raw-text re-read is needed for targets.
+    const byoStructured = masterPlan.plan_payload?.byo_structured || null;
+    const byoAnchor = masterPlan.date_range_start || masterPlan.plan_payload?.weekly_overview?.week_start_date || null;
+    let byoMealFocus = overviewDay?.byo_meal_focus || null;
+    if (!byoMealFocus && byoStructured && byoAnchor) {
+      byoMealFocus = resolveByoMealFocus(byoStructured, byoAnchor, date);
+    }
+    const byoMealText = masterPlan.plan_payload?.byo_meal_text || '';
+    let byoMealBlock = '';
+    if (byoMealFocus) {
+      byoMealBlock = `\nUSER-PROVIDED NUTRITION FOCUS FOR TODAY (authoritative — reflect these foods/structure; fill gaps only):\n${JSON.stringify(byoMealFocus, null, 2)}\n`;
+    } else if (byoStructured && byoMealText) {
+      byoMealBlock = `\nUSER-PROVIDED NUTRITION PLAN (reference — this date was not pre-mapped; reflect the relevant portion faithfully):\n${byoMealText.slice(0, 4000)}\n`;
+    }
+
     const prompt = `You are an elite sports nutritionist generating a single day of meals for one specific date.
 
 CRITICAL RULES:
@@ -250,7 +269,7 @@ CRITICAL RULES:
 DATE: ${date}
 NUTRITION FOCUS TODAY: ${overviewDay?.nutrition_focus || 'Balanced macros aligned with weekly plan'}
 TODAY'S PRIORITY: ${overviewDay?.priority || ''}
-
+${byoMealBlock}
 NUTRITION TARGETS:
 - Calories: ${effectiveCalories ?? 'Not set'} kcal${resolvedCalories.source === 'manual' ? ' (user personal target — follow precisely)' : ''}
 - Protein: ${nutritionTargets.protein_g ?? (nutritionProfile?.protein_target_g || 'Not set')}g

@@ -1,8 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, ChevronLeft, ChevronDown, Sparkles, ArrowRight, Plus, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronDown, Sparkles, ArrowRight, Plus, X, Loader2, Upload } from 'lucide-react';
 import { getUnitSystem, lbsToKg, ftInToCm, kgToLbs, cmToFtIn } from '@/lib/units';
+import { getPlatform } from '@/lib/platform';
 import { savePendingAnswers } from '@/lib/planGenerationState';
+import { structurePastedPlan } from '@/lib/plans/structurePastedPlan';
+import { extractPdfTextClient, processPdfWithAI } from '@/lib/plans/extractPdfText';
+import { saveByoDraft, loadByoDraft } from '@/lib/plans/byoDraft';
 import SportWeekSchedule from '@/components/plan/SportWeekSchedule';
 import SupplementsPicker from '@/components/plan/SupplementsPicker';
 
@@ -10,40 +14,79 @@ import SupplementsPicker from '@/components/plan/SupplementsPicker';
 const ACCENT = '#c8e000';
 const ACCENT_DARK = '#8ea400';
 
+// ─── BYO ("Input your own plan") gating helpers ───────────────────────────────
+// Which side(s) the custom user is supplying themselves.
+function byoTargets(a) {
+  if (a.planType !== 'custom') return [];
+  if (a.byoScope === 'both') return ['workout', 'nutrition'];
+  if (a.byoScope === 'training') return ['workout'];
+  if (a.byoScope === 'nutrition') return ['nutrition'];
+  return [];
+}
+// Show the AI workout questions only when AI is building that side.
+function appliesWorkout(a) {
+  if (a.planType === 'workout' || a.planType === 'daily_performance') return true;
+  if (a.planType === 'custom') {
+    if (!a.byoScope) return false; // never leak workout Qs while scope is unset
+    return !byoTargets(a).includes('workout');
+  }
+  return false;
+}
+function appliesNutrition(a) {
+  if (a.planType === 'nutrition' || a.planType === 'daily_performance') return true;
+  if (a.planType === 'custom') {
+    if (!a.byoScope) return false;
+    return !byoTargets(a).includes('nutrition');
+  }
+  return false;
+}
+
 // ─── Question flow definition ─────────────────────────────────────────────────
 
 const QUESTION_FLOW = [
   { id: 'planType',          applies: () => true },
+  // BYO scope sits BEFORE any workout/nutrition-gated step so gating never leaks.
+  { id: 'byoScope',          applies: a => a.planType === 'custom' },
   { id: 'goals',             applies: () => true },
   // If user selected sport-specific training, ask about the sport immediately after goals
-  { id: 'primarySport',      applies: a => (a.planType === 'workout' || a.planType === 'daily_performance') && (a.goals || []).includes('sport_specific') },
+  { id: 'primarySport',      applies: a => appliesWorkout(a) && (a.goals || []).includes('sport_specific') },
   { id: 'optimize',          applies: () => true },
   { id: 'bodyStats',         applies: () => true },
 
+  // BYO paste sheets — the side(s) the user supplies themselves.
+  { id: 'byoWorkoutInput',   applies: a => a.planType === 'custom' && byoTargets(a).includes('workout') },
+  { id: 'byoMealInput',      applies: a => a.planType === 'custom' && byoTargets(a).includes('nutrition') },
+
   // Workout-only or complete path
-  { id: 'currentTraining',   applies: a => a.planType === 'workout' || a.planType === 'daily_performance' },
-  { id: 'trainingDays',      applies: a => a.planType === 'workout' || a.planType === 'daily_performance' },
-  { id: 'sessionLength',     applies: a => a.planType === 'workout' || a.planType === 'daily_performance' },
-  { id: 'trainingLocation',  applies: a => a.planType === 'workout' || a.planType === 'daily_performance' },
-  { id: 'equipment',         applies: a => (a.planType === 'workout' || a.planType === 'daily_performance') && a.trainingLocation !== 'gym' },
-  { id: 'limitations',       applies: a => a.planType === 'workout' || a.planType === 'daily_performance' },
-  { id: 'aggressiveness',    applies: a => a.planType === 'workout' || a.planType === 'daily_performance' },
+  { id: 'currentTraining',   applies: appliesWorkout },
+  { id: 'trainingDays',      applies: appliesWorkout },
+  { id: 'sessionLength',     applies: appliesWorkout },
+  { id: 'trainingLocation',  applies: appliesWorkout },
+  { id: 'equipment',         applies: a => appliesWorkout(a) && a.trainingLocation !== 'gym' },
+  { id: 'limitations',       applies: appliesWorkout },
+  { id: 'aggressiveness',    applies: appliesWorkout },
 
   // Nutrition-only or complete path
-  { id: 'mealsPerDay',       applies: a => a.planType === 'nutrition' || a.planType === 'daily_performance' },
-  { id: 'foodsToAvoid',      applies: a => a.planType === 'nutrition' || a.planType === 'daily_performance' },
-  { id: 'favoriteFoods',     applies: () => true },
+  { id: 'mealsPerDay',       applies: appliesNutrition },
+  { id: 'foodsToAvoid',      applies: appliesNutrition },
+  { id: 'favoriteFoods',     applies: appliesNutrition },
   { id: 'supplements',       applies: () => true },
 
   { id: 'desiredOutcome',    applies: () => true },
   { id: 'mainBarrier',       applies: () => true },
-  { id: 'nutritionStruggles',applies: a => (a.planType === 'nutrition' || a.planType === 'daily_performance') && Array.isArray(a.mainBarrier) && a.mainBarrier.includes('food_consistency') },
+  { id: 'nutritionStruggles',applies: a => appliesNutrition(a) && Array.isArray(a.mainBarrier) && a.mainBarrier.includes('food_consistency') },
   { id: 'coachingStyle',     applies: () => true },
   { id: 'additionalNotes',   applies: () => true },
+  // Structuring pre-call (custom only) runs LAST, after all answers exist.
+  { id: 'byoStructuring',    applies: a => a.planType === 'custom' && byoTargets(a).length > 0 },
 ];
 
 function isStepComplete(id, answers) {
   if (id === 'planType') return !!answers.planType;
+  if (id === 'byoScope') return !!answers.byoScope;
+  if (id === 'byoWorkoutInput') return (answers.byoWorkoutText || '').trim().length > 0;
+  if (id === 'byoMealInput') return (answers.byoMealText || '').trim().length > 0;
+  if (id === 'byoStructuring') return answers.byoStructured?.resolved === true;
   if (id === 'goals') return (answers.goals || []).length > 0;
   if (id === 'optimize') return !!answers.optimize;
   if (id === 'bodyStats') return !!answers.age;
@@ -137,6 +180,12 @@ const OPTIMIZE_OPTIONS = [
   { id: 'consistent', label: 'Easiest consistency', desc: 'Habits I can actually stick to' },
   { id: 'balanced', label: 'Balanced', desc: 'Progress without burning out' },
   { id: 'injury_safe', label: 'Injury-safe / low stress', desc: 'Protect my body first' },
+];
+
+const BYO_SCOPE_OPTIONS = [
+  { id: 'training',  label: 'My training plan', emoji: '🏋️', desc: "I'll bring my own workout plan." },
+  { id: 'nutrition', label: 'My meal plan',     emoji: '🥗', desc: "I'll bring my own nutrition plan." },
+  { id: 'both',      label: 'Both',             emoji: '📦', desc: "I'll bring both myself." },
 ];
 
 const CURRENT_TRAINING_OPTIONS = [
@@ -269,11 +318,12 @@ function StepPlanType({ answers, set, onDeveloperPreset }) {
         { id: 'workout', label: 'Training plan', emoji: '🏋️', desc: 'Build workouts around your goal, schedule, equipment, and recovery.' },
         { id: 'nutrition', label: 'Nutrition plan', emoji: '🥗', desc: 'Build a practical eating plan around your goal, food preferences, routine, and constraints.' },
         { id: 'daily_performance', label: 'Complete performance plan', emoji: '🌿', desc: 'Build training, nutrition, recovery, and daily actions together.' },
+        { id: 'custom', label: 'Input your own plan', emoji: '📝', desc: 'Already have a plan? Paste it or upload a PDF. Execute structures it and builds the other side around it.' },
       ].map(opt => (
         <OptionRow key={opt.id} selected={answers.planType === opt.id}
           onClick={() => set('planType', opt.id)} label={opt.label} desc={opt.desc} emoji={opt.emoji} />
       ))}
-      {import.meta.env.DEV && typeof onDeveloperPreset === 'function' && (
+      {(import.meta.env.DEV || getPlatform() === 'ios') && typeof onDeveloperPreset === 'function' && (
         <button
           type="button"
           onClick={onDeveloperPreset}
@@ -1070,8 +1120,340 @@ function StepCoachingStyle({ answers, set }) {
   );
 }
 
+// ─── BYO ("Input your own plan") steps ────────────────────────────────────────
+
+function StepByoScope({ answers, set }) {
+  return (
+    <div className="space-y-3">
+      <div className="mb-6">
+        <h2 className="text-xl font-black tracking-tight mb-1" style={{ color: '#141613' }}>
+          What are you bringing yourself?
+        </h2>
+        <p className="text-sm leading-relaxed" style={{ color: '#91968e' }}>
+          Execute structures what you provide and builds the other side around it.
+        </p>
+      </div>
+      {BYO_SCOPE_OPTIONS.map(opt => (
+        <OptionRow key={opt.id} selected={answers.byoScope === opt.id}
+          onClick={() => set('byoScope', opt.id)} label={opt.label} desc={opt.desc} emoji={opt.emoji} />
+      ))}
+    </div>
+  );
+}
+
+// Auto-growing paste sheet with PDF upload, shared by workout + meal steps.
+function ByoPasteSheet({ side, value, onChange, title, subtitle, placeholder }) {
+  const taRef = useRef(null);
+  const fileRef = useRef(null);
+  const [savedState, setSavedState] = useState('idle'); // idle | saving | saved
+  const [pdfState, setPdfState] = useState('idle');      // idle | extracting | needs_choice | processing | error
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pdfError, setPdfError] = useState('');
+
+  // Auto-grow the textarea to fit content.
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 520)}px`;
+  }, [value]);
+
+  // Cosmetic "Saved" chip — the real durable write is debounced in the parent.
+  useEffect(() => {
+    if (!value) { setSavedState('idle'); return; }
+    setSavedState('saving');
+    const t = setTimeout(() => setSavedState('saved'), 700);
+    return () => clearTimeout(t);
+  }, [value]);
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setPdfError('');
+    setPdfFile(file);
+    setPdfState('extracting');
+    try {
+      const { text, sufficient } = await extractPdfTextClient(file);
+      if (sufficient) {
+        onChange(text);
+        setPdfState('idle');
+        setPdfFile(null);
+      } else {
+        // Insufficient/garbled — do not auto-send. Offer a one-tap choice.
+        setPdfState('needs_choice');
+      }
+    } catch {
+      setPdfState('needs_choice');
+    }
+  };
+
+  const handleProcessWithAI = async () => {
+    if (!pdfFile) return;
+    setPdfState('processing');
+    setPdfError('');
+    try {
+      const { text, sufficient } = await processPdfWithAI(pdfFile, side);
+      if (text && sufficient) {
+        onChange(text);
+        setPdfState('idle');
+        setPdfFile(null);
+      } else if (text) {
+        // Some text came back but it's thin — let it through; structuring will
+        // clarify if needed.
+        onChange(text);
+        setPdfState('idle');
+        setPdfFile(null);
+      } else {
+        setPdfState('error');
+        setPdfError("We couldn't read that PDF. Please paste the text instead.");
+      }
+    } catch (e) {
+      setPdfState('error');
+      setPdfError(e?.message || "We couldn't read that PDF. Please paste the text instead.");
+    }
+  };
+
+  const handlePasteManually = () => {
+    setPdfState('idle');
+    setPdfFile(null);
+    setPdfError('');
+    taRef.current?.focus();
+  };
+
+  return (
+    <div>
+      <div className="mb-5">
+        <h2 className="text-xl font-black tracking-tight mb-1" style={{ color: '#141613' }}>{title}</h2>
+        <p className="text-sm leading-relaxed" style={{ color: '#91968e' }}>{subtitle}</p>
+      </div>
+
+      <div className="relative">
+        <textarea
+          ref={taRef}
+          value={value || ''}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          rows={8}
+          className="w-full px-4 py-3 rounded-xl border text-sm outline-none resize-none"
+          style={{ background: '#f9f7f3', borderColor: '#e8e1d4', color: '#141613', minHeight: 200 }}
+        />
+        {savedState === 'saved' && (
+          <span className="absolute bottom-2 right-3 text-[11px] font-semibold flex items-center gap-1"
+            style={{ color: '#8ea400' }}>
+            <Check size={11} /> Saved
+          </span>
+        )}
+      </div>
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={e => handleFile(e.target.files?.[0])}
+      />
+
+      {pdfState === 'extracting' || pdfState === 'processing' ? (
+        <div className="mt-3 flex items-center gap-2 text-sm" style={{ color: '#5d635d' }}>
+          <Loader2 size={15} className="animate-spin" />
+          {pdfState === 'processing' ? 'Reading your PDF with AI…' : 'Reading your PDF…'}
+        </div>
+      ) : pdfState === 'needs_choice' ? (
+        <div className="mt-3 p-3 rounded-xl border" style={{ background: '#fbfaf6', borderColor: '#e8e1d4' }}>
+          <p className="text-xs mb-2.5" style={{ color: '#5d635d' }}>
+            We couldn't reliably read text from that PDF (it may be scanned). Process it with AI, or paste the text yourself.
+          </p>
+          <div className="flex gap-2">
+            <button onClick={handleProcessWithAI}
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold" style={{ background: ACCENT, color: '#141613' }}>
+              Process with AI
+            </button>
+            <button onClick={handlePasteManually}
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold border" style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}>
+              Paste manually
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          className="mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold"
+          style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}
+        >
+          <Upload size={15} /> Upload PDF
+        </button>
+      )}
+
+      {pdfError && <p className="mt-2 text-xs" style={{ color: '#b05a3a' }}>{pdfError}</p>}
+    </div>
+  );
+}
+
+function StepByoWorkoutInput({ answers, set }) {
+  return (
+    <ByoPasteSheet
+      side="workout"
+      value={answers.byoWorkoutText}
+      onChange={v => set('byoWorkoutText', v)}
+      title="Your training plan"
+      subtitle="Paste your workout plan, or upload it as a PDF. Include days, exercises, sets/reps — whatever you have."
+      placeholder="e.g. Day 1 — Push: Bench 4x8, Incline DB 3x10…"
+    />
+  );
+}
+
+function StepByoMealInput({ answers, set }) {
+  return (
+    <ByoPasteSheet
+      side="nutrition"
+      value={answers.byoMealText}
+      onChange={v => set('byoMealText', v)}
+      title="Your meal plan"
+      subtitle="Paste your nutrition plan, or upload it as a PDF. Include meals, macros, calories — whatever you have."
+      placeholder="e.g. 2400 kcal, 200g protein. Breakfast: oats + eggs…"
+    />
+  );
+}
+
+function StepByoStructuring({ answers, set }) {
+  const targets = byoTargets(answers);
+  const [phase, setPhase] = useState('loading'); // loading | clarify | error
+  const [questions, setQuestions] = useState([]);
+  const [picks, setPicks] = useState({});        // questionId -> optionId
+  const roundsRef = useRef(0);
+  const clarRef = useRef([]);                     // accumulated answered clarifications
+  const runningRef = useRef(false);
+
+  const fallbackAll = useCallback(() => {
+    const side = targets.length === 2 ? 'both' : targets[0];
+    set('byoStructured', { resolved: true, fallback: side });
+  }, [set, targets]);
+
+  const run = useCallback(async (clarificationAnswers) => {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    setPhase('loading');
+    try {
+      const res = await structurePastedPlan({
+        byoWorkoutText: answers.byoWorkoutText || '',
+        byoMealText: answers.byoMealText || '',
+        byoTargets: targets,
+        clarificationAnswers,
+      });
+      if (res?.needs_clarification && Array.isArray(res?.clarification?.questions) && res.clarification.questions.length > 0) {
+        roundsRef.current += 1;
+        // Auto-trip to graceful fallback after 2 unproductive rounds.
+        if (roundsRef.current > 2) {
+          fallbackAll();
+          return;
+        }
+        setQuestions(res.clarification.questions);
+        setPicks({});
+        setPhase('clarify');
+      } else {
+        const structured = res?.structured || null;
+        const cadence = structured?.workout?.cadence || null;
+        set('byoStructured', { resolved: true, structured, cadence });
+      }
+    } catch {
+      setPhase('error');
+    } finally {
+      runningRef.current = false;
+    }
+  }, [answers.byoWorkoutText, answers.byoMealText, targets, set, fallbackAll]);
+
+  // Kick the structuring call on entry.
+  useEffect(() => {
+    run([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const allPicked = questions.length > 0 && questions.every(q => picks[q.id]);
+
+  const submitClarifications = () => {
+    const answered = questions.map(q => {
+      const opt = q.options.find(o => o.id === picks[q.id]);
+      return { id: q.id, side: q.side, label: q.label, answerId: picks[q.id], answerLabel: opt?.label || '' };
+    });
+    clarRef.current = [...clarRef.current, ...answered];
+    run(clarRef.current);
+  };
+
+  if (phase === 'loading') {
+    return (
+      <div className="py-10 flex flex-col items-center text-center">
+        <Loader2 size={28} className="animate-spin mb-4" style={{ color: ACCENT_DARK }} />
+        <h2 className="text-lg font-black tracking-tight mb-1" style={{ color: '#141613' }}>
+          Structuring your plan…
+        </h2>
+        <p className="text-sm" style={{ color: '#91968e' }}>Reading what you provided so we can reproduce it faithfully.</p>
+      </div>
+    );
+  }
+
+  if (phase === 'error') {
+    return (
+      <div className="py-8 text-center">
+        <h2 className="text-lg font-black tracking-tight mb-1" style={{ color: '#141613' }}>Something went wrong</h2>
+        <p className="text-sm mb-5" style={{ color: '#91968e' }}>We couldn't structure your plan just now.</p>
+        <div className="flex flex-col gap-2">
+          <button onClick={() => run(clarRef.current)}
+            className="w-full py-3 rounded-xl text-sm font-bold" style={{ background: ACCENT, color: '#141613' }}>
+            Try again
+          </button>
+          <button onClick={fallbackAll}
+            className="w-full py-3 rounded-xl text-sm font-bold border" style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}>
+            Use a standard plan instead
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // clarify
+  return (
+    <div>
+      <div className="mb-5">
+        <h2 className="text-xl font-black tracking-tight mb-1" style={{ color: '#141613' }}>A few quick questions</h2>
+        <p className="text-sm" style={{ color: '#91968e' }}>
+          Your plan was a little sparse in places. Pick what fits so we can build it accurately.
+        </p>
+      </div>
+      <div className="space-y-5">
+        {questions.map(q => (
+          <div key={q.id}>
+            <p className="text-sm font-semibold mb-2" style={{ color: '#141613' }}>{q.label}</p>
+            <div className="space-y-2">
+              {q.options.map(o => (
+                <OptionRow key={o.id} selected={picks[q.id] === o.id}
+                  onClick={() => setPicks(p => ({ ...p, [q.id]: o.id }))} label={o.label} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={submitClarifications}
+        disabled={!allPicked}
+        className="mt-6 w-full py-3.5 rounded-2xl text-sm font-bold flex items-center justify-center gap-2"
+        style={{ background: allPicked ? ACCENT : '#e8e1d4', color: allPicked ? '#141613' : '#91968e' }}
+      >
+        Continue <ArrowRight size={15} />
+      </button>
+      <button onClick={fallbackAll}
+        className="mt-3 w-full py-3 rounded-xl text-xs font-semibold" style={{ color: '#91968e' }}>
+        Use a standard plan instead
+      </button>
+    </div>
+  );
+}
+
 const STEP_COMPONENTS = {
   planType: StepPlanType,
+  byoScope: StepByoScope,
+  byoWorkoutInput: StepByoWorkoutInput,
+  byoMealInput: StepByoMealInput,
+  byoStructuring: StepByoStructuring,
   goals: StepGoals,
   optimize: StepOptimize,
   bodyStats: StepBodyStats,
@@ -1097,7 +1479,7 @@ const STEP_COMPONENTS = {
 
 // Steps where a single selection completes the step (no multi-select)
 const SINGLE_CHOICE_STEPS = new Set([
-  'planType', 'optimize', 'currentTraining', 'trainingDays', 'sessionLength',
+  'planType', 'byoScope', 'optimize', 'currentTraining', 'trainingDays', 'sessionLength',
   'trainingLocation', 'aggressiveness', 'mealsPerDay',
   'coachingStyle',
 ]);
@@ -1234,9 +1616,18 @@ function buildSubmitPayload(sourceAnswers, imperial) {
     ? answers.mainBarrier
     : (answers.mainBarrier ? [answers.mainBarrier] : []);
 
+  // BYO ("Input your own plan") — the planType === 'custom' guard is the stale-text
+  // guard: back-navigating and switching plan type drops paste text + structuring.
+  const isCustom = answers.planType === 'custom';
+
   return {
     name: answers.name,
     planType: answers.planType,
+    byoScope: isCustom ? (answers.byoScope || null) : null,
+    byoTargets: isCustom ? byoTargets(answers) : [],
+    byoWorkoutText: isCustom ? (answers.byoWorkoutText || '') : '',
+    byoMealText: isCustom ? (answers.byoMealText || '') : '',
+    byoStructured: isCustom ? (answers.byoStructured || null) : null,
     goal: effectiveGoals.join(', '),
     optimize: answers.optimize,
     desiredOutcomeFeeling: desiredOutcomeArr,
@@ -1334,6 +1725,37 @@ export default function PlanQuestionnaire({ onSubmit, initialAnswers = {}, skipS
   useEffect(() => {
     savePendingAnswers(answers, currentStep);
   }, [answers, currentStep]);
+
+  // BYO: restore a durable draft on mount (survives a true iOS hard-close, which
+  // wipes sessionStorage). Seed only fields the user hasn't already filled in.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const draft = await loadByoDraft();
+      if (cancelled || !draft) return;
+      setAnswers(prev => {
+        const next = { ...prev };
+        if (!prev.byoScope && draft.byoScope) next.byoScope = draft.byoScope;
+        if (!(prev.byoWorkoutText || '').trim() && draft.byoWorkoutText) next.byoWorkoutText = draft.byoWorkoutText;
+        if (!(prev.byoMealText || '').trim() && draft.byoMealText) next.byoMealText = draft.byoMealText;
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // BYO: debounce-persist the durable draft as the user types / picks scope.
+  useEffect(() => {
+    if (answers.planType !== 'custom') return undefined;
+    const t = setTimeout(() => {
+      saveByoDraft({
+        byoScope: answers.byoScope,
+        byoWorkoutText: answers.byoWorkoutText,
+        byoMealText: answers.byoMealText,
+      });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [answers.planType, answers.byoScope, answers.byoWorkoutText, answers.byoMealText]);
 
   // Scroll to top of the scrollable overlay whenever the step changes
   useEffect(() => {

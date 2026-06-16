@@ -94,8 +94,23 @@ Deno.serve(async (req) => {
     const model = payload.model || Deno.env.get('OPENAI_MODEL') || 'gpt-4.1-mini';
     const maxOutputTokens = payload.max_output_tokens || payload.max_tokens || 4096;
 
+    // Opt-in PDF document path (BYO "Input your own plan"): the client sends a
+    // base64 data URL after client-side pdfjs extraction proved insufficient.
+    // `input_file` lets OpenAI read the PDF directly. Page/size capping is the
+    // caller's responsibility (extractPdfText) so cost stays bounded.
+    const inputFile = payload.input_file && typeof payload.input_file === 'object'
+      ? payload.input_file
+      : null;
+
     const content = [
       { type: 'input_text', text: prompt },
+      ...(inputFile && inputFile.file_data
+        ? [{
+            type: 'input_file',
+            filename: String(inputFile.filename || 'document.pdf'),
+            file_data: String(inputFile.file_data),
+          }]
+        : []),
       ...fileUrls.map((imageUrl: string) => ({
         type: 'input_image',
         image_url: imageUrl,

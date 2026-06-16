@@ -20,11 +20,23 @@ import {
 } from '@/lib/personalizationSync';
 import { buildAnswerContext, calcTDEE } from '@/lib/generateInitialPlans';
 import { getPlanDaySessionTitle, isGenericPlanDayTitle } from '@/lib/planDayDisplay';
+import { structurePastedPlan } from '@/lib/plans/structurePastedPlan';
+import { normalizeActivityLevel, resolveByoSession, resolveByoMealFocus } from '@/lib/plans/byoCadence';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function generateBatchId() {
   return `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// For a BYO ("Input your own plan") custom user the overview always covers BOTH a
+// training split and nutrition targets — one side authoritative-from-structuring,
+// the other AI-built (or fallen back to AI). So both "wants" are true for custom.
+function wantsWorkoutPlan(a) {
+  return a.planType === 'workout' || a.planType === 'daily_performance' || a.planType === 'custom';
+}
+function wantsNutritionPlan(a) {
+  return a.planType === 'nutrition' || a.planType === 'daily_performance' || a.planType === 'custom';
 }
 
 function toLocalISO(d) {
@@ -144,9 +156,9 @@ function mapIdsToLabels(ids, labelMap) {
   return arr.map(id => labelMap[id] || id).filter(Boolean);
 }
 
-function buildOverviewPrompt(answers, macros, weekStart, suggestedDaysPerWeek) {
-  const wantsWorkout = answers.planType === 'workout' || answers.planType === 'daily_performance';
-  const wantsNutrition = answers.planType === 'nutrition' || answers.planType === 'daily_performance';
+function buildOverviewPrompt(answers, macros, weekStart, suggestedDaysPerWeek, byoFallbackSides = []) {
+  const wantsWorkout = wantsWorkoutPlan(answers);
+  const wantsNutrition = wantsNutritionPlan(answers);
   const answerCtx = buildAnswerContext(answers);
   const weekDates = getWeekDates(weekStart);
 
@@ -200,6 +212,31 @@ function buildOverviewPrompt(answers, macros, weekStart, suggestedDaysPerWeek) {
   const barrierLabel = barrierLabels.join('; ');
   const coachingStyleLabel = COACHING_STYLE_LABELS[answers.coachingStyle] || '';
   const optimizeLabel = OPTIMIZE_PRIORITY_LABELS[answers.optimize] || '';
+
+  // ── BYO ("Input your own plan"): seed the overview from the STRUCTURED plan
+  // (not raw paste). Only for sides the user actually supplied and that did NOT
+  // fall back to AI. The model must reproduce these faithfully.
+  let byoSeedBlock = '';
+  if (answers.planType === 'custom') {
+    const structured = answers.byoStructured?.structured || null;
+    const fellBack = new Set(byoFallbackSides);
+    const blocks = [];
+    if (structured?.workout && !fellBack.has('workout')) {
+      blocks.push(`USER-PROVIDED TRAINING PLAN (authoritative — lay out weekly_overview.days faithfully from this; do NOT invent a different split):
+${JSON.stringify(structured.workout)}`);
+    }
+    if (structured?.nutrition && !fellBack.has('nutrition')) {
+      const n = structured.nutrition;
+      const macroNote = n.stated_calories
+        ? `The user's plan states ${n.stated_calories} kcal/day — USE THESE EXACT targets in nutrition_targets instead of any computed default.`
+        : '';
+      blocks.push(`USER-PROVIDED NUTRITION PLAN (authoritative — reflect this structure/foods in nutrition_focus per day). ${macroNote}
+${JSON.stringify(n)}`);
+    }
+    if (blocks.length > 0) {
+      byoSeedBlock = `\n\nUSER-PROVIDED PLAN (REPRODUCE FAITHFULLY):\n${blocks.join('\n\n')}\n`;
+    }
+  }
 
   return `You are an elite personal performance strategist writing a personalized performance blueprint for a real person.
 Generate a lightweight personalized performance overview based on the user's questionnaire answers.
@@ -263,7 +300,7 @@ ${optimizeLabel ? `- Optimization priority: ${optimizeLabel}` : ''}
 ${desiredOutcomeLabel ? `- Desired outcome(s): ${desiredOutcomeLabel}` : ''}
 ${barrierLabel ? `- Main barrier(s) to consistency: ${barrierLabel}` : ''}
 ${coachingStyleLabel ? `- Preferred coaching style: ${coachingStyleLabel}` : ''}
-
+${byoSeedBlock}
 CALCULATED NUTRITION TARGETS:
 - Calories: ${macros.calories} kcal/day
 - Protein: ${macros.protein}g/day
@@ -368,7 +405,7 @@ function inferDayType(day) {
 function normalizeAndValidateOverview(overview, answers = {}) {
   const errors = [];
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-  const wantsWorkout = answers.planType === 'workout' || answers.planType === 'daily_performance';
+  const wantsWorkout = wantsWorkoutPlan(answers);
 
   if (!overview?.plan_summary) errors.push('plan_summary is required');
   if (!overview?.nutrition_targets) errors.push('nutrition_targets is required');
@@ -442,8 +479,71 @@ export async function generateInitialPlanBundle(answers) {
   // ── Step 2: Invalidate stale AI context ────────────────────────────────────
   await invalidateUserAIContext();
 
+  // ── Step 2b: BYO ("Input your own plan") — ensure structured data + derive
+  // activity for TDEE. Runs BEFORE calcTDEE so derived activity can raise the
+  // multiplier for a high-volume paste-workout / AI-nutrition athlete.
+  const byoFallbackSides = [];
+  if (answers.planType === 'custom') {
+    const targets = Array.isArray(answers.byoTargets) ? answers.byoTargets : [];
+    const declaredFallback = answers.byoStructured?.fallback || null;
+    if (declaredFallback === 'both') byoFallbackSides.push('workout', 'nutrition');
+    else if (declaredFallback) byoFallbackSides.push(declaredFallback);
+
+    let structured = answers.byoStructured?.structured || null;
+
+    // Crash-resilience: structuring never ran (app killed between steps) but the
+    // text survives. Re-run ONCE. A needs_clarification result here cannot be
+    // answered (no UI past the questionnaire), so it degrades to graceful fallback
+    // for the affected side(s). This path NEVER throws, hangs, or blocks.
+    const hasText = (answers.byoWorkoutText || '').trim() || (answers.byoMealText || '').trim();
+    if (!structured && !declaredFallback && targets.length > 0 && hasText) {
+      try {
+        const res = await structurePastedPlan({
+          byoWorkoutText: answers.byoWorkoutText || '',
+          byoMealText: answers.byoMealText || '',
+          byoTargets: targets,
+        });
+        if (res && res.needs_clarification === false && res.structured) {
+          structured = res.structured;
+          answers.byoStructured = { resolved: true, structured };
+        } else {
+          for (const side of targets) {
+            if (!byoFallbackSides.includes(side)) byoFallbackSides.push(side);
+          }
+        }
+      } catch {
+        for (const side of targets) {
+          if (!byoFallbackSides.includes(side)) byoFallbackSides.push(side);
+        }
+      }
+    }
+
+    // Derive activity level from the structured workout → feeds calcTDEE. Validate
+    // against the canonical enum; never assign a raw off-enum token.
+    if (structured?.workout && !byoFallbackSides.includes('workout') && !answers.currentTraining) {
+      const normalized = normalizeActivityLevel(
+        structured.workout.derived_activity_level,
+        structured.workout.weekly_sessions?.length,
+      );
+      if (normalized) answers.currentTraining = normalized;
+    }
+  }
+
   // ── Step 3: Calculate macros + week dates ─────────────────────────────────
   const macros = calcTDEE(answers);
+
+  // BYO macro override: a stated-calorie nutrition paste wins over the computed
+  // default (unless that side fell back to AI).
+  if (answers.planType === 'custom' && !byoFallbackSides.includes('nutrition')) {
+    const nut = answers.byoStructured?.structured?.nutrition;
+    const statedCal = Number(nut?.stated_calories) || 0;
+    if (statedCal > 0) {
+      macros.calories = statedCal;
+      if (Number(nut.stated_macros?.protein_g) > 0) macros.protein = Number(nut.stated_macros.protein_g);
+      if (Number(nut.stated_macros?.carbs_g) > 0) macros.carbs = Number(nut.stated_macros.carbs_g);
+      if (Number(nut.stated_macros?.fat_g) > 0) macros.fats = Number(nut.stated_macros.fat_g);
+    }
+  }
   // Always start from today so all 7 days are upcoming regardless of day of week
   const today = new Date();
   today.setHours(12, 0, 0, 0);
@@ -456,7 +556,7 @@ export async function generateInitialPlanBundle(answers) {
 
   // ── Step 4: Single lightweight LLM call ───────────────────────────────────
   console.log('[generateInitialPlanBundle] Step 4: Invoking LLM for overview…');
-  const prompt = buildOverviewPrompt(answers, macros, weekStart, suggestedDaysPerWeek);
+  const prompt = buildOverviewPrompt(answers, macros, weekStart, suggestedDaysPerWeek, byoFallbackSides);
 
   const rawOverview = await backend.integrations.Core.InvokeLLM({
     prompt,
@@ -536,6 +636,27 @@ export async function generateInitialPlanBundle(answers) {
   normalizeAndValidateOverview(overview, answers);
   console.log('[generateInitialPlanBundle] ✓ Validation passed');
 
+  // ── Step 5b: BYO — map structured plan onto each overview day (cheap per-day
+  // reads downstream; no raw-text re-injection). Only for supplied, non-fallback
+  // sides.
+  const byoStructured = answers.planType === 'custom' ? (answers.byoStructured?.structured || null) : null;
+  const byoCadence = byoStructured?.workout?.cadence || null;
+  if (byoStructured) {
+    const days = overview?.weekly_overview?.days || [];
+    const includeWorkout = !byoFallbackSides.includes('workout');
+    const includeNutrition = !byoFallbackSides.includes('nutrition');
+    for (const day of days) {
+      if (includeWorkout && byoStructured.workout) {
+        const session = resolveByoSession(byoStructured, byoCadence, weekStart, day.date);
+        if (session) day.byo_session = session;
+      }
+      if (includeNutrition && byoStructured.nutrition) {
+        const focus = resolveByoMealFocus(byoStructured, weekStart, day.date);
+        if (focus) day.byo_meal_focus = focus;
+      }
+    }
+  }
+
   // ── Step 6: Archive existing active plans ─────────────────────────────────
   bustPlanCache('daily');
   const existingActive = await backend.entities.AIPlan.filter(await userScopedFilter({ status: 'active' })).catch(() => []);
@@ -585,6 +706,17 @@ export async function generateInitialPlanBundle(answers) {
       questionnaire: answers,
       generated_at: now,
       generation_batch_id,
+
+      // BYO ("Input your own plan") — structured once, read cheaply per day. Raw
+      // text kept ONLY for the per-day fallback when a structured day is missing.
+      ...(answers.planType === 'custom' ? {
+        byo_targets: Array.isArray(answers.byoTargets) ? answers.byoTargets : [],
+        byo_workout_text: (byoStructured?.workout && !byoFallbackSides.includes('workout')) ? (answers.byoWorkoutText || '') : '',
+        byo_meal_text: (byoStructured?.nutrition && !byoFallbackSides.includes('nutrition')) ? (answers.byoMealText || '') : '',
+        byo_structured: byoStructured,
+        byo_cadence: byoCadence,
+        byo_fallback_sides: byoFallbackSides,
+      } : {}),
     },
   }));
 

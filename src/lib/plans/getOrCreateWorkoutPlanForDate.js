@@ -10,6 +10,7 @@ import { backend } from '@/api/backendClient';
 import { loadActiveAIPlan, userScopedFilter, withUserEmail } from '@/lib/personalizationSync';
 import { getPlanDaySessionTitle } from '@/lib/planDayDisplay';
 import { withBackoff } from '@/lib/withBackoff';
+import { resolveByoSession } from '@/lib/plans/byoCadence';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -250,6 +251,24 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
     : 'No readiness data';
   const sessionTitle = getPlanDaySessionTitle(overviewDay, overviewDay?.training_type || 'General Training');
 
+  // BYO ("Input your own plan"): inject ONLY this date's session slice. Pre-mapped
+  // in the overview for the first 7 days; resolved via cadence for later dates.
+  // Raw paste text is a last-resort fallback — never an unconditional full inject.
+  const byoStructured = masterPlan.plan_payload?.byo_structured || null;
+  const byoCadence = masterPlan.plan_payload?.byo_cadence || null;
+  const byoAnchor = masterPlan.date_range_start || masterPlan.plan_payload?.weekly_overview?.week_start_date || null;
+  let byoSession = overviewDay?.byo_session || null;
+  if (!byoSession && byoStructured && byoAnchor) {
+    byoSession = resolveByoSession(byoStructured, byoCadence, byoAnchor, date);
+  }
+  const byoWorkoutText = masterPlan.plan_payload?.byo_workout_text || '';
+  let byoBlock = '';
+  if (byoSession) {
+    byoBlock = `\nUSER-PROVIDED SESSION FOR TODAY (authoritative — reproduce these exercises, order, and emphasis; fill in sets/reps/rest/warmup/cooldown only where silent; do NOT invent a different workout):\n${JSON.stringify(byoSession, null, 2)}\n`;
+  } else if (byoStructured && byoWorkoutText) {
+    byoBlock = `\nUSER-PROVIDED TRAINING PLAN (reference — this date was not pre-mapped; reflect the relevant portion faithfully):\n${byoWorkoutText.slice(0, 4000)}\n`;
+  }
+
   const prompt = `You are an elite personal fitness coach generating a single workout session for one specific date.
 
 CRITICAL RULES:
@@ -266,7 +285,7 @@ VISIBLE SESSION TITLE FOR TODAY: ${sessionTitle}
 TRAINING TYPE FOR TODAY: ${overviewDay?.training_type || 'General Training'}
 TODAY'S PRIORITY: ${overviewDay?.priority || ''}
 RECOVERY FOCUS: ${overviewDay?.recovery_focus || ''}
-
+${byoBlock}
 PLAN SUMMARY:
 ${JSON.stringify(planSummary, null, 2)}
 
