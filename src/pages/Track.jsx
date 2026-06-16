@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Moon, Flame, Droplets, Heart, Weight, SmilePlus, CheckSquare, X, Plus, UtensilsCrossed, ChevronRight, SlidersHorizontal, Check, Pencil, Footprints } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { backend } from '@/api/backendClient';
 import { appCache } from '@/lib/appCache';
 import { loadCustomTrackers, saveCustomTrackers } from '@/lib/customTrackers';
@@ -643,6 +643,8 @@ function ManageWidgetsSheet({ activeIds, onToggle, onClose, customCategories, on
 }
 
 export default function Track() {
+  const location = useLocation();
+  const openedTrackerKey = useRef(null);
   const [activeModal, setActiveModal] = useState(null);
   const [logged, setLogged] = useState({});
   const [activeIds, setActiveIds] = useState(DEFAULT_ACTIVE);
@@ -811,6 +813,18 @@ export default function Track() {
 
   const allCategories = [...ALL_CATEGORIES, ...customCategories];
   const activeCategories = allCategories.filter(c => activeIds.includes(c.id));
+
+  // Auto-open a logging modal when navigated here with an `openTracker` id
+  // (e.g. tapping a vital card on Home). Fire once per navigation.
+  useEffect(() => {
+    const openTracker = location.state?.openTracker;
+    if (!openTracker || openedTrackerKey.current === location.key) return;
+    const cat = allCategories.find(c => c.id === openTracker);
+    if (cat) {
+      openedTrackerKey.current = location.key;
+      setActiveModal(cat);
+    }
+  }, [location.key, location.state, allCategories]);
 
   return (
     <div className="min-h-screen" style={{ background: '#f6f2e8' }}>

@@ -1,9 +1,16 @@
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { Moon, Footprints, Flame, Droplets, Smile, Zap, Dumbbell, Scale, Pencil } from 'lucide-react';
 
 const ICON_MAP = { Moon, Footprints, Flame, Droplets, Smile, Zap, Dumbbell, Scale, Pencil };
 
 export default function VitalsRowWidget({ today, vitals, isCustomizing }) {
+  const navigate = useNavigate();
+  const openTracker = (id) => {
+    if (isCustomizing) return;
+    navigate('/track', { state: { openTracker: id } });
+  };
+
   return (
     <div className="space-y-2">
       <motion.div
@@ -31,11 +38,17 @@ export default function VitalsRowWidget({ today, vitals, isCustomizing }) {
             const offset = CIRC * (1 - ringPct);
             const ringColor = pct >= 1 ? '#b05a3a' : pct >= 0.7 ? '#c8e000' : '#8ea400';
             return (
-              <div key={v.id} className="p-2 rounded-xl border text-center flex flex-col items-center" style={{
-                background: pct >= 1 ? 'rgba(176,90,58,0.06)' : '#ffffff',
-                borderColor: pct >= 1 ? 'rgba(176,90,58,0.35)' : '#e0d9cc',
-                boxShadow: '0 1px 6px rgba(20,22,19,0.07)',
-              }}>
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => openTracker(v.id)}
+                className="p-2 rounded-xl border text-center flex flex-col items-center active:scale-95 transition-transform"
+                style={{
+                  background: pct >= 1 ? 'rgba(176,90,58,0.06)' : '#ffffff',
+                  borderColor: pct >= 1 ? 'rgba(176,90,58,0.35)' : '#e0d9cc',
+                  boxShadow: '0 1px 6px rgba(20,22,19,0.07)',
+                }}
+              >
                 <div className="relative flex items-center justify-center" style={{ width: 44, height: 44 }}>
                   <svg width="44" height="44" viewBox="0 0 44 44" style={{ transform: 'rotate(-90deg)' }}>
                     <circle cx="22" cy="22" r={R} fill="none" stroke="#ede8de" strokeWidth="4" />
@@ -59,16 +72,22 @@ export default function VitalsRowWidget({ today, vitals, isCustomizing }) {
                   {raw > 0 ? (raw >= 1000 ? (raw / 1000).toFixed(1) + 'k' : raw) : '—'}
                 </div>
                 <div className="text-[9px]" style={{ color: '#a09a90' }}>{v.label}</div>
-              </div>
+              </button>
             );
           }
 
           return (
-            <div key={v.id} className="p-3 rounded-xl border text-center" style={{
-              background: pct >= 1 ? 'rgba(200,224,0,0.08)' : '#ffffff',
-              borderColor: pct >= 1 ? 'rgba(200,224,0,0.35)' : '#e0d9cc',
-              boxShadow: '0 1px 6px rgba(20,22,19,0.07)',
-            }}>
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => openTracker(v.id)}
+              className="p-3 rounded-xl border text-center active:scale-95 transition-transform"
+              style={{
+                background: pct >= 1 ? 'rgba(200,224,0,0.08)' : '#ffffff',
+                borderColor: pct >= 1 ? 'rgba(200,224,0,0.35)' : '#e0d9cc',
+                boxShadow: '0 1px 6px rgba(20,22,19,0.07)',
+              }}
+            >
               <IconComp size={13} className="mx-auto mb-1" style={{ color: pct >= 0.8 ? '#8ea400' : '#a09a90' }} />
               <div className="text-xs font-bold" style={{ color: '#141613' }}>{displayValue}</div>
               <div className="text-[9px] mt-0.5" style={{ color: '#a09a90' }}>{v.label}</div>
@@ -77,7 +96,7 @@ export default function VitalsRowWidget({ today, vitals, isCustomizing }) {
                   <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(pct * 100, 100)}%`, background: pct >= 1 ? '#c8e000' : pct >= 0.5 ? '#d4ef1f' : '#c8c0b0' }} />
                 </div>
               )}
-            </div>
+            </button>
           );
         })}
       </motion.div>
