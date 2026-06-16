@@ -1317,7 +1317,7 @@ function StepByoMealInput({ answers, set }) {
 
 function StepByoStructuring({ answers, set }) {
   const targets = byoTargets(answers);
-  const [phase, setPhase] = useState('loading'); // loading | clarify | error
+  const [phase, setPhase] = useState('loading'); // loading | clarify | error | done
   const [questions, setQuestions] = useState([]);
   const [picks, setPicks] = useState({});        // questionId -> optionId
   const roundsRef = useRef(0);
@@ -1327,6 +1327,7 @@ function StepByoStructuring({ answers, set }) {
   const fallbackAll = useCallback(() => {
     const side = targets.length === 2 ? 'both' : targets[0];
     set('byoStructured', { resolved: true, fallback: side });
+    setPhase('done');
   }, [set, targets]);
 
   const run = useCallback(async (clarificationAnswers) => {
@@ -1354,6 +1355,7 @@ function StepByoStructuring({ answers, set }) {
         const structured = res?.structured || null;
         const cadence = structured?.workout?.cadence || null;
         set('byoStructured', { resolved: true, structured, cadence });
+        setPhase('done');
       }
     } catch {
       setPhase('error');
@@ -1406,6 +1408,18 @@ function StepByoStructuring({ answers, set }) {
             Use a standard plan instead
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (phase === 'done') {
+    return (
+      <div className="py-10 flex flex-col items-center text-center">
+        <div className="w-12 h-12 rounded-full flex items-center justify-center mb-4" style={{ background: ACCENT }}>
+          <Check size={24} style={{ color: '#141613' }} />
+        </div>
+        <h2 className="text-lg font-black tracking-tight mb-1" style={{ color: '#141613' }}>You're all set</h2>
+        <p className="text-sm" style={{ color: '#91968e' }}>Tap Generate My Plan below to build it.</p>
       </div>
     );
   }
