@@ -670,38 +670,56 @@ export default function Home() {
     quick_links: (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
         className="space-y-2">
-        {/* Training quick link */}
-        <button
-          onClick={() => navigate(workoutRoute)}
-          className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl"
-          style={{
-            background: rest ? '#ffffff' : ACCENT,
-            color: '#141613',
-            border: rest ? '1px solid #e0d9cc' : 'none',
-            boxShadow: rest ? '0 1px 6px rgba(20,22,19,0.07)' : '0 5px 20px rgba(200,224,0,0.38), 0 2px 6px rgba(200,224,0,0.18)',
-          }}>
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-              style={{ background: rest ? 'rgba(93,138,93,0.12)' : 'rgba(20,22,19,0.1)' }}>
-              {rest
-                ? <Leaf size={15} style={{ color: '#5d8a5d' }} />
-                : <Dumbbell size={15} style={{ color: '#141613' }} />}
+        {/* Training quick link — gated on planResolved so a pre-hydrate null
+            plan can't flash "Build workout"/training styling before the real
+            session (or "Recovery day") resolves. Mirrors PlanHeroBanner. */}
+        {!planResolved ? (
+          <button
+            onClick={() => navigate(workoutRoute)}
+            className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl"
+            style={{ background: '#ffffff', color: '#141613', border: '1px solid #e0d9cc', boxShadow: '0 1px 6px rgba(20,22,19,0.07)' }}>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl animate-pulse" style={{ background: '#e8e1d4' }} />
+              <div className="text-left space-y-1.5">
+                <span className="block h-3 w-28 rounded animate-pulse" style={{ background: '#e8e1d4' }} />
+                <span className="block h-2 w-20 rounded animate-pulse" style={{ background: '#eee7d9' }} />
+              </div>
             </div>
-            <div className="text-left">
-              <p className="text-sm font-bold leading-tight">
+            <Play size={14} style={{ opacity: 0.6 }} />
+          </button>
+        ) : (
+          <button
+            onClick={() => navigate(workoutRoute)}
+            className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl"
+            style={{
+              background: rest ? '#ffffff' : ACCENT,
+              color: '#141613',
+              border: rest ? '1px solid #e0d9cc' : 'none',
+              boxShadow: rest ? '0 1px 6px rgba(20,22,19,0.07)' : '0 5px 20px rgba(200,224,0,0.38), 0 2px 6px rgba(200,224,0,0.18)',
+            }}>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+                style={{ background: rest ? 'rgba(93,138,93,0.12)' : 'rgba(20,22,19,0.1)' }}>
                 {rest
-                  ? 'Recovery day'
-                  : workoutPlan
-                    ? (workoutPlan.name || 'View workout')
-                    : getPlanDaySessionTitle(overviewDay, 'Build workout')}
-              </p>
-              <p className="text-[10px] opacity-60">
-                {rest ? 'View recovery guidance' : workoutPlan ? 'Tap to view session' : 'Tap to build from your plan'}
-              </p>
+                  ? <Leaf size={15} style={{ color: '#5d8a5d' }} />
+                  : <Dumbbell size={15} style={{ color: '#141613' }} />}
+              </div>
+              <div className="text-left">
+                <p className="text-sm font-bold leading-tight">
+                  {rest
+                    ? 'Recovery day'
+                    : workoutPlan
+                      ? (workoutPlan.name || 'View workout')
+                      : getPlanDaySessionTitle(overviewDay, 'Build workout')}
+                </p>
+                <p className="text-[10px] opacity-60">
+                  {rest ? 'View recovery guidance' : workoutPlan ? 'Tap to view session' : 'Tap to build from your plan'}
+                </p>
+              </div>
             </div>
-          </div>
-          <Play size={14} style={{ opacity: 0.6 }} />
-        </button>
+            <Play size={14} style={{ opacity: 0.6 }} />
+          </button>
+        )}
 
         {/* Secondary row */}
         <div className="grid grid-cols-3 gap-2">
@@ -711,7 +729,9 @@ export default function Home() {
             <UtensilsCrossed size={16} style={{ color: ACCENT_DARK }} />
             <span className="text-[10px] font-semibold" style={{ color: '#141613' }}>Nutrition</span>
             <span className="text-[9px]" style={{ color: '#91968e' }}>
-              {mealPlan ? `${mealPlan.total_calories || '—'} kcal` : 'Build meals'}
+              {!planResolved
+                ? <span className="inline-block h-2 w-10 rounded animate-pulse align-middle" style={{ background: '#e8e1d4' }} />
+                : mealPlan ? `${mealPlan.total_calories || '—'} kcal` : 'Build meals'}
             </span>
           </button>
 
