@@ -4,6 +4,7 @@ import { Check, Loader2, SlidersHorizontal, AlertCircle } from 'lucide-react';
 import { backend } from '@/api/backendClient';
 import { loadActiveAIPlan, togglePlanItemComplete, invalidateUserAIContext, getTodayISODate } from '@/lib/personalizationSync';
 import ChecklistCustomizeModal from './ChecklistCustomizeModal';
+import { getHiddenDefaults } from '@/lib/checklistPrefs';
 
 const ACCENT = '#c8e000';
 const ACCENT_DARK = '#8ea400';
@@ -52,10 +53,12 @@ async function loadLinkedEntityForDate(entity, date, masterPlan) {
 
 // ─── Build canonical checklist items from today's data ────────────────────────
 
-function buildItemsFromData({ workoutPlan, mealPlan, readiness, customItems, today }) {
+function buildItemsFromData({ workoutPlan, mealPlan, readiness, customItems, today, hiddenDefaults = [] }) {
   const items = [];
+  const isHidden = (type) => hiddenDefaults.includes(type);
 
   // Workout item
+  if (!isHidden('workout')) {
   if (workoutPlan) {
     items.push({
       id: `workout:${today}`,
@@ -79,8 +82,10 @@ function buildItemsFromData({ workoutPlan, mealPlan, readiness, customItems, tod
       completed_at: null,
     });
   }
+  }
 
   // Nutrition item
+  if (!isHidden('nutrition')) {
   if (mealPlan && mealPlan.total_calories) {
     items.push({
       id: `nutrition:${today}`,
@@ -104,6 +109,7 @@ function buildItemsFromData({ workoutPlan, mealPlan, readiness, customItems, tod
       completed_at: null,
     });
   }
+  }
 
   // Readiness check-in item
   if (!readiness) {
@@ -120,16 +126,18 @@ function buildItemsFromData({ workoutPlan, mealPlan, readiness, customItems, tod
   }
 
   // Recovery item
-  items.push({
-    id: `recovery:${today}`,
-    type: 'recovery',
-    title: 'Recovery Routine',
-    description: readiness ? `Readiness score: ${readiness.readiness_score ?? '—'}/100` : 'Stretch & mobility work',
-    source: 'recovery',
-    target_route: '/recovery',
-    completed: false,
-    completed_at: null,
-  });
+  if (!isHidden('recovery')) {
+    items.push({
+      id: `recovery:${today}`,
+      type: 'recovery',
+      title: 'Recovery Routine',
+      description: readiness ? `Readiness score: ${readiness.readiness_score ?? '—'}/100` : 'Stretch & mobility work',
+      source: 'recovery',
+      target_route: '/recovery',
+      completed: false,
+      completed_at: null,
+    });
+  }
 
   // Custom items from Supabase entity
   for (const ci of customItems) {
@@ -246,12 +254,13 @@ export default function DailyChecklist({ onAllDone, onItemToggled }) {
     const activeMasterPlan = await loadActiveAIPlan('daily').catch(() => null);
     setPlanContext(activeMasterPlan);
 
-    const [mealPlan, workoutPlan, dailyLog, readinessCheckins, customEntityItems] = await Promise.all([
+    const [mealPlan, workoutPlan, dailyLog, readinessCheckins, customEntityItems, hiddenDefaults] = await Promise.all([
       loadLinkedEntityForDate(backend.entities.MealPlan, today, activeMasterPlan),
       loadLinkedEntityForDate(backend.entities.WorkoutPlan, today, activeMasterPlan),
       loadLinkedEntityForDate(backend.entities.DailyLog, today, activeMasterPlan),
       backend.entities.ReadinessCheckIn.filter({ date: today }).catch(() => []),
       backend.entities.CustomChecklistItem.filter({ is_active: true }).catch(() => []),
+      getHiddenDefaults().catch(() => []),
     ]);
 
     const readiness = readinessCheckins[0] || null;
@@ -268,7 +277,7 @@ export default function DailyChecklist({ onAllDone, onItemToggled }) {
     });
 
     // Generate canonical items from today's data
-    const generated = buildItemsFromData({ workoutPlan, mealPlan, readiness, customItems: activeCustom, today });
+    const generated = buildItemsFromData({ workoutPlan, mealPlan, readiness, customItems: activeCustom, today, hiddenDefaults });
 
     // Merge with saved DailyLog state — never erase completed items
     const savedItems = dailyLog?.checklist_items || dailyLog?.planned_checklist_items || [];

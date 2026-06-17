@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 import { Link, useNavigate } from 'react-router-dom';
 import StarterProfileModal from '@/components/profile/StarterProfileModal';
@@ -27,6 +27,10 @@ import ProgressSnapshotCard from '@/components/home/ProgressSnapshotCard';
 import { appCache } from '@/lib/appCache';
 import { useCacheHydrated } from '@/hooks/useCacheHydrated';
 import { getPlanDaySessionTitle } from '@/lib/planDayDisplay';
+import LogModal from '@/components/track/LogModal';
+import { ALL_CATEGORIES } from '@/components/track/categories';
+import { loadCustomTrackers } from '@/lib/customTrackers';
+import { saveVitalLog, getDailyLogUpdatesForCategory } from '@/lib/vitalsLog';
 
 const PAGE_KEY = 'home';
 const HOME_CACHE_KEY = 'home-dashboard';
@@ -331,6 +335,7 @@ export default function Home() {
   const [loadError, setLoadError] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
   const [isCustomizing, setIsCustomizing] = useState(false);
+  const [activeVital, setActiveVital] = useState(null);
   const [showStarterProfile, setShowStarterProfile] = useState(false);
   const [starterResultData, setStarterResultData] = useState(null);
   const [personalizationSaved, setPersonalizationSaved] = useState(false);
@@ -351,6 +356,30 @@ export default function Home() {
   const layout = usePageLayout(PAGE_KEY);
   const vitals = useVitalsLayout();
   const todayStr = getTodayStr();
+
+  // Resolve a tapped vital id to a Track category so the logger overlay can open
+  // above Home (no route change). Custom trackers are included so their ids resolve.
+  const allTrackCategories = useMemo(() => [...ALL_CATEGORIES, ...loadCustomTrackers()], []);
+
+  const openVital = (id) => {
+    const cat = allTrackCategories.find(c => c.id === id);
+    if (cat) setActiveVital(cat);
+  };
+
+  const onVitalSave = async (val) => {
+    const cat = activeVital;
+    setActiveVital(null);
+    if (!cat) return;
+    // Instant optimistic merge from the in-memory dailyLog — zero reads, pre-await.
+    const updates = getDailyLogUpdatesForCategory(cat.id, val, dailyLog);
+    if (updates) setDailyLog(prev => ({ ...(prev || {}), ...updates }));
+    // Authoritative write; the DailyLog subscription reconciles any drift.
+    try {
+      await saveVitalLog({ categoryId: cat.id, value: val });
+    } catch {
+      // swallow; Home stays usable, next authoritative reload corrects it
+    }
+  };
 
   // Loading floor: the empty-state CTA may only render once the durable cache
   // has hydrated AND the first load has settled. Until then we can't tell a
@@ -645,6 +674,7 @@ export default function Home() {
         today={vitalsToday}
         vitals={vitals}
         isCustomizing={isCustomizing}
+        onOpen={openVital}
       />
     ),
 
@@ -890,6 +920,17 @@ export default function Home() {
               Done editing
             </button>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeVital && (
+          <LogModal
+            category={activeVital}
+            currentValue={undefined}
+            onClose={() => setActiveVital(null)}
+            onSave={onVitalSave}
+          />
         )}
       </AnimatePresence>
     </div>

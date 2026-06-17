@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Trash2, Check, Loader2 } from 'lucide-react';
 import { backend } from '@/api/backendClient';
 import { getTodayISODate } from '@/lib/personalizationSync';
+import { DEFAULT_CHECKLIST_ITEMS, getHiddenDefaults, saveHiddenDefaults } from '@/lib/checklistPrefs';
 
 const ACCENT = '#c8e000';
 const ACCENT_DARK = '#8ea400';
@@ -137,6 +138,13 @@ export default function ChecklistCustomizeModal({ onClose, onSave }) {
   const [loadingItems, setLoadingItems] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hiddenDefaults, setHiddenDefaults] = useState([]);
+
+  // Hide the bottom navigation bar while this sheet is open — it overlaps the popup.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('execute:blocking-overlay', { detail: { open: true } }));
+    return () => window.dispatchEvent(new CustomEvent('execute:blocking-overlay', { detail: { open: false } }));
+  }, []);
 
   useEffect(() => {
     backend.entities.CustomChecklistItem.filter({ is_active: true }, '-created_date', 50)
@@ -144,6 +152,18 @@ export default function ChecklistCustomizeModal({ onClose, onSave }) {
       .catch(() => setItems([]))
       .finally(() => setLoadingItems(false));
   }, []);
+
+  useEffect(() => {
+    getHiddenDefaults().then(setHiddenDefaults).catch(() => setHiddenDefaults([]));
+  }, []);
+
+  const toggleDefault = (type) => {
+    const next = hiddenDefaults.includes(type)
+      ? hiddenDefaults.filter(t => t !== type)
+      : [...hiddenDefaults, type];
+    setHiddenDefaults(next);
+    saveHiddenDefaults(next);
+  };
 
   const handleAdd = async (itemData) => {
     setSaving(true);
@@ -212,17 +232,24 @@ export default function ChecklistCustomizeModal({ onClose, onSave }) {
         </div>
 
         <div className="overflow-y-auto flex-1 px-5 py-4 space-y-3">
-          {/* Fixed default items (read-only display) */}
+          {/* Default items (toggleable — tap to show/hide) */}
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: '#91968e' }}>Default Items (always active)</p>
-            {["Today's Workout", 'Nutrition Plan', 'Recovery Routine'].map((label, i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-3 rounded-xl border mb-1.5"
-                style={{ background: '#f2efe7', borderColor: '#e8e1d4', opacity: 0.7 }}>
-                <div className="w-4 h-4 rounded-full border-2 flex-shrink-0" style={{ borderColor: '#d9d1c2' }} />
-                <p className="text-sm flex-1" style={{ color: '#5d635d' }}>{label}</p>
-                <span className="text-[10px]" style={{ color: '#b8b4ac' }}>Built-in</span>
-              </div>
-            ))}
+            <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: '#91968e' }}>Default Items</p>
+            {DEFAULT_CHECKLIST_ITEMS.map(({ type, label }) => {
+              const enabled = !hiddenDefaults.includes(type);
+              return (
+                <button key={type} onClick={() => toggleDefault(type)}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border mb-1.5 text-left transition-all"
+                  style={{ background: enabled ? '#ffffff' : '#f2efe7', borderColor: enabled ? 'rgba(200,224,0,0.3)' : '#e8e1d4' }}>
+                  <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                    style={{ borderColor: enabled ? ACCENT_DARK : '#d9d1c2', background: enabled ? 'rgba(200,224,0,0.15)' : 'transparent' }}>
+                    {enabled && <Check size={11} style={{ color: ACCENT_DARK }} />}
+                  </div>
+                  <p className="text-sm flex-1" style={{ color: enabled ? '#141613' : '#91968e' }}>{label}</p>
+                  <span className="text-[10px]" style={{ color: '#b8b4ac' }}>{enabled ? 'Active' : 'Hidden'}</span>
+                </button>
+              );
+            })}
           </div>
 
           {/* Custom items from Supabase */}

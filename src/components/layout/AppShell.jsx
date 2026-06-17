@@ -34,7 +34,11 @@ export default function AppShell({ children }) {
   const tabHistories = useRef({});
   const mainRef = useRef(null);
   const prevTabRef = useRef(null);
-  const lastNavAtRef = useRef(0);
+  // Tracks the intended current path. Reconciled to the committed route after
+  // every navigation (effect below) AND set optimistically inside handleTabPress
+  // when we navigate, so a synchronous burst of taps (no re-render between them)
+  // reads the path we're actually heading to — not the stale closed-over location.
+  const currentPathRef = useRef(location.pathname);
 
   const isAppRoute = location.pathname === '/' || APP_ROUTES.some(r => location.pathname.startsWith(r));
   const [hasBlockingOverlay, setHasBlockingOverlay] = useState(false);
@@ -100,12 +104,16 @@ export default function AppShell({ children }) {
     }
   }, [location.pathname, currentTab]);
 
-  const handleTabPress = useCallback((path) => {
-    const now = Date.now();
-    if (now - lastNavAtRef.current < 450) return;
-    lastNavAtRef.current = now;
+  // Reconcile the intended-path ref to the committed route after each navigation.
+  useEffect(() => {
+    currentPathRef.current = location.pathname;
+  }, [location.pathname]);
 
-    const isActive = location.pathname === path || location.pathname.startsWith(path + '/');
+  const handleTabPress = useCallback((path) => {
+    // Read from the ref, not the closed-over location: during a fast tap burst
+    // React may not have re-rendered between taps, so location.pathname is stale.
+    const cur = currentPathRef.current;
+    const isActive = cur === path || cur.startsWith(path + '/');
 
     if (isActive) {
       // Tap active tab → go back to root of this tab
@@ -114,6 +122,7 @@ export default function AppShell({ children }) {
         // Reset stack and navigate to root
         tabHistories.current[path] = [path];
         scrollPositions.current[path] = 0;
+        currentPathRef.current = path;
         navigate(path, { replace: true });
       } else {
         // Already at root — scroll to top
@@ -121,9 +130,12 @@ export default function AppShell({ children }) {
         scrollPositions.current[path] = 0;
       }
     } else {
+      // Optimistically record where we're heading so the next tap in this burst
+      // judges isActive against the intended path, not the not-yet-committed one.
+      currentPathRef.current = path;
       navigate(path);
     }
-  }, [location.pathname, navigate]);
+  }, [navigate]);
 
   if (!isAppRoute) return children;
 

@@ -1,14 +1,12 @@
 import { motion } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
 import { Moon, Footprints, Flame, Droplets, Smile, Zap, Dumbbell, Scale, Pencil } from 'lucide-react';
 
 const ICON_MAP = { Moon, Footprints, Flame, Droplets, Smile, Zap, Dumbbell, Scale, Pencil };
 
-export default function VitalsRowWidget({ today, vitals, isCustomizing }) {
-  const navigate = useNavigate();
-  const openTracker = (id) => {
+export default function VitalsRowWidget({ today, vitals, isCustomizing, onOpen }) {
+  const handleOpen = (id) => {
     if (isCustomizing) return;
-    navigate('/track', { state: { openTracker: id } });
+    onOpen?.(id);
   };
 
   return (
@@ -41,7 +39,7 @@ export default function VitalsRowWidget({ today, vitals, isCustomizing }) {
               <button
                 key={v.id}
                 type="button"
-                onClick={() => openTracker(v.id)}
+                onClick={() => handleOpen(v.id)}
                 className="p-2 rounded-xl border text-center flex flex-col items-center active:scale-95 transition-transform"
                 style={{
                   background: pct >= 1 ? 'rgba(176,90,58,0.06)' : '#ffffff',
@@ -80,7 +78,7 @@ export default function VitalsRowWidget({ today, vitals, isCustomizing }) {
             <button
               key={v.id}
               type="button"
-              onClick={() => openTracker(v.id)}
+              onClick={() => handleOpen(v.id)}
               className="p-3 rounded-xl border text-center active:scale-95 transition-transform"
               style={{
                 background: pct >= 1 ? 'rgba(200,224,0,0.08)' : '#ffffff',
