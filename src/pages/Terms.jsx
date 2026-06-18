@@ -33,8 +33,8 @@ export default function Terms() {
   return (
     <div className="min-h-screen" style={{ background: '#f6f2e8' }}>
       {/* Header */}
-      <div className="sticky top-0 z-40 px-5 pb-4"
-        style={{ paddingTop: 'max(3rem, calc(env(safe-area-inset-top) + 1rem))', background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
+      <div className="sticky top-0 z-40 px-5 pb-4 pt-safe-header"
+        style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
         <div className="flex items-center gap-3">
           <button onClick={goBack}
             className="w-8 h-8 rounded-xl flex items-center justify-center border"

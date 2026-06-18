@@ -532,7 +532,7 @@ Return 4 insights. Each insight needs:
 
   return (
     <div ref={pullRef} className="min-h-screen transition-transform transition-opacity" style={{ background: '#f6f2e8' }}>
-      <div className="sticky top-0 z-40 px-5 pt-12 pb-4" style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
+      <div className="sticky top-0 z-40 px-5 pt-safe-header pb-4" style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold tracking-tight" style={{ color: '#141613' }}>Insights</h1>

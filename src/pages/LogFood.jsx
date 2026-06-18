@@ -455,7 +455,7 @@ export default function LogFood() {
   return (
     <div className="min-h-screen" style={{ background: '#f6f2e8' }}>
       {/* Header */}
-      <div className="sticky top-0 z-40 px-5 pt-12 pb-4" style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
+      <div className="sticky top-0 z-40 px-5 pt-safe-header pb-4" style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
         <h1 className="text-lg font-bold tracking-tight" style={{ color: '#141613' }}>Log Food</h1>
         <p className="text-xs mt-0.5" style={{ color: '#91968e' }}>Track meals and see how today supports your goals.</p>
       </div>

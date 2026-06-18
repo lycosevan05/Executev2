@@ -794,7 +794,7 @@ export default function Nutrition() {
           />
         )}
       </AnimatePresence>
-      <div className="sticky top-0 z-40 px-5 pb-3" style={{ paddingTop: 'max(3rem, calc(env(safe-area-inset-top) + 1rem))', background: 'rgba(251,248,241,0.97)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #ddd6c8', boxShadow: '0 2px 12px rgba(20,22,19,0.06)' }}>
+      <div className="sticky top-0 z-40 px-5 pb-3 pt-safe-header" style={{ background: 'rgba(251,248,241,0.97)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #ddd6c8', boxShadow: '0 2px 12px rgba(20,22,19,0.06)' }}>
         <div className="flex items-center justify-between mb-3">
           <div>
             <h1 className="text-lg font-bold tracking-tight" style={{ color: '#141613' }}>Nutrition</h1>

@@ -711,7 +711,7 @@ export default function MyWeek() {
   return (
     <div className="min-h-screen" style={{ background: '#f6f2e8' }}>
       {/* Header */}
-      <div className="sticky top-0 z-40 px-5 pt-12 pb-3"
+      <div className="sticky top-0 z-40 px-5 pt-safe-header pb-3"
         style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
         <div className="flex items-center gap-3 mb-3">
           <button onClick={() => navigate('/plan')}

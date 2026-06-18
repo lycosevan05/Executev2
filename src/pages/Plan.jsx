@@ -502,8 +502,8 @@ export default function Plan() {
       </AnimatePresence>
 
       {/* ── Header ── */}
-      <div className="sticky top-0 z-40 px-5 pb-1"
-        style={{ paddingTop: 'max(3rem, calc(env(safe-area-inset-top) + 1rem))', background: 'rgba(251,248,241,0.97)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #ddd6c8', boxShadow: '0 2px 12px rgba(20,22,19,0.06)' }}>
+      <div className="sticky top-0 z-40 px-5 pb-1 pt-safe-header"
+        style={{ background: 'rgba(251,248,241,0.97)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #ddd6c8', boxShadow: '0 2px 12px rgba(20,22,19,0.06)' }}>
         <div className="flex items-center justify-between">
           <div className="flex-1 min-w-0">
             <h1 className="text-lg font-black tracking-tight" style={{ color: '#141613' }}>Your Performance Plan</h1>

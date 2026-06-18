@@ -842,7 +842,7 @@ export default function Home() {
       </AnimatePresence>
 
       {/* Header */}
-      <div className="px-5 pb-5" style={{ paddingTop: 'max(4.5rem, calc(env(safe-area-inset-top) + 1.5rem))', background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
+      <div className="pt-safe-header px-5 pb-5" style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
         <div className="flex items-center justify-between gap-3">
           {/* Greeting + name */}
           <div className="min-w-0">

@@ -335,7 +335,7 @@ export default function Track() {
 
   return (
     <div className="min-h-screen" style={{ background: '#f6f2e8' }}>
-      <div className="sticky top-0 z-40 px-5 pb-4" style={{ paddingTop: 'max(3rem, calc(env(safe-area-inset-top) + 1rem))', background: 'rgba(251,248,241,0.97)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #ddd6c8', boxShadow: '0 2px 12px rgba(20,22,19,0.06)' }}>
+      <div className="sticky top-0 z-40 px-5 pb-4 pt-safe-header" style={{ background: 'rgba(251,248,241,0.97)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #ddd6c8', boxShadow: '0 2px 12px rgba(20,22,19,0.06)' }}>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold tracking-tight" style={{ color: '#141613' }}>Track</h1>

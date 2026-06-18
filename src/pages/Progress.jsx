@@ -387,8 +387,8 @@ export default function Progress() {
   return (
     <div className="min-h-screen" style={{ background: '#f6f2e8' }}>
       {/* Header */}
-      <div className="sticky top-0 z-40 px-5 pt-4 pb-3"
-        style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4', paddingTop: 'max(1rem, calc(env(safe-area-inset-top) + 1rem))' }}>
+      <div className="sticky top-0 z-40 px-5 pb-3 pt-safe-header"
+        style={{ background: 'rgba(251,248,241,0.95)', backdropFilter: 'blur(24px)', borderBottom: '1px solid #e8e1d4' }}>
         <div className="flex items-center justify-between gap-3 mb-3">
           <button onClick={() => navigate(-1)}
             className="w-8 h-8 rounded-xl flex items-center justify-center border flex-shrink-0"
