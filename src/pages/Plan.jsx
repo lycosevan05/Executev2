@@ -22,6 +22,7 @@ import StarterProfileModal from '@/components/profile/StarterProfileModal';
 import { backend } from '@/api/backendClient';
 import { loadActiveAIPlan, loadPlanQuestionnaireDefaults, getTodayISODate, bustPlanCache } from '@/lib/personalizationSync';
 import { appCache } from '@/lib/appCache';
+import { durableStore } from '@/lib/durableStore';
 import { useCacheHydrated } from '@/hooks/useCacheHydrated';
 import {
   startGeneration, subscribeToGeneration, isGenerating, loadPendingAnswers, loadPendingStep, clearPendingAnswers,
@@ -327,6 +328,17 @@ export default function Plan() {
     setIsRefreshFlow(false);
     setSaveError(null);
     setGenerating(true);
+
+    // Mark this user eligible for the one-time first-Train-visit "My Split" intro.
+    // Only set on the FIRST ever completion (key absent) — pre-feature users never
+    // ran this, so they stay absent and are never redirected. Local + per-uid.
+    const introUid = appCache.getActiveUid();
+    if (introUid) {
+      const introKey = `split-intro:u:${introUid}`;
+      durableStore.getItem(introKey).then(v => {
+        if (!v) durableStore.setItem(introKey, 'pending');
+      });
+    }
 
     // Start generation, then subscribe immediately so we're guaranteed to be
     // attached before completion. Completion fires through the subscriber only.

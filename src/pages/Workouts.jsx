@@ -18,6 +18,7 @@ import PremiumPaywall from '@/components/premium/PremiumPaywall';
 import { PremiumBadge } from '@/components/premium/PremiumBadge';
 import { useSubscription } from '@/hooks/useSubscription';
 import { appCache } from '@/lib/appCache';
+import { durableStore } from '@/lib/durableStore';
 import { getPlanDaySessionTitle } from '@/lib/planDayDisplay';
 
 const ACCENT = '#c8e000';
@@ -788,6 +789,26 @@ export default function Workouts() {
     return () => { cancelled = true; };
   }, [targetDate, planIdParam]);
 
+  // ── One-time first-Train-visit redirect to My Split ───────────────────────
+  // For a freshly-onboarded user, route the first Train visit into My Split so
+  // they see their generated week. Gated on the overview existing (never route
+  // into an empty My Split) and consumed at the moment of redirect so it fires
+  // once. Flag is local + per-uid (durableStore); absent for pre-feature users.
+  useEffect(() => {
+    if (overviewDays.length === 0) return;
+    const uid = appCache.getActiveUid();
+    if (!uid) return;
+    let cancelled = false;
+    const key = `split-intro:u:${uid}`;
+    durableStore.getItem(key).then(v => {
+      if (cancelled || v !== 'pending') return;
+      durableStore.setItem(key, 'seen');
+      setActiveTab('split');
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePlan?.id]);
+
   // ── Build workout handler ─────────────────────────────────────────────────
   const handleBuildWorkout = async (dateOverride) => {
     const buildDate = dateOverride || targetDate;
@@ -860,6 +881,66 @@ export default function Workouts() {
       });
     }
     setBuildingAllSplit(false);
+  };
+
+  // ── Build the week ahead (Today tab) ──────────────────────────────────────
+  // The Today-tab "Build workout" builds every upcoming TRAINING day in the
+  // current overview window (today → end of overview), not just today. Reuses
+  // the canonical batch path (pooled + withBackoff). Already-built days no-op
+  // inside the resolver (idempotent); rest days are filtered out.
+  const handleBuildWeekAhead = async () => {
+    if (generatingWorkout) return;
+    const pending = rollingDays.filter(d => !isNonTrainingDay(d));
+    if (!pending.length) return;
+    setGeneratingWorkout(true);
+    setGenerationError(null);
+    try {
+      const results = await buildWorkoutPlansForDates(
+        pending.map(d => d.date),
+        { masterPlan: activePlan || undefined },
+      );
+
+      // Reflect today's result in the Today-tab state + cache. buildWorkoutPlansForDates
+      // returns { date, status, workoutPlan, error } — no overviewDay; today's overview
+      // day is unchanged by building, so keep the existing state value.
+      const todayRes = results.find(r => r.date === targetDate);
+      if (todayRes) {
+        setWorkoutStatus(todayRes.status);
+        setWorkout(todayRes.workoutPlan);
+        appCache.set('workouts-today', {
+          activePlan,
+          workout: todayRes.workoutPlan,
+          workoutStatus: todayRes.status,
+          overviewDay,
+        });
+      }
+
+      // Keep My Split consistent. On the Today tab `splitResults` is NOT loaded
+      // (the split effect early-returns), so do NOT spread in-memory state.
+      // Merge fresh results over the PERSISTED, planId-scoped cache: this only
+      // ever improves coverage or leaves it under-covered (→ My Split refetches
+      // full truth); it never persists a partial week as if complete.
+      const prevSplit = appCache.get('workouts-split');
+      const base = (prevSplit?.planId === activePlanId && prevSplit?.results)
+        ? { ...prevSplit.results }
+        : {};
+      results.forEach(r => { base[r.date] = { status: r.status, workoutPlan: r.workoutPlan }; });
+      appCache.set('workouts-split', { planId: activePlanId, results: base });
+      setSplitResults(base);
+
+      const failed = results.filter(r => r.error);
+      if (failed.length > 0) {
+        toast({
+          variant: 'destructive',
+          title: `Couldn't build ${failed.length} day${failed.length > 1 ? 's' : ''}`,
+          description: `Failed: ${failed.map(r => r.date).join(', ')}. Tap to retry.`,
+        });
+      }
+    } catch (err) {
+      setGenerationError(err?.message || 'Failed to generate workouts. Please try again.');
+    } finally {
+      setGeneratingWorkout(false);
+    }
   };
 
   // ── Load split tab — rolling days from today forward ─────────────────────
@@ -1157,7 +1238,7 @@ export default function Workouts() {
                       {(workoutStatus === 'needs_generation') && (
                         <BuildWorkoutCard
                           overviewDay={todayOverviewDay}
-                          onBuild={() => isPremium ? handleBuildWorkout() : setShowPremiumPaywall(true)}
+                          onBuild={() => isPremium ? handleBuildWeekAhead() : setShowPremiumPaywall(true)}
                           generating={generatingWorkout}
                           error={generationError}
                         />
