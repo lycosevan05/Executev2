@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 import { backend } from '@/api/backendClient';
+import { appCache } from '@/lib/appCache';
 
 const LOCALSTORAGE_KEYS = [
   'execute_backend_personalization_migrated_v2',
@@ -45,8 +46,10 @@ export default function ResetAppDataButton() {
       // Clear localStorage migration flags
       LOCALSTORAGE_KEYS.forEach(key => localStorage.removeItem(key));
 
-      // Also clear sessionStorage (appCache persists there)
-      sessionStorage.clear();
+      // Purge the durable appCache (Capacitor Preferences / localStorage) so the
+      // reload below doesn't re-hydrate a stale pre-reset snapshot. Awaited so the
+      // native removes land before window.location.reload() races them.
+      await appCache.clear();
 
       setDone(true);
       setShowConfirm(false);

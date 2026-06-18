@@ -155,8 +155,9 @@ export default function AppShell({ children }) {
 
               if (isCenter) {
                 return (
-                  <button key={path} onClick={() => handleTabPress(path)} className="relative flex flex-col items-center">
+                  <button key={path} onClick={(e) => { if (e.detail === 0) handleTabPress(path); }} className="relative flex flex-col items-center">
                     <motion.div
+                      onTap={() => handleTabPress(path)}
                       whileTap={{ scale: 0.92 }}
                       className="w-10 h-10 rounded-full flex items-center justify-center"
                       style={{
@@ -172,8 +173,8 @@ export default function AppShell({ children }) {
               }
 
               return (
-                <button key={path} onClick={() => handleTabPress(path)} className="relative flex flex-col items-center min-w-[46px] justify-center">
-                  <motion.div whileTap={{ scale: 0.85 }} className="flex flex-col items-center justify-center">
+                <button key={path} onClick={(e) => { if (e.detail === 0) handleTabPress(path); }} className="relative flex flex-col items-center min-w-[46px] justify-center">
+                  <motion.div onTap={() => handleTabPress(path)} whileTap={{ scale: 0.85 }} className="flex flex-col items-center justify-center">
                     <Icon size={18} style={{ color: isActive ? '#c8e000' : '#a09a90' }} />
                     <span className="text-[8.5px] mt-0.5 font-medium leading-none" style={{ color: isActive ? '#c8e000' : '#a09a90' }}>
                       {label}
