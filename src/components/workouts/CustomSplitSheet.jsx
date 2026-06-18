@@ -80,7 +80,7 @@ export default function CustomSplitSheet({ onClose, onSave, existingSplit = null
         onClick={e => e.stopPropagation()}
       >
         {/* Handle */}
-        <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
+        <div className="flex justify-center pt-safe-header pb-1 flex-shrink-0">
           <div className="w-10 h-1 rounded-full" style={{ background: '#ddd6c8' }} />
         </div>
 
