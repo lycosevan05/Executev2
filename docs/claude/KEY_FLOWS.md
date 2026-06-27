@@ -252,11 +252,18 @@ message substring (`Plan.jsx:212`) and shows a rate-limit message.
   (`invoke-llm/index.ts:84` → `_shared/records.ts:54`), 401 if the JWT is
   missing/invalid. The browser client always sends the session JWT through
   `supabase.functions.invoke`.
-- **Nutrition has the same anti-pattern, deliberately un-fixed:**
-  per-day meal generation (`getOrCreateMealPlanForDate.js`,
-  `buildMealPlansForDates.js`) does **not** wrap reads in `withBackoff` and does
-  not set `max_output_tokens`. Mirror the workout fix when ready (noted in
-  MEMORY/CLAUDE).
+- **Nutrition now mirrors the workout fix (verified by direct read
+  2026-06-27 — supersedes the earlier "deliberately un-fixed" note):** the
+  multi-day meal build wraps its hoisted invariant context in `withBackoff`
+  (`buildMealPlansForDates.js:67`, concurrency cap 4), and
+  `getOrCreateMealPlanForDate.js` wraps the existing-plan filter reads
+  (`:168`/`:170`), the FoodLog read (`:201`), and `MealPlan.create` (`:404`) in
+  `withBackoff` — with the swallowing `.catch` placed **outside** the wrapper so
+  a first 429 retries instead of collapsing to "no plan." The LLM call sets
+  `max_output_tokens: 2500` (`:365`). Residual: the single-day **no-`context`
+  fallback** branch (`:204–218`) still does bare `Promise.allSettled` invariant
+  reads with no backoff, but the multi-day build always passes `context`, so the
+  burst path that used to 429 is covered.
 - **Two LLM calls per opened training day total**: one overview (at plan
   creation) + one per day (lazy). Never a 7× burst.
 
@@ -646,10 +653,10 @@ around it:
   is named but **not traced step-by-step here** — this doc focuses on the iOS
   RevenueCat rail. `stripeWebhook` writes the same `user_subscriptions` table
   (per REPO_MAP), but its event mapping was not read.
-- **`getOrCreateMealPlanForDate` / `buildMealPlansForDates`** internals were not
-  read line-by-line; they are asserted (from MEMORY/CLAUDE) to mirror the workout
-  path **without** `withBackoff`/`max_output_tokens`. Treat the nutrition
-  rate-limit claim as second-hand until those two files are read.
+- ~~**`getOrCreateMealPlanForDate` / `buildMealPlansForDates`** internals were
+  not read line-by-line...~~ **RESOLVED 2026-06-27:** both files read directly;
+  the nutrition path **does** wrap reads + create in `withBackoff` and **does**
+  set `max_output_tokens: 2500` — it mirrors the workout fix (see §2 gotchas).
 - **`extractPdfText.js` / `byoCadence.js` / `byoDraft.js` / `PlanQuestionnaire.jsx`**
   were not opened in this pass — the BYO questionnaire UI steps and cadence
   resolution are summarized from MEMORY + their call sites, not from the files
@@ -687,5 +694,6 @@ around it:
 - Grep: every `user_subscriptions` write across `supabase/`+`src/` — writers `revenuecatWebhook:70` + `stripeWebhook:17`; read-only `stripeCreateCheckout:27`, `stripeCreatePortal:22`, `subscription.js:89`
 - `src/lib/plans/getOrCreateWorkoutPlanForDate.js` `validateWorkout` (`:102`) — confirmed exercise-count bound is a fixed 4–8 range (`:111`)
 - `src/lib/planGenerationState.js` `savePendingAnswers` (`:16`/`:66`) — confirmed `sessionStorage` persistence of questionnaire answers
+- `src/lib/plans/buildMealPlansForDates.js` (full) + `src/lib/plans/getOrCreateMealPlanForDate.js` (full) — confirmed nutrition path wraps invariant context (`buildMealPlansForDates.js:67`), filter reads (`:168`/`:170`), FoodLog (`:201`), `MealPlan.create` (`:404`) in `withBackoff`, sets `max_output_tokens: 2500` (`:365`); only the no-`context` fallback (`:204–218`) is un-wrapped — resolves the earlier "deliberately un-fixed" note
 
 _All read/verified 2026-06-27._
