@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ChevronLeft, ChevronRight, Check, Timer, SkipForward, Flag, Minus, Plus, PlusCircle } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Check, SkipForward, Flag, Minus, Plus, PlusCircle } from 'lucide-react';
 import { backend } from '@/api/backendClient';
 import { getUnitSystem } from '@/lib/units';
 import PostWorkoutCheckIn from '@/components/workouts/PostWorkoutCheckIn';
@@ -122,20 +122,6 @@ async function loadLinkedDailyLogForWorkout(date, workout = null) {
     dateLogs[0] ||
     null
   );
-}
-
-// Timer based purely on startedAt timestamp — survives app close/refresh
-// When paused, returns a fixed snapshot value instead of live time
-function useElapsedTimer(startedAt, paused, pausedSnapshot) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    if (!startedAt || paused) return;
-    const update = () => setElapsed(Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, [startedAt, paused]);
-  return paused ? pausedSnapshot : elapsed;
 }
 
 function formatTime(secs) {
@@ -366,32 +352,10 @@ export default function WorkoutSession() {
   const [loading, setLoading] = useState(true);
   const [showAddCustom, setShowAddCustom] = useState(false);
   const [customForm, setCustomForm] = useState({ name: '', sets: '3', reps: '10', muscles: '', notes: '' });
-  const [timerPaused, setTimerPaused] = useState(false);
-  const [pausedElapsed, setPausedElapsed] = useState(0);
   const [unitSystem] = useState(() => getUnitSystem());
 
   // Touch/swipe state
   const touchStartX = useRef(null);
-
-  const elapsed = useElapsedTimer(startedAt, timerPaused, pausedElapsed);
-
-  const handleStartTimer = () => {
-    const now = new Date().toISOString();
-    setStartedAt(now);
-    setTimerPaused(false);
-    if (logId) {
-      backend.entities.WorkoutLog.update(logId, { started_at: now, timer_started_at: now }).catch(() => {});
-    }
-  };
-
-  const handleToggleTimer = () => {
-    if (!timerPaused) {
-      setPausedElapsed(elapsed);
-      setTimerPaused(true);
-    } else {
-      setTimerPaused(false);
-    }
-  };
 
   function buildSummaryFromLog(log, workout) {
     return {
@@ -520,15 +484,15 @@ export default function WorkoutSession() {
       generation_batch_id: workoutForLog?.generation_batch_id || '',
       weekly_plan_id: workoutForLog?.weekly_plan_id || '',
       status: 'in_progress',
-      started_at: '',
-      timer_started_at: '',
+      started_at: now,
+      timer_started_at: now,
       exercise_logs: [],
     }).catch(() => null);
 
     if (newLog) {
       setLogId(newLog.id);
-      setStartedAt(null);
-      // Don't auto-start the timer — user must press Start Timer
+      // Timing is tracked silently from session start (no visible timer).
+      setStartedAt(now);
     }
 
     setLoading(false);
@@ -670,10 +634,26 @@ export default function WorkoutSession() {
 
   const handleCheckInDone = async (checkInData) => {
     const now = new Date().toISOString();
-    const durationMinutes = startedAt ? Math.round((Date.now() - new Date(startedAt).getTime()) / 60000) : 0;
     const weight = await loadUserWeightKg();
+
+    // Completed work drives both duration and calories. PER_SET_MIN ~= work + avg rest.
+    const PER_SET_MIN = 3;
+    const SESSION_CEILING_MIN = 120;
+    const skipped = new Set(skippedExercises);
+    const engagedPlannedSets = exercises
+      .filter(ex => !skipped.has(ex.name))
+      .reduce((s, ex) => s + (ex.sets || 0), 0);
+    const workSets = doneSets > 0 ? doneSets : engagedPlannedSets;
+    const workMinutes = workSets * PER_SET_MIN;
+    const rawWallMin = startedAt ? (Date.now() - new Date(startedAt).getTime()) / 60000 : 0;
+    // Stored/displayed duration = REAL elapsed, capped at 1.5x the work estimate (floor 5)
+    // and a hard ceiling, so a session left open can't balloon the minutes or calories.
+    const durationCapMin = Math.min(Math.max(workMinutes * 1.5, 5), SESSION_CEILING_MIN);
+    const durationMinutes = Math.round(Math.min(rawWallMin, durationCapMin));
+    // Calories weight completed work (70%) over the capped time (30%).
+    const effortMinutes = 0.7 * workMinutes + 0.3 * durationMinutes;
     const intensityMultiplier = { Easy: 4, Moderate: 6, Hard: 8, 'Very hard': 10, 'Max effort': 12 }[checkInData.exertionLevel] || 6;
-    const estimatedCalories = Math.round(weight * (durationMinutes / 60) * intensityMultiplier);
+    const estimatedCalories = Math.round(weight * (effortMinutes / 60) * intensityMultiplier);
 
     const logUpdate = {
       status: 'completed',
@@ -852,30 +832,15 @@ export default function WorkoutSession() {
       {!showSummary && (
         <>
           {/* TOP BAR */}
-          <div className="flex items-center justify-between px-5 pt-14 pb-4 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-            <button onClick={() => navigate('/workouts')} className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.07)' }}>
-              <X size={16} style={{ color: '#91968e' }} />
+          <div className="flex items-center gap-3 px-4 pt-14 pb-4 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <button onClick={() => navigate('/workouts')} aria-label="Close workout"
+              className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(255,255,255,0.07)' }}>
+              <X size={22} style={{ color: '#c4c9c0' }} />
             </button>
-            <div className="text-center flex-1 mx-3">
-              <p className="text-xs font-bold truncate" style={{ color: '#ffffff' }}>{passedWorkout?.name || 'Workout'}</p>
-              {!startedAt ? (
-                <button onClick={handleStartTimer}
-                  className="flex items-center gap-1.5 justify-center mt-0.5 px-3 py-1 rounded-xl"
-                  style={{ background: 'rgba(200,224,0,0.15)', border: '1px solid rgba(200,224,0,0.3)' }}>
-                  <Timer size={11} style={{ color: ACCENT }} />
-                  <span className="text-xs font-bold" style={{ color: ACCENT }}>Start Timer</span>
-                </button>
-              ) : (
-                <button onClick={handleToggleTimer} className="flex items-center gap-1.5 justify-center mt-0.5">
-                  <Timer size={11} style={{ color: timerPaused ? '#91968e' : ACCENT }} />
-                  <span className="text-base font-black tabular-nums" style={{ color: timerPaused ? '#91968e' : ACCENT }}>{formatTime(elapsed)}</span>
-                  <span className="text-[9px] font-bold uppercase tracking-widest" style={{ color: timerPaused ? '#5d635d' : 'transparent' }}>paused</span>
-                </button>
-              )}
-            </div>
-            <button onClick={handleFinishIntent} className="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5" style={{ background: 'rgba(200,224,0,0.15)', color: ACCENT }}>
-              <Flag size={12} /> Finish
-            </button>
+            <p className="flex-1 text-base font-bold leading-snug"
+              style={{ color: '#ffffff', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+              {passedWorkout?.name || 'Workout'}
+            </p>
           </div>
 
           {/* PROGRESS BAR */}
@@ -930,7 +895,8 @@ export default function WorkoutSession() {
                    animate={{ opacity: 1, x: 0 }}
                    exit={{ opacity: 0, x: -40 }}
                    transition={{ duration: 0.22 }}
-                   className="h-full overflow-y-auto overflow-x-hidden px-3 pb-6 pt-2 box-border"
+                   className="h-full overflow-y-auto overflow-x-hidden px-3 pt-2 box-border"
+                   style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}
                  >
                   {/* Main exercise card */}
                   <div className="rounded-3xl p-4 mb-4 overflow-hidden w-full" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>

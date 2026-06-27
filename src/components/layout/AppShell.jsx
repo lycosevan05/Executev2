@@ -141,7 +141,7 @@ export default function AppShell({ children }) {
 
   return (
     <div className="min-h-screen font-inter flex flex-col max-w-md mx-auto relative" style={{ background: '#f6f2e8' }}>
-      <main ref={mainRef} className={`ios-scroll flex-1 ${hideNav ? 'safe-bottom' : 'pb-20'}`}>
+      <main ref={mainRef} className={`ios-scroll flex-1 ${hideNav ? '' : 'pb-20'}`}>
         {children}
       </main>
 
