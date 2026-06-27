@@ -46,3 +46,7 @@ supabase/.temp/
 
 # Deep-review / analysis artifacts (may embed keys & transcripts)
 .analysis/
+
+# R console history artifacts
+.Rhistory
+**/.Rhistory
