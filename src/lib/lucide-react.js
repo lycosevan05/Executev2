@@ -46,6 +46,7 @@ export { default as Minus } from '../../node_modules/lucide-react/dist/esm/icons
 export { default as Moon } from '../../node_modules/lucide-react/dist/esm/icons/moon.js';
 export { default as MoreHorizontal } from '../../node_modules/lucide-react/dist/esm/icons/ellipsis.js';
 export { default as PanelLeft } from '../../node_modules/lucide-react/dist/esm/icons/panel-left.js';
+export { default as Pause } from '../../node_modules/lucide-react/dist/esm/icons/pause.js';
 export { default as Pencil } from '../../node_modules/lucide-react/dist/esm/icons/pencil.js';
 export { default as PersonStanding } from '../../node_modules/lucide-react/dist/esm/icons/person-standing.js';
 export { default as Play } from '../../node_modules/lucide-react/dist/esm/icons/play.js';

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ChevronLeft, ChevronRight, Check, SkipForward, Flag, Minus, Plus, PlusCircle } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Check, SkipForward, Flag, Minus, Plus, PlusCircle, Play, Pause, RotateCcw } from 'lucide-react';
 import { backend } from '@/api/backendClient';
 import { getUnitSystem } from '@/lib/units';
 import PostWorkoutCheckIn from '@/components/workouts/PostWorkoutCheckIn';
@@ -130,25 +130,78 @@ function formatTime(secs) {
   return `${m}:${s}`;
 }
 
-function RestTimer({ seconds, onDone }) {
-  const [remaining, setRemaining] = useState(seconds);
+// Parse a rest string ("2-3 min", "90 sec") → seconds. Ranges use the upper bound.
+function parseRestSeconds(restStr) {
+  const s = String(restStr || '').toLowerCase();
+  const mins = [...s.matchAll(/(\d+)\s*min/g)].map(m => parseInt(m[1]));
+  if (mins.length) return Math.max(...mins) * 60;
+  const secs = [...s.matchAll(/(\d+)\s*sec/g)].map(m => parseInt(m[1]));
+  if (secs.length) return Math.max(...secs);
+  return 90;
+}
+
+// Inline, adjustable rest timer that lives under the stats row of each exercise.
+// Seeds from the exercise's prescribed rest; remounts per exercise (card is keyed).
+function RestTimerWidget({ defaultSeconds }) {
+  const STEP = 15;
+  const [target, setTarget] = useState(defaultSeconds);
+  const [remaining, setRemaining] = useState(defaultSeconds);
+  const [running, setRunning] = useState(false);
+
   useEffect(() => {
-    if (remaining <= 0) { onDone(); return; }
+    if (!running) return;
+    if (remaining <= 0) { setRunning(false); return; }
     const id = setTimeout(() => setRemaining(r => r - 1), 1000);
     return () => clearTimeout(id);
-  }, [remaining]);
+  }, [running, remaining]);
+
+  const adjust = (delta) => {
+    setRunning(false);
+    setTarget(t => {
+      const next = Math.max(STEP, t + delta);
+      setRemaining(next);
+      return next;
+    });
+  };
+  const toggle = () => {
+    if (remaining <= 0) { setRemaining(target); setRunning(true); return; }
+    setRunning(r => !r);
+  };
+  const reset = () => { setRunning(false); setRemaining(target); };
+
+  const done = remaining <= 0;
+  const pct = target > 0 ? Math.max(0, Math.min(1, remaining / target)) : 0;
+
   return (
-    <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(10,10,10,0.94)' }}>
-      <div className="text-center">
-        <p className="text-sm uppercase tracking-widest mb-3" style={{ color: '#91968e' }}>Rest</p>
-        <p className="text-7xl font-black tabular-nums" style={{ color: ACCENT }}>{formatTime(remaining)}</p>
-        <button onClick={onDone} className="mt-8 px-8 py-3 rounded-2xl text-sm font-bold" style={{ background: ACCENT, color: '#141613' }}>
-          Skip Rest
+    <div className="mb-5 rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="flex items-center justify-between mb-2.5">
+        <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#4a4f4a' }}>Rest timer</p>
+        <button onClick={reset} className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest" style={{ color: '#5d635d' }}>
+          <RotateCcw size={11} /> Reset
         </button>
       </div>
-    </motion.div>
+      <div className="flex items-center gap-2.5">
+        <button onClick={() => adjust(-STEP)} aria-label="Decrease rest"
+          className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(255,255,255,0.07)' }}>
+          <Minus size={15} style={{ color: '#91968e' }} />
+        </button>
+        <button onClick={toggle}
+          className="flex-1 relative overflow-hidden rounded-xl h-12 flex items-center justify-center"
+          style={{ background: running ? 'rgba(200,224,0,0.15)' : 'rgba(200,224,0,0.1)', border: `1px solid ${running ? 'rgba(200,224,0,0.4)' : 'rgba(200,224,0,0.2)'}` }}>
+          <div className="absolute inset-y-0 left-0" style={{ width: `${pct * 100}%`, background: 'rgba(200,224,0,0.14)', transition: 'width 1s linear' }} />
+          <span className="relative flex items-center gap-2">
+            {running
+              ? <Pause size={16} style={{ color: ACCENT }} />
+              : <Play size={16} style={{ color: done ? '#5d635d' : ACCENT }} />}
+            <span className="text-2xl font-black tabular-nums" style={{ color: done ? '#5d635d' : ACCENT }}>{formatTime(remaining)}</span>
+          </span>
+        </button>
+        <button onClick={() => adjust(STEP)} aria-label="Increase rest"
+          className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(255,255,255,0.07)' }}>
+          <Plus size={15} style={{ color: '#91968e' }} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -220,6 +273,9 @@ function ExerciseCard({ ex, exIdx, totalExercises, completedSets, weights, repsO
           </div>
         )}
       </div>
+
+      {/* Adjustable rest timer */}
+      <RestTimerWidget defaultSeconds={parseRestSeconds(ex.rest)} />
 
       {/* Reps input */}
       <div className="mb-4">
@@ -342,8 +398,6 @@ export default function WorkoutSession() {
   const [completedSets, setCompletedSets] = useState({});
   const [weights, setWeights] = useState({});
   const [repsOverrides, setRepsOverrides] = useState({});
-  const [showRest, setShowRest] = useState(false);
-  const [restSeconds, setRestSeconds] = useState(90);
   const [showCheckIn, setShowCheckIn] = useState(false);
   const [showSummary, setShowSummary] = useState(viewSummary);
   const [summaryData, setSummaryData] = useState(completedLogData ? buildSummaryFromLog(completedLogData, passedWorkout) : null);
@@ -546,22 +600,7 @@ export default function WorkoutSession() {
 
   const handleCompleteSet = (exIdx, setIdx) => {
     const key = `${exIdx}-${setIdx}`;
-    setCompletedSets(prev => {
-      const next = { ...prev, [key]: !prev[key] };
-      // Defer save with updated state
-      setTimeout(() => {
-        const ex = exercises[exIdx];
-        const restStr = ex?.rest || '90 sec';
-        const mins = restStr.match(/(\d+)\s*min/);
-        const secs = restStr.match(/(\d+)\s*sec/);
-        const restSecs = mins ? parseInt(mins[1]) * 60 : secs ? parseInt(secs[1]) : 90;
-        if (next[key]) { // only show rest when completing (not uncompleting)
-          setRestSeconds(restSecs);
-          setShowRest(true);
-        }
-      }, 50);
-      return next;
-    });
+    setCompletedSets(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
   // Save whenever completedSets/weights/notes change (debounced)
@@ -791,11 +830,6 @@ export default function WorkoutSession() {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
-
-      {/* REST TIMER */}
-      <AnimatePresence>
-        {showRest && <RestTimer seconds={restSeconds} onDone={() => setShowRest(false)} />}
       </AnimatePresence>
 
       {/* POST-WORKOUT CHECK-IN */}
