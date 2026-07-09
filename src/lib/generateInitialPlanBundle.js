@@ -657,15 +657,13 @@ export async function generateInitialPlanBundle(answers) {
     }
   }
 
-  // ── Step 6: Archive existing active plans ─────────────────────────────────
+  // ── Step 6: Create master AIPlan (create-then-archive) ────────────────────
+  // Create the new active plan BEFORE archiving the old ones. If create fails
+  // after an archive succeeds we'd otherwise leave the user with zero active
+  // plans and their old plan silently gone; creating first means a create
+  // failure leaves the previous plan intact.
   bustPlanCache('daily');
-  const existingActive = await backend.entities.AIPlan.filter(await userScopedFilter({ status: 'active' })).catch(() => []);
-  for (const old of existingActive) {
-    await backend.entities.AIPlan.update(old.id, { status: 'archived' }).catch(() => {});
-  }
-
-  // ── Step 7: Create master AIPlan ──────────────────────────────────────────
-  console.log('[generateInitialPlanBundle] Step 7: Creating AIPlan…');
+  console.log('[generateInitialPlanBundle] Step 6: Creating AIPlan…');
   const now = new Date().toISOString();
 
   // Canonical daily targets are the deterministically computed calcTDEE values
@@ -738,6 +736,18 @@ export async function generateInitialPlanBundle(answers) {
   }));
 
   console.log(`[generateInitialPlanBundle] ✓ AIPlan created: ${aiPlan.id}`);
+
+  // ── Step 7: Archive every OTHER active plan (the new one now exists) ───────
+  // Skip the just-created plan by id. Per-row .catch keeps a single failed
+  // archive from aborting the rest; a leftover duplicate-active row is benign —
+  // readers pick the newest by -generated_at and chooseBestWorkoutPlan links by
+  // generation_batch_id.
+  const existingActive = await backend.entities.AIPlan.filter(await userScopedFilter({ status: 'active' })).catch(() => []);
+  for (const old of existingActive) {
+    if (old.id === aiPlan.id) continue;
+    await backend.entities.AIPlan.update(old.id, { status: 'archived' }).catch(() => {});
+  }
+
   bustPlanCache('daily');
   await invalidateUserAIContext();
 
