@@ -56,6 +56,30 @@ async function purchaseIOS(plan, onStep = () => {}) {
   // (e.g. session restored before the iOS effects mounted). Idempotent.
   await withTimeout(rc.initRevenueCat(undefined, onStep), 15000, 'Configuring RevenueCat', 'The native SDK did not initialize — verify the API key and that Purchases is configured at launch.');
 
+  // Self-heal the RC identity before purchasing: if the sign-in logIn failed,
+  // the SDK is anonymous and this purchase would attach to an id the webhook
+  // (email-keyed) can never find. Re-attempt logIn (retry once); if it still
+  // fails, surface a toast pointing an already-paid user at Restore — the
+  // purchase flow is active, so this is not a passive/background failure. We
+  // proceed regardless: RC's persisted identity covers most already-paid cases.
+  try {
+    const me = await backend.auth.me();
+    const email = me?.email;
+    if (email) {
+      try {
+        await rc.loginRevenueCat(email);
+      } catch {
+        await rc.loginRevenueCat(email);
+      }
+    }
+  } catch (loginErr) {
+    const { toast } = await import('@/components/ui/use-toast');
+    toast({
+      title: 'Couldn’t verify your account',
+      description: 'If you already subscribed, tap Restore Purchases instead.',
+    });
+  }
+
   onStep('fetching offerings…');
   const offerings = await withTimeout(rc.getOfferingsRevenueCat(), 20000, 'Fetching offerings', 'StoreKit could not load products — check the Paid Apps agreement is active, the products are approved, and an offering is marked Current.');
   const current = offerings?.current;

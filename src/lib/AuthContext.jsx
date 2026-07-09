@@ -214,8 +214,15 @@ export const AuthProvider = ({ children }) => {
         const rc = await import('@/lib/revenuecat');
         if (cancelled) return;
         if (email) {
-          // logIn returns LogInResult { customerInfo, created } — seed the live signal.
-          const res = await rc.loginRevenueCat(email);
+          // logIn returns LogInResult { customerInfo, created } — seed the live
+          // signal. Retry once on failure: a transient network blip here would
+          // otherwise leave rcCustomerInfo null and gate a paying user out.
+          let res;
+          try {
+            res = await rc.loginRevenueCat(email);
+          } catch {
+            res = await rc.loginRevenueCat(email);
+          }
           if (!cancelled) setRcCustomerInfo(res?.customerInfo ?? null);
         } else {
           // Signed out — drop the RC identity so the next sign-in re-attaches.
@@ -256,6 +263,42 @@ export const AuthProvider = ({ children }) => {
     })();
 
     return () => { cancelled = true; /* RC listener is process-lifetime; no remove API on the Capacitor plugin */ };
+  }, []);
+
+  // Self-heal the live entitlement signal from the SDK's own persisted state:
+  // getCustomerInfo() reflects renewals/refunds that happened while the app was
+  // backgrounded or across launches (the in-process listener only fires for
+  // changes while the app is running). Runs once at launch and on every resume.
+  // getCustomerInfo internally awaits ensureConfigured, so it's safe to call
+  // before Purchases.configure has resolved. Passive — never toasts.
+  useEffect(() => {
+    if (getPlatform() !== 'ios') return undefined;
+
+    let cancelled = false;
+    let resumeHandle = null;
+
+    const refreshCustomerInfo = async () => {
+      try {
+        const rc = await import('@/lib/revenuecat');
+        const info = await rc.getCustomerInfo();
+        if (!cancelled) setRcCustomerInfo(info?.customerInfo ?? info ?? null);
+      } catch {
+        // Offline / not-yet-configured — leave the existing signal untouched.
+      }
+    };
+
+    (async () => {
+      await refreshCustomerInfo();
+      try {
+        const { App } = await import('@capacitor/app');
+        if (cancelled) return;
+        resumeHandle = await App.addListener('resume', () => { refreshCustomerInfo(); });
+      } catch (err) {
+        console.warn('[RevenueCat] could not attach resume listener:', err);
+      }
+    })();
+
+    return () => { cancelled = true; resumeHandle?.remove?.(); };
   }, []);
 
   const loginWithOtp = useCallback(async (email) => {
