@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { useEffect, useRef, useState } from 'react';
+import { Component, useEffect, useRef, useState } from 'react';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
@@ -327,13 +327,60 @@ const AuthenticatedApp = () => {
   );
 };
 
+// Global unhandled promise-rejection logger. Without this a rejected promise in
+// WKWebView vanishes silently; surfacing the reason makes Safari Web Inspector
+// debugging possible. Registered once at module import.
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('[unhandledrejection]', event.reason);
+});
+
+// Top-level error boundary. In WKWebView an uncaught render throw leaves a
+// permanent white screen with no recovery, so we degrade to a branded fallback
+// with a Reload button (window.location.reload reloads the bundled index.html —
+// safe under Capacitor). componentDidCatch logs the full error + component stack
+// so the throw is debuggable in Safari Web Inspector.
+class ErrorBoundary extends Component {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[ErrorBoundary]', error, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 flex items-center justify-center px-6" style={{ background: '#f6f2e8' }}>
+          <div className="flex flex-col items-center gap-3 text-center">
+            <p className="text-base font-semibold" style={{ color: '#5d635d' }}>Something went wrong</p>
+            <p className="text-xs" style={{ color: '#91968e' }}>Please reload to continue.</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-2 px-5 py-2 rounded-xl text-sm font-semibold"
+              style={{ background: '#c8e000', color: '#1a1c19' }}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
-        <Router>
-          <AuthenticatedApp />
-        </Router>
+        <ErrorBoundary>
+          <Router>
+            <AuthenticatedApp />
+          </Router>
+        </ErrorBoundary>
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>
