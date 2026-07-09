@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -10,6 +10,10 @@ import AuthScreen from '@/components/AuthScreen';
 import AppShell from './components/layout/AppShell';
 import { backend } from '@/api/backendClient';
 import { runMigrationIfNeeded, userScopedFilter, prewarmUserEmail, loadActivePlan, getTodayISODate } from '@/lib/personalizationSync';
+import { useSubscription } from '@/hooks/useSubscription';
+import { useCacheHydrated } from '@/hooks/useCacheHydrated';
+import { appCache } from '@/lib/appCache';
+import { isGenerating } from '@/lib/planGenerationState';
 
 // Page imports
 import Home from './pages/Home';
@@ -177,6 +181,76 @@ function useIsMobileApp() {
   );
 }
 
+// Lightweight full-area loading shown while the plan guard confirms plan existence.
+function PlanGuardSkeleton() {
+  return (
+    <div className="flex items-center justify-center py-24" style={{ minHeight: '60vh' }}>
+      <div className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: '#e8e1d4', borderTopColor: '#c8e000' }} />
+    </div>
+  );
+}
+
+// Plan-exists invariant guard (paid-only flow). Wraps Home + Nutrition.
+//
+// A premium user must NEVER reach Home/Nutrition with no plan, because those
+// screens resolve calorie/macro targets that would be empty. On a CONFIRMED
+// no-plan negative we redirect to plain /plan (the Plan page owns the Retry vs.
+// build-questionnaire decision — see plan §1).
+//
+// Crucially we must distinguish a TRUE no-plan negative from a not-yet-loaded
+// cache: a bare appCache miss OR a bare loadActivePlan() null are BOTH ambiguous
+// (loadActivePlan collapses network-error and authoritative-empty into null).
+// So: cache hit = fast-path allow; cache miss = do our own AIPlan query and
+// redirect ONLY on a successful empty result; fail-open (render) on any throw.
+function PlanGuard({ children }) {
+  const { isPremium, loading: subLoading } = useSubscription();
+  const cacheReady = useCacheHydrated();
+  const location = useLocation();
+
+  const syncDecide = () => {
+    if (subLoading || !cacheReady) return 'checking';
+    // Not premium: paid-only gating doesn't apply here (questionnaire is
+    // premium-gated downstream). Don't block the screen.
+    if (!isPremium) return 'allow';
+    // A generation in flight — never bounce a user mid-build.
+    if (isGenerating()) return 'allow';
+    // Fast-path POSITIVE: cache already holds a plan.
+    const cachedPlan = appCache.get('ai-plan:daily') || appCache.get('plan-page')?.activePlan;
+    return cachedPlan ? 'allow' : 'confirm';
+  };
+
+  const [decision, setDecision] = useState(syncDecide);
+
+  useEffect(() => {
+    let cancelled = false;
+    const d = syncDecide();
+    if (d !== 'confirm') {
+      setDecision(d);
+      return;
+    }
+    // Cache miss — require a CONFIRMED read before deciding. Do NOT trust null.
+    setDecision('checking');
+    (async () => {
+      try {
+        const filter = await userScopedFilter({ plan_type: 'daily', status: 'active' });
+        const records = await backend.entities.AIPlan.filter(filter, '-generated_at');
+        if (cancelled) return;
+        const hasPlan = Array.isArray(records) && records.filter(Boolean).length > 0;
+        setDecision(hasPlan ? 'allow' : 'redirect');
+      } catch {
+        // Query threw (network/429) — UNKNOWN, NOT a negative. Fail-open.
+        if (!cancelled) setDecision('allow');
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPremium, subLoading, cacheReady, location.pathname]);
+
+  if (decision === 'redirect') return <Navigate to="/plan" replace />;
+  if (decision === 'allow') return children;
+  return <PlanGuardSkeleton />;
+}
+
 const AuthenticatedApp = () => {
   const { isAuthenticated, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
   const isMobileApp = useIsMobileApp();
@@ -226,8 +300,8 @@ const AuthenticatedApp = () => {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/home" element={<Home />} />
+        <Route path="/" element={<PlanGuard><Home /></PlanGuard>} />
+        <Route path="/home" element={<PlanGuard><Home /></PlanGuard>} />
         <Route path="/track" element={<Track />} />
         <Route path="/plan" element={<Plan />} />
         <Route path="/insights" element={<Insights />} />
@@ -236,7 +310,7 @@ const AuthenticatedApp = () => {
         <Route path="/meals" element={<Meals />} />
         <Route path="/workouts" element={<Workouts />} />
         <Route path="/recovery" element={<Recovery />} />
-        <Route path="/nutrition" element={<Nutrition />} />
+        <Route path="/nutrition" element={<PlanGuard><Nutrition /></PlanGuard>} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/log-food" element={<LogFood />} />
         <Route path="/my-week" element={<MyWeek />} />

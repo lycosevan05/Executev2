@@ -963,29 +963,6 @@ export async function loadStarterPersonalization() {
   };
 }
 
-export async function saveStarterPersonalization({ userUpdates = {}, workoutUpdates = {}, nutritionUpdates = {}, injuryData = null }) {
-  const saves = [];
-  const now = new Date().toISOString();
-
-  saves.push(saveUserProfile({
-    ...userUpdates,
-    profile_setup_completed: true,
-    profile_setup_completed_at: now,
-    updated_from_starter_profile: true,
-    onboarding_complete: true,
-  }));
-
-  saves.push(saveWorkoutProfile({ ...workoutUpdates, updated_from_starter_profile: true }));
-  saves.push(saveNutritionProfile({ ...nutritionUpdates, updated_from_starter_profile: true }));
-
-  if (injuryData) {
-    saves.push(saveInjuryProfile({ ...injuryData, source: 'starter_profile' }));
-  }
-
-  await Promise.all(saves);
-  await invalidatePersonalizationContext();
-}
-
 /**
  * Converts saved Supabase profile entities into PlanQuestionnaire-compatible initialAnswers.
  * Also returns completedStepIds so the questionnaire can skip known questions.

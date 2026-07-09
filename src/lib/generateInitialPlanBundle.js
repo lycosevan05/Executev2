@@ -668,6 +668,20 @@ export async function generateInitialPlanBundle(answers) {
   console.log('[generateInitialPlanBundle] Step 7: Creating AIPlan…');
   const now = new Date().toISOString();
 
+  // Canonical daily targets are the deterministically computed calcTDEE values
+  // (built here so macros + the LLM overview are both in scope, and AFTER the
+  // BYO stated-calorie override above so that override is captured). The LLM's
+  // echoed nutrition_targets can round/drift, so we do NOT trust it. calcTDEE
+  // uses bare keys (protein/carbs/fats); map onto the schema's _g convention.
+  // Hydration is not computed by calcTDEE — keep the model's value if present.
+  const computedTargets = {
+    calories: macros.calories,
+    protein_g: macros.protein,
+    carbs_g: macros.carbs,
+    fat_g: macros.fats,
+    hydration_liters: overview?.nutrition_targets?.hydration_liters ?? 2.5,
+  };
+
   const aiPlan = await backend.entities.AIPlan.create(await withUserEmail({
     plan_type: 'daily',
     status: 'active',
@@ -688,7 +702,7 @@ export async function generateInitialPlanBundle(answers) {
 
     // Top-level structured overview fields
     plan_summary: overview.plan_summary,
-    nutrition_targets: overview.nutrition_targets,
+    nutrition_targets: computedTargets,
     training_split: overview.training_split,
     recovery_strategy: overview.recovery_strategy,
     weekly_overview: overview.weekly_overview,
@@ -699,7 +713,10 @@ export async function generateInitialPlanBundle(answers) {
       source: 'plan_questionnaire_overview',
       plan_summary: overview.plan_summary,
       long_term_plan: overview.long_term_plan || null,
-      nutrition_targets: overview.nutrition_targets,
+      nutrition_targets: computedTargets,
+      // Model's echoed copy, retained ONLY for drift measurement against the
+      // computed canonical target above. Not read by any consumer.
+      nutrition_targets_llm: overview.nutrition_targets || null,
       training_split: overview.training_split,
       recovery_strategy: overview.recovery_strategy,
       weekly_overview: overview.weekly_overview,

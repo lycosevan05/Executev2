@@ -293,6 +293,34 @@ an auth-free board. Don't fold it into the entity API. Note it uses `created_at`
 **not** the entity tables' `created_date`. *(Migration was untracked in git at the
 last snapshot — confirm it's committed before relying on it in another env.)*
 
+### 3.6 — The Home/Nutrition plan-exists guard is premium-only, by design, and fails open
+
+**Decision.** `PlanGuard` (`src/App.jsx`) wraps only the Home (`/`, `/home`) and
+Nutrition (`/nutrition`) routes. It redirects to **plain `/plan`** only when ALL hold:
+the user is **premium**, the appCache has hydrated, no generation is in flight, and a
+**confirmed** read shows no active plan. **Free users fall through and are allowed onto
+Home/Nutrition** — the guard never gates them.
+
+**Context/why.** This guard ships with the nutrition-engine consolidation
+(Plan-Questionnaire → `generateInitialPlanBundle` → `calcTDEE` as the single
+deterministic target source), whose invariant is "a *paid* user never reaches
+Home/Nutrition with profile-but-no-plan." Gating *free* users out is a **separate
+track** (free-tier removal / paywall / auth), not this one; folding it in here would
+blur scope and widen the blast radius — premium-only keeps Step A contained. The
+confirmed read is deliberate: a bare appCache miss and a bare `loadActivePlan()` `null`
+are both ambiguous (`personalizationSync.js:524-570` collapses the network-error branch
+`:550-554` and the authoritative-empty branch `:563-569` into the same `null`), so the
+guard runs its own `backend.entities.AIPlan.filter(... status:'active')` query and
+**redirects only on a successful empty result**.
+
+**Consequence / what NOT to do.** Don't "fix" the guard to gate free users as part of
+the nutrition-engine work — that's the paywall track's job; revisit when the free tier
+is actually removed. Note the guard **fails OPEN**: on any throw in the confirmed read
+it renders the screen rather than redirecting, so the invariant is best-effort, not
+absolute. Acceptable while screens degrade to a "Set target" placeholder; becomes
+relevant at the gated fallback-removal step (after which a no-plan screen resolves
+targets to `null`) — re-examine fail-open behavior then.
+
 ---
 
 ## 4. Caching & cold-launch

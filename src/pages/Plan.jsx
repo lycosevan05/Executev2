@@ -17,7 +17,6 @@ import WeeklyPlanPreview from '@/components/plan/WeeklyPlanPreview';
 import PlanInsightCard from '@/components/plan/PlanInsightCard';
 import EmptyPlanState from '@/components/plan/EmptyPlanState';
 import PlanGeneratingOverlay from '@/components/plan/PlanGeneratingOverlay';
-import StarterProfileModal from '@/components/profile/StarterProfileModal';
 
 import { backend } from '@/api/backendClient';
 import { loadActiveAIPlan, loadPlanQuestionnaireDefaults, getTodayISODate, bustPlanCache } from '@/lib/personalizationSync';
@@ -64,8 +63,6 @@ export default function Plan() {
   const [activeTab, setActiveTab] = useState('week');
   const [showProfile, setShowProfile] = useState(false);
   const [showQuestionnaire, setShowQuestionnaire] = useState(false);
-  const [showStarterProfile, setShowStarterProfile] = useState(false);
-  const [pendingQuestionnaire, setPendingQuestionnaire] = useState(false);
   const [showAskQuestions, setShowAskQuestions] = useState(false);
   const [showRefine, setShowRefine] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -372,25 +369,6 @@ export default function Plan() {
             onClose={() => setShowRefine(false)}
             plan={dailyPlan}
             onPlanUpdate={(updated) => { setDailyPlan(updated); setLastGenerated(new Date()); }}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* ── Starter Profile Modal (shown before questionnaire for new users) ── */}
-      <AnimatePresence>
-        {showStarterProfile && (
-          <StarterProfileModal
-            onClose={() => {
-              setShowStarterProfile(false);
-              setPendingQuestionnaire(false);
-            }}
-            onSaved={() => {
-              setShowStarterProfile(false);
-              if (pendingQuestionnaire) {
-                setPendingQuestionnaire(false);
-                setShowQuestionnaire(true);
-              }
-            }}
           />
         )}
       </AnimatePresence>

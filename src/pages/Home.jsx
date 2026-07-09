@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 import { Link, useNavigate } from 'react-router-dom';
-import StarterProfileModal from '@/components/profile/StarterProfileModal';
-import StarterResultScreen from '@/components/profile/StarterResultScreen';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   User, ChevronRight, Sparkles, Loader2, AlertCircle, RefreshCw,
@@ -252,7 +250,7 @@ function NutritionCard({ activePlan, mealPlan, overviewDay, todayStr }) {
 
 // ─── Plan status hero banner ──────────────────────────────────────────────────
 
-function PlanHeroBanner({ activePlan, overviewDay, personalizationSaved, onPersonalize, onShowInfo, planResolved }) {
+function PlanHeroBanner({ activePlan, overviewDay, planResolved }) {
   const navigate = useNavigate();
 
   if (!activePlan) {
@@ -282,14 +280,6 @@ function PlanHeroBanner({ activePlan, overviewDay, personalizationSaved, onPerso
           <span>Build my Performance Plan</span>
           <ChevronRight size={14} />
         </button>
-        {!personalizationSaved && (
-          <button onClick={onShowInfo}
-            className="w-full flex items-center justify-between px-4 py-2 rounded-xl text-xs font-semibold border"
-            style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}>
-            <span>Calculate My Starting Targets</span>
-            <ChevronRight size={12} />
-          </button>
-        )}
       </motion.div>
     );
   }
@@ -336,9 +326,6 @@ export default function Home() {
   const [showCelebration, setShowCelebration] = useState(false);
   const [isCustomizing, setIsCustomizing] = useState(false);
   const [activeVital, setActiveVital] = useState(null);
-  const [showStarterProfile, setShowStarterProfile] = useState(false);
-  const [starterResultData, setStarterResultData] = useState(null);
-  const [personalizationSaved, setPersonalizationSaved] = useState(false);
 
   // Canonical data — hydrate immediately from in-memory cache so navigating
   // back to Home shows the previous state instantly while a fresh load runs
@@ -418,7 +405,6 @@ export default function Home() {
       setReadiness(hydrated.readiness || null);
       setUserProfile(hydrated.userProfile || null);
       setNutritionProfile(hydrated.nutritionProfile || null);
-      setPersonalizationSaved(Boolean(hydrated.userProfile?.profile_setup_completed || hydrated.userProfile?.plan_questionnaire_completed));
       // A cached HOME_CACHE_KEY snapshot is a definitive plan/no-plan answer
       // (activePlan may be null). Lift the loading floor now; the network fetch
       // below refreshes in the background (SWR). Only the first-ever launch, with
@@ -456,7 +442,6 @@ export default function Home() {
       setActivePlan(plan || null);
       setUserProfile(up);
       setNutritionProfile(nutritionProfiles?.[0] || null);
-      setPersonalizationSaved(Boolean(up?.profile_setup_completed || up?.plan_questionnaire_completed));
       setReadiness(readinessCheckins?.[0] || null);
       setDailyLog(log);
 
@@ -612,7 +597,7 @@ export default function Home() {
   const widgetContent = {
     ai_summary: (
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.03 }}>
-        <PlanHeroBanner activePlan={activePlan} overviewDay={overviewDay} personalizationSaved={personalizationSaved} planResolved={planResolved} onPersonalize={() => setShowStarterProfile(true)} onShowInfo={() => setShowStarterProfile(true)} />
+        <PlanHeroBanner activePlan={activePlan} overviewDay={overviewDay} planResolved={planResolved} />
       </motion.div>
     ),
 
@@ -820,25 +805,6 @@ export default function Home() {
       </AnimatePresence>
       <AnimatePresence>
         {showCelebration && <GoalsCompleteAnimation onDismiss={() => setShowCelebration(false)} />}
-
-        {showStarterProfile && !starterResultData && (
-          <StarterProfileModal
-            onClose={() => setShowStarterProfile(false)}
-            showIntroPopup={true}
-            onSaved={(savedData) => {
-              setPersonalizationSaved(true);
-              setShowStarterProfile(false);
-              setStarterResultData(savedData);
-              refresh();
-            }}
-          />
-        )}
-        {starterResultData && (
-          <StarterResultScreen
-            savedData={starterResultData}
-            onClose={() => setStarterResultData(null)}
-          />
-        )}
       </AnimatePresence>
 
       {/* Header */}
