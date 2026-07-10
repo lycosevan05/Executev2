@@ -323,6 +323,9 @@ export const AuthProvider = ({ children }) => {
     // those down too and drop the active uid so the next sign-in re-activates.
     appCache.deactivate();
     resetPersonalizationCaches();
+    // Drop the 60s-TTL subscription cache so a same-device account switch
+    // can't inherit the previous user's premium status.
+    bustSubscriptionCache();
     await backend.auth.logout();
     setAuthError({
       type: 'auth_required',
