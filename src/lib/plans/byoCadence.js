@@ -86,6 +86,10 @@ export function resolveByoSession(structured, cadence, anchorDateISO, targetDate
   }
 
   // 3. Rotating / A-B cycle.
+  // KNOWN / DEFERRED: anchorDateISO is the plan's weekStart (= generation day),
+  // so regenerating a plan MID-CYCLE re-anchors the rotation to day 0 — the
+  // user may repeat or skip a session at the seam. Accepted for launch
+  // (audit 2026-07-09, decision: document + defer).
   const cycle = Array.isArray(cad?.cycle) ? cad.cycle : [];
   if (cycle.length > 0) {
     let idx;
