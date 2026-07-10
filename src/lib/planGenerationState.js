@@ -8,7 +8,8 @@ import { clearGenerationStartTime } from '@/components/plan/PlanGeneratingOverla
 
 const STORAGE_KEY = 'evanlog_plan_generation';
 
-let _promise = null;      // The active generation promise
+let _promise = null;      // The active generation promise (timeout-bounded wrapper)
+let _underlying = null;   // The real generateInitialPlanBundle promise — survives a timeout
 let _listeners = [];      // Callbacks to notify when done
 let _lastResult = null;   // { err, result } — replayed once to late subscribers
 let _lastResultClaimed = false; // Set true after a subscriber consumes _lastResult
@@ -65,18 +66,48 @@ export function startGeneration(answers) {
 
   savePendingAnswers(answers);
 
+  // Reset replay buffer for the new generation
+  _lastResult = null;
+  _lastResultClaimed = false;
+
+  // Only ever ONE real generation in flight per process. If a previous run
+  // timed out (wrapper below rejected) but the bundle is still executing, a
+  // retry RE-ATTACHES to it with a fresh timeout window instead of starting a
+  // concurrent duplicate — two concurrent runs would archive each other's
+  // plans (create-then-archive keeps only the LAST finisher's plan active).
+  if (!_underlying) {
+    // Promise.resolve is a runtime no-op (async fn already returns a promise);
+    // it exists so checkJS sees a Promise despite the bundle's JSDoc return type.
+    const run = Promise.resolve(generateInitialPlanBundle(answers));
+    _underlying = run;
+    run.then(
+      (result) => {
+        // SUCCESS is the only path that clears the saved questionnaire answers —
+        // on failure they're preserved so Retry restores a filled questionnaire
+        // (the 30-minute expiry in loadPendingAnswers bounds staleness).
+        clearPendingAnswers();
+        if (!_promise) {
+          // Late success after a timeout with no re-attach: buffer it so a
+          // returning subscriber replays the real result, not the stale error.
+          _lastResult = { err: null, result };
+          _lastResultClaimed = false;
+        }
+      },
+      () => {} // failure: answers preserved; the wrapper below notifies listeners
+    ).finally(() => {
+      if (_underlying === run) _underlying = null;
+    });
+  }
+
+  const run = _underlying;
+
   // Safety timeout: if generation takes more than 3 minutes, treat as failed
   const timeoutPromise = new Promise((_, reject) =>
     setTimeout(() => reject(new Error('Plan generation timed out. Please try again.')), 3 * 60 * 1000)
   );
 
-  // Reset replay buffer for the new generation
-  _lastResult = null;
-  _lastResultClaimed = false;
-
-  _promise = Promise.race([generateInitialPlanBundle(answers), timeoutPromise])
+  _promise = Promise.race([run, timeoutPromise])
     .then(result => {
-      clearPendingAnswers();
       clearGenerationStartTime();
       _lastResult = { err: null, result };
       _lastResultClaimed = false;
@@ -84,7 +115,6 @@ export function startGeneration(answers) {
       return result;
     })
     .catch(err => {
-      clearPendingAnswers();
       clearGenerationStartTime();
       _lastResult = { err, result: null };
       _lastResultClaimed = false;

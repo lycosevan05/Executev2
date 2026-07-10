@@ -282,16 +282,15 @@ export default function Plan() {
         if (plan && plan.id !== activePlanIdRef.current) {
           adoptNewerPlan(plan);
         }
-        // If we had a pending generation but the promise is gone (app was killed/backgrounded),
-        // clear the stale pending state so the UI doesn't get stuck
-        if (!isGenerating() && loadPendingAnswers()) {
-          clearPendingAnswers();
+        // If we had a pending generation but the promise is gone (app was
+        // killed/backgrounded), unstick the UI. Pending answers are kept —
+        // the questionnaire restores pre-filled (30-min expiry bounds this).
+        if (!isGenerating()) {
           setGenerating(false);
         }
       }).catch(() => {
         // Clear stuck generating state on error
         if (!isGenerating()) {
-          clearPendingAnswers();
           setGenerating(false);
         }
       });
@@ -300,7 +299,6 @@ export default function Plan() {
     // On mobile, when app comes back from background, re-check generating state
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && !isGenerating()) {
-        clearPendingAnswers();
         setGenerating(false);
         // Reload plan in case it finished while backgrounded
         loadActiveAIPlan().then(plan => {
