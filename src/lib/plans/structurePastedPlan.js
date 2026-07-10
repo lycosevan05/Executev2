@@ -18,6 +18,7 @@
  */
 
 import { backend } from '@/api/backendClient';
+import { withBackoff } from '@/lib/withBackoff';
 
 function parseMaybeJson(value) {
   if (value && typeof value === 'object') return value;
@@ -228,12 +229,20 @@ export async function structurePastedPlan({
 } = {}) {
   const prompt = buildPrompt({ byoWorkoutText, byoMealText, byoTargets, clarificationAnswers });
 
-  const raw = await backend.integrations.Core.InvokeLLM({
-    prompt,
-    max_output_tokens: 4096,
-    response_json_schema: RESPONSE_SCHEMA,
-    schema_name: 'structured_pasted_plan',
-  });
+  // Deliberate deviation from the "client withBackoff wraps DB ops only" rule:
+  // the invoke-llm edge fn's own backoff can still exhaust, and a surfaced 429
+  // here silently downgrades a pasted BYO plan to AI fallback via the
+  // crash-resilience caller's catch-all. Two bounded retries after edge-fn
+  // exhaustion absorb the transient case without unbounded multiplication.
+  const raw = await withBackoff(
+    () => backend.integrations.Core.InvokeLLM({
+      prompt,
+      max_output_tokens: 4096,
+      response_json_schema: RESPONSE_SCHEMA,
+      schema_name: 'structured_pasted_plan',
+    }),
+    { retries: 2, baseMs: 1500, capMs: 6000, deadlineMs: 25000 },
+  );
 
   return unwrap(raw);
 }
