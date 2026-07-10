@@ -6,6 +6,7 @@ const PAGE_KEY = 'profile';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, LogOut, User, Target, Utensils, Dumbbell, ShieldAlert, Brain, Plus, X, Check, Ruler, Loader2, Crown, Sparkles, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from '@/components/ui/use-toast';
 import { useSubscription } from '@/hooks/useSubscription';
 import { backend } from '@/api/backendClient';
 import { useAuth } from '@/lib/AuthContext';
@@ -29,9 +30,17 @@ function DeleteAccountModal({ onConfirm, onCancel, logout }) {
       await backend.functions.invoke('deleteUserData', {});
       // Then log out via AuthContext so appCache + module caches are cleared.
       await logout();
+      toast({
+        title: 'Account deleted',
+        description: 'All your data has been permanently removed.',
+      });
       onConfirm?.();
     } catch (err) {
       console.error('Delete account failed:', err);
+      toast({
+        title: 'Account deletion failed',
+        description: err?.message || 'Please check your connection and try again.',
+      });
       setConfirming(false);
     }
   };
