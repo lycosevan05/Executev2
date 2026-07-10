@@ -161,6 +161,10 @@ export function getDailyLogUpdatesForCategory(categoryId, value, existingLog) {
  * { ok:true, uiValue, nextDailyLogId, nextPlanContext }.
  */
 export async function saveVitalLog({ categoryId, value, planContext = null, dailyLogId = null, onOptimistic = null }) {
+  // Capture the active uid at entry so an account switch during the async reads
+  // below can't write the old user's vital into the new session (or fire
+  // cross-user cache invalidations). Mirrors the Home/Plan loader guards.
+  const uid = appCache.getActiveUid();
   const today = getTodayISODate();
 
   const activeMasterPlan = planContext || await loadActiveCanonicalMasterPlan();
@@ -186,6 +190,9 @@ export async function saveVitalLog({ categoryId, value, planContext = null, dail
     : value;
 
   onOptimistic?.({ uiValue, updates, targetDailyLog });
+
+  // Bail before the write if the active user changed mid-flight.
+  if (appCache.getActiveUid() !== uid) return { ok: false, reason: 'uid-switched' };
 
   let result = null;
 
