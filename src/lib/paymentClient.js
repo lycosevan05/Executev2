@@ -56,28 +56,23 @@ async function purchaseIOS(plan, onStep = () => {}) {
   // (e.g. session restored before the iOS effects mounted). Idempotent.
   await withTimeout(rc.initRevenueCat(undefined, onStep), 15000, 'Configuring RevenueCat', 'The native SDK did not initialize — verify the API key and that Purchases is configured at launch.');
 
-  // Self-heal the RC identity before purchasing: if the sign-in logIn failed,
-  // the SDK is anonymous and this purchase would attach to an id the webhook
-  // (email-keyed) can never find. Re-attempt logIn (retry once); if it still
-  // fails, surface a toast pointing an already-paid user at Restore — the
-  // purchase flow is active, so this is not a passive/background failure. We
-  // proceed regardless: RC's persisted identity covers most already-paid cases.
+  // Verify the RC identity before purchasing: if logIn failed, the SDK is
+  // anonymous and this purchase would attach to a $RCAnonymousID the webhook
+  // (email-keyed) can never find — premium would be granted on-device only.
+  // Re-attempt logIn (retry once); if identity still can't be confirmed,
+  // ABORT the purchase (strict) — the user can simply retry, whereas an
+  // anonymous purchase is a support-only recovery.
   try {
     const me = await backend.auth.me();
     const email = me?.email;
-    if (email) {
-      try {
-        await rc.loginRevenueCat(email);
-      } catch {
-        await rc.loginRevenueCat(email);
-      }
+    if (!email) throw new Error('No account email available.');
+    try {
+      await rc.loginRevenueCat(email);
+    } catch {
+      await rc.loginRevenueCat(email);
     }
-  } catch (loginErr) {
-    const { toast } = await import('@/components/ui/use-toast');
-    toast({
-      title: 'Couldn’t verify your account',
-      description: 'If you already subscribed, tap Restore Purchases instead.',
-    });
+  } catch {
+    throw new Error("We couldn't verify your account, so the purchase was not started. Check your connection and try again. If you already subscribed, tap Restore Purchases.");
   }
 
   onStep('fetching offerings…');
