@@ -220,9 +220,13 @@ ${answers.additionalNotes?.trim() || 'None'}
 // CURRENT training frequency (truth) and uses desired/legacy fields as fallback.
 
 export function calcTDEE(answers = {}) {
-  const w = Number(answers.weightKg) || 80;
-  const h = Number(answers.heightCm) || 175;
-  const a = Number(answers.age) || 30;
+  // Clamp at the single choke point: questionnaire inputs are unbounded text
+  // fields, so extremes (age 500, height 999) would otherwise produce nonsense
+  // targets. Identity for all sane inputs — zero drift for normal users.
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+  const w = clamp(Number(answers.weightKg) || 80, 30, 300);
+  const h = clamp(Number(answers.heightCm) || 175, 120, 250);
+  const a = clamp(Number(answers.age) || 30, 13, 100);
   const isMale = answers.sex === 'male';
 
   const bmr = isMale
