@@ -263,23 +263,10 @@ export async function refinePlanFromChat({ changeRequest, currentPlan }) {
 
   normalizeAndValidateOverview(revised);
 
-  // Archive every active plan so caches don't surface stale ones
+  // Create-then-archive (same pattern as generateInitialPlanBundle): the new
+  // plan is created FIRST so a create failure leaves the previous active plan
+  // intact instead of stranding the user with zero active plans.
   bustPlanCache('daily');
-  const existingActive = await backend.entities.AIPlan
-    .filter(await userScopedFilter({ status: 'active' }))
-    .catch(() => []);
-  for (const old of existingActive) {
-    await backend.entities.AIPlan.update(old.id, { status: 'archived' }).catch(() => {});
-
-    // Also archive child WorkoutPlan rows tied to the now-archived master plan so
-    // chooseBestWorkoutPlan can't fall back to them via source-name matching.
-    const childWorkouts = await backend.entities.WorkoutPlan
-      .filter({ source_plan_id: old.id })
-      .catch(() => []);
-    for (const wp of childWorkouts) {
-      await backend.entities.WorkoutPlan.update(wp.id, { status: 'archived' }).catch(() => {});
-    }
-  }
 
   const now = new Date().toISOString();
   const generation_batch_id = generateBatchId();
@@ -333,6 +320,27 @@ export async function refinePlanFromChat({ changeRequest, currentPlan }) {
       supersedes_plan_id: currentPlan.id,
     },
   }));
+
+  // Archive every OTHER active plan (the new one now exists). Skip the
+  // just-created plan by id. Per-row .catch keeps a single failed archive from
+  // aborting the rest; a leftover duplicate-active row is benign — readers pick
+  // the newest by -generated_at.
+  const existingActive = await backend.entities.AIPlan
+    .filter(await userScopedFilter({ status: 'active' }))
+    .catch(() => []);
+  for (const old of existingActive) {
+    if (old.id === newPlan.id) continue;
+    await backend.entities.AIPlan.update(old.id, { status: 'archived' }).catch(() => {});
+
+    // Also archive child WorkoutPlan rows tied to the now-archived master plan so
+    // chooseBestWorkoutPlan can't fall back to them via source-name matching.
+    const childWorkouts = await backend.entities.WorkoutPlan
+      .filter({ source_plan_id: old.id })
+      .catch(() => []);
+    for (const wp of childWorkouts) {
+      await backend.entities.WorkoutPlan.update(wp.id, { status: 'archived' }).catch(() => {});
+    }
+  }
 
   bustPlanCache('daily');
   await invalidateUserAIContext();
