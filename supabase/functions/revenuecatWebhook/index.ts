@@ -194,6 +194,13 @@ Deno.serve(async (req) => {
     return json({ received: true, skipped: 'no_app_user_id' });
   }
 
+  // RevenueCat anonymous ids ($RCAnonymousID:<uuid>) are not our email-keyed
+  // user_id — upserting them creates rows that email lookups can never find.
+  // Skip; the device still unlocks via the live-entitlement half of the OR-gate.
+  if (userId.startsWith('$RCAnonymousID:')) {
+    return json({ received: true, skipped: 'anonymous_app_user_id' });
+  }
+
   const update = buildUpdate(event);
   if (!update) {
     // TEST, TRANSFER, SUBSCRIBER_ALIAS, or any unhandled type — acknowledge.
