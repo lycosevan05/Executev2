@@ -568,7 +568,6 @@ Return 4 insights. Each insight needs:
                   key={s.label}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.06 }}
                   className="p-3 rounded-2xl border text-center"
                   style={{ background: '#ffffff', borderColor: '#e8e1d4' }}
                 >
@@ -639,7 +638,7 @@ Return 4 insights. Each insight needs:
                             </div>
                           </div>
                           <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#e8e1d4' }}>
-                            <motion.div className="h-full rounded-full" style={{ background: n.color }} initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.7, delay: i * 0.03 }} />
+                            <motion.div className="h-full rounded-full" style={{ background: n.color }} initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.7 }} />
                           </div>
                         </div>
                       );

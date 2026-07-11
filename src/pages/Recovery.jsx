@@ -544,7 +544,7 @@ Use safety language always: "guidance", "recommendation", "consider consulting a
 
               {loadingInjuries && <div className="flex justify-center py-6"><Loader2 size={16} className="animate-spin" style={{ color: '#8ea400' }} /></div>}
               {injuries.map((injury, i) => (
-                <motion.div key={injury.id || i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.07 }}
+                <motion.div key={injury.id || i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
                   className="p-4 rounded-2xl border" style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2.5 flex-1">

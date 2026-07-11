@@ -565,7 +565,7 @@ export default function LogFood() {
           ) : (
             <div className="space-y-2">
               {todayLogs.map((log, i) => (
-                <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                   className="flex items-center gap-3 p-4 rounded-xl border"
                   style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"

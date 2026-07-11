@@ -106,7 +106,6 @@ export default function TrackingHistory() {
         <motion.div key={log.id || log.date}
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: i * 0.04 }}
           className="p-4 rounded-2xl border"
           style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
           <p className="text-xs font-bold mb-3" style={{ color: '#141613' }}>

@@ -232,10 +232,15 @@ html { scroll-behavior: auto; }
 .ios-scroll {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: none;
+  /* Rubber-band bounce stays on the real scroller without chaining to body */
+  overscroll-behavior-y: contain;
   scroll-behavior: auto;
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* Kill the grey tap flash on every tappable element (native feel) */
+* { -webkit-tap-highlight-color: transparent; }
 
 /* iOS-style safe areas */
 .pb-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }

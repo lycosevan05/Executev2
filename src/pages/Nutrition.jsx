@@ -1043,7 +1043,7 @@ export default function Nutrition() {
                     const meta = MEAL_META[type] || { label: type, time: '' };
                     const isDone = completedMeals.includes(type);
                     return (
-                      <motion.div key={type} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+                      <motion.div key={type} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                         className="p-4 rounded-2xl border" style={{ background: isDone ? 'rgba(200,224,0,0.07)' : '#ffffff', borderColor: isDone ? 'rgba(200,224,0,0.4)' : '#e0d9cc', boxShadow: '0 1px 6px rgba(20,22,19,0.06)' }}>
                         <div className="flex items-start justify-between mb-2">
                           <div>

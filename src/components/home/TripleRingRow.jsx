@@ -56,7 +56,6 @@ export default function TripleRingRow({ data }) {
           key={c.label}
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: i * 0.1 + 0.1 }}
           className="flex flex-col items-center p-4 rounded-3xl border"
           style={{ background: '#ffffff', borderColor: '#e8e1d4' }}
         >

@@ -35,7 +35,6 @@ export default function DailyMissions({ data }) {
             key={item.label}
             initial={{ opacity: 0, x: -12 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.08 + 0.2 }}
           >
             <Link
               to={item.to}

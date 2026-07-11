@@ -369,7 +369,7 @@ function SplitRestRow({ dateLabel, isToday, overviewDay, index, onEdit }) {
   const sessionTitle = getPlanDaySessionTitle(overviewDay, 'Recovery / Rest');
 
   return (
-    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }}
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
       className="rounded-2xl border overflow-hidden"
       style={{ background: '#f9f7f3', borderColor: '#e8e1d4' }}>
       <button className="w-full flex items-center justify-between px-4 py-3.5" onClick={() => setExpanded(e => !e)}>
@@ -431,7 +431,7 @@ function SplitReadyRow({ date, dateLabel, isToday, plan, overviewDay, index, nav
   const workoutName = plan.name?.replace(/^Day\s+\d+\s*[—\-–]\s*/i, '') || getPlanDaySessionTitle(overviewDay, 'Workout');
 
   return (
-    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }}
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
       className="rounded-2xl border overflow-hidden"
       style={{ background: '#ffffff', borderColor: isToday ? 'rgba(200,224,0,0.55)' : '#e0d9cc', boxShadow: isToday ? '0 2px 12px rgba(200,224,0,0.12)' : '0 1px 6px rgba(20,22,19,0.06)' }}>
       <button className="w-full px-4 pt-4 pb-3 flex items-center justify-between text-left"
@@ -495,7 +495,7 @@ function SplitNeedsBuildRow({ date, dateLabel, isToday, overviewDay, onBuild, in
   const sessionTitle = getPlanDaySessionTitle(overviewDay, 'Workout scheduled');
 
   return (
-    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }}
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
       className="rounded-2xl border overflow-hidden"
       style={{ background: '#ffffff', borderColor: isToday ? 'rgba(200,224,0,0.4)' : '#e8e1d4' }}>
       <div className="px-4 py-3.5 flex items-center justify-between">
@@ -1383,7 +1383,7 @@ export default function Workouts() {
                   const exerciseLogs = log.exercise_logs || [];
 
                   return (
-                    <motion.div key={log.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                    <motion.div key={log.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                       className="rounded-2xl border overflow-hidden" style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
                       <button className="w-full text-left p-4" onClick={() => setExpandedLogId(isExpanded ? null : log.id)}>
                         <div className="flex items-center justify-between mb-1.5">

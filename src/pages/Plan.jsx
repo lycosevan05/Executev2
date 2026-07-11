@@ -442,7 +442,7 @@ export default function Plan() {
                   )}
                   {PLAN_SECTIONS.map((section, i) => (
                     <motion.div key={section.key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.08 }} className="p-5 rounded-2xl border"
+                      className="p-5 rounded-2xl border"
                       style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
                       <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: section.color }}>{section.label}</p>
                       <p className="text-sm leading-relaxed" style={{ color: '#2d2f2c' }}>{savedPlan[section.key]}</p>
@@ -635,7 +635,6 @@ export default function Plan() {
                             const Icon = section.icon;
                             return (
                               <motion.div key={section.key} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: i * 0.06 }}
                                 className="p-5 rounded-2xl border"
                                 style={{ background: section.accentBg, borderColor: '#e8e1d4' }}>
                                 <div className="flex items-center gap-2 mb-2">
@@ -650,7 +649,7 @@ export default function Plan() {
                           // ── Fallback: legacy sections ──
                           PLAN_SECTIONS.map((section, i) => (
                             <motion.div key={section.key} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: i * 0.07 }} className="p-5 rounded-2xl border"
+                              className="p-5 rounded-2xl border"
                               style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
                               <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: section.color }}>{section.label}</p>
                               <p className="text-sm leading-relaxed" style={{ color: '#2d2f2c' }}>{savedPlan[section.key] || '—'}</p>
