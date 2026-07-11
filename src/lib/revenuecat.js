@@ -42,7 +42,13 @@ function ensureConfigured() {
       const apiKey = import.meta.env.VITE_REVENUECAT_IOS_KEY;
       if (!apiKey) throw new Error('VITE_REVENUECAT_IOS_KEY is empty — cannot configure RevenueCat.');
       await Purchases.configure({ apiKey });
-    })();
+    })().catch(err => {
+      // Do NOT cache a rejection: a transient configure failure would
+      // otherwise brick every IAP call for the whole session. Reset so
+      // the next caller retries configure.
+      _configurePromise = null;
+      throw err;
+    });
   }
   return _configurePromise;
 }
