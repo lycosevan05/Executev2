@@ -899,7 +899,6 @@ export default function Nutrition() {
                           ? 'Your next 7 days are planned.'
                           : `Some days are ready. A few need another try.`}
                         {weekBuildResult.built.length > 0 && <span className="ml-1">Built {weekBuildResult.built.length} · </span>}
-                        {weekBuildResult.skipped.length > 0 && <span>Already had {weekBuildResult.skipped.length} · </span>}
                         {weekBuildResult.failed.length > 0 && <span style={{ color: '#b05a3a' }}>Failed {weekBuildResult.failed.length}</span>}
                       </div>
                     )}

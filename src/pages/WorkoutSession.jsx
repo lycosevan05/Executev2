@@ -645,7 +645,8 @@ export default function WorkoutSession() {
   };
 
   const handleSkip = () => {
-    setSkippedExercises(prev => [...prev, exercises[currentExIdx]?.name]);
+    const name = exercises[currentExIdx]?.name;
+    setSkippedExercises(prev => (prev.includes(name) ? prev : [...prev, name]));
     if (currentExIdx < exercises.length - 1) goToExercise(currentExIdx + 1);
     else handleFinishIntent();
   };

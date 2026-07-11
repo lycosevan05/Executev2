@@ -143,8 +143,12 @@ function GoalsPanel() {
     if (!newTitle.trim()) return;
     setSaving(true);
     const created = await createGoal({ title: newTitle.trim(), category: newCat }).catch(() => null);
-    if (created) setGoals(prev => [...prev, created]);
-    setNewTitle('');
+    if (created) {
+      setGoals(prev => [...prev, created]);
+      setNewTitle('');
+    } else {
+      toast({ variant: 'destructive', title: 'Could not add goal', description: 'Check your connection and try again.' });
+    }
     setSaving(false);
   };
 
@@ -156,7 +160,14 @@ function GoalsPanel() {
   const toggleGoal = async (id, currentStatus) => {
     const newStatus = currentStatus === 'active' ? 'paused' : 'active';
     setGoals(prev => prev.map(g => g.id === id ? { ...g, status: newStatus } : g));
-    await backend.entities.Goal.update(id, { status: newStatus }).catch(() => {});
+    try {
+      await backend.entities.Goal.update(id, { status: newStatus });
+    } catch (_) {
+      // Roll back the optimistic update on failure
+      setGoals(prev => prev.map(g => g.id === id ? { ...g, status: currentStatus } : g));
+      toast({ variant: 'destructive', title: 'Could not update goal', description: 'Check your connection and try again.' });
+      return;
+    }
     await invalidateUserAIContext().catch(() => {});
   };
 

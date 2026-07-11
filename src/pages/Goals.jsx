@@ -305,7 +305,13 @@ export default function Goals() {
       confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 }, colors: ['#c8e000', '#8ea400', '#d4ef1f'] });
     }
     setGoals(prev => prev.map(g => g.id === goalId ? { ...g, current_value: newVal, status: nowComplete ? 'completed' : 'active' } : g));
-    await updateGoal(goalId, { current_value: newVal, status: nowComplete ? 'completed' : 'active' });
+    try {
+      await updateGoal(goalId, { current_value: newVal, status: nowComplete ? 'completed' : 'active' });
+    } catch (_) {
+      // Roll back the optimistic update on failure
+      setGoals(prev => prev.map(g => g.id === goalId ? { ...g, current_value: goal?.current_value ?? 0, status: goal?.status || 'active' } : g));
+      return;
+    }
     // Write progress entry for trend tracking
     backend.entities.GoalProgressEntry.create({
       goal_id: goalId,

@@ -159,11 +159,10 @@ function GoalProgressCard({ goal, entries, highlighted, onViewTrend }) {
 // ─── Overview Card ────────────────────────────────────────────────────────────
 
 function OverviewCard({ goals, allEntries }) {
-  const active = goals.filter(g => g.status !== 'completed');
-  const complete = goals.filter(g => {
-    const pct = calcProgress(g);
-    return pct >= 1;
-  });
+  // Active and Done must be mutually exclusive — a goal at 100% progress
+  // counts as done even if its status was never flipped to 'completed'.
+  const complete = goals.filter(g => g.status === 'completed' || calcProgress(g) >= 1);
+  const active = goals.filter(g => !complete.includes(g));
   const onTrack = active.filter(g => {
     const pct = calcProgress(g);
     return ['on_track', 'in_progress'].includes(getStatus(g, pct));

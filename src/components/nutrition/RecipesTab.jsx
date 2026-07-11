@@ -32,7 +32,10 @@ export default function RecipesTab() {
   async function handleLike(recipe) {
     const newLiked = !recipe.is_liked;
     setRecipes(prev => prev.map(r => r.id === recipe.id ? { ...r, is_liked: newLiked } : r));
-    await backend.entities.SavedRecipe.update(recipe.id, { is_liked: newLiked });
+    await backend.entities.SavedRecipe.update(recipe.id, { is_liked: newLiked }).catch(() => {
+      // Roll back the optimistic update on failure
+      setRecipes(prev => prev.map(r => r.id === recipe.id ? { ...r, is_liked: recipe.is_liked } : r));
+    });
   }
 
   async function handleDelete(recipe) {

@@ -155,6 +155,7 @@ export default function Recovery() {
   const [guidance, setGuidance] = useState(null);
   const [guidanceInputs, setGuidanceInputs] = useState(null);
   const [generatingGuidance, setGeneratingGuidance] = useState(false);
+  const [guidanceError, setGuidanceError] = useState(false);
   const [isCustomizing, setIsCustomizing] = useState(false);
   const [plannedRecoveryTasks, setPlannedRecoveryTasks] = useState([]);
   const [completedRecoveryIds, setCompletedRecoveryIds] = useState([]);
@@ -194,7 +195,17 @@ export default function Recovery() {
       .then(records => {
         if (cancelled) return;
         const record = records?.[0];
-        if (!record) return;
+        if (!record) {
+          // No check-in for this date — reset any state hydrated from a
+          // previously viewed date so we show a blank form, not stale data.
+          setCheckin({ energy: 7, soreness: 3, sleep: 7, stress: 3, motivation: 7 });
+          setSubmitted(false);
+          setGuidance(null);
+          setGuidanceInputs(null);
+          setGuidanceError(false);
+          setActiveTab(isFromMyWeek ? 'guidance' : 'checkin');
+          return;
+        }
 
         setCheckin(prev => ({
           energy: record.energy ?? prev.energy,
@@ -261,6 +272,8 @@ export default function Recovery() {
 
   const generateGuidance = async () => {
     setGeneratingGuidance(true);
+    setGuidanceError(false);
+    try {
     const activeInjuries = injuries.filter(i => i.is_active !== false).map(i => `${i.body_area} (${(i.severity || '').replace(/_/g, ' ')})`).join(', ') || 'None';
     const aiContext = await getUserAIContext({ forceRefresh: true });
     const result = await backend.integrations.Core.InvokeLLM({
@@ -307,9 +320,13 @@ Use safety language always: "guidance", "recommendation", "consider consulting a
     const inputsSnapshot = { ...checkin };
     setGuidance(result);
     setGuidanceInputs(inputsSnapshot);
-    setGeneratingGuidance(false);
 
     upsertReadinessCheckIn(targetDate, { guidance: result, guidance_inputs: inputsSnapshot }).catch(() => {});
+    } catch (_) {
+      setGuidanceError(true);
+    } finally {
+      setGeneratingGuidance(false);
+    }
   };
 
   const handleSubmitCheckin = async () => {
@@ -683,7 +700,19 @@ Use safety language always: "guidance", "recommendation", "consider consulting a
                 </div>
               )}
 
-              {!generatingGuidance && !guidance && (
+              {guidanceError && !generatingGuidance && (
+                <div className="p-4 rounded-2xl border mb-2" style={{ background: 'rgba(176,90,58,0.07)', borderColor: 'rgba(176,90,58,0.25)' }}>
+                  <p className="text-xs font-bold mb-1" style={{ color: '#b05a3a' }}>Guidance failed to generate</p>
+                  <p className="text-sm mb-3" style={{ color: '#5d635d' }}>Something went wrong. Your check-in is saved — try again.</p>
+                  <button onClick={generateGuidance}
+                    className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2"
+                    style={{ background: ACCENT, color: '#141613' }}>
+                    <Sparkles size={13} /> Retry
+                  </button>
+                </div>
+              )}
+
+              {!generatingGuidance && !guidance && !guidanceError && (
                 <div className="flex flex-col items-center py-16 text-center">
                   <div className="text-4xl mb-4">🧘</div>
                   <p className="text-sm font-medium mb-1" style={{ color: '#141613' }}>No guidance yet</p>
