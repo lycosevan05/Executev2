@@ -24,6 +24,7 @@ import {
   invalidateUserAIContext,
 } from '@/lib/personalizationSync';
 import { getPlanDaySessionTitle, isGenericPlanDayTitle } from '@/lib/planDayDisplay';
+import { applyOverridesToOverview } from '@/lib/plans/splitOverrides';
 
 const VALID_DAY_TYPES = ['training', 'recovery', 'rest', 'mobility'];
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -263,6 +264,16 @@ export async function refinePlanFromChat({ changeRequest, currentPlan }) {
 
   normalizeAndValidateOverview(revised);
 
+  // Carry the user's weekly-template edits onto the refined plan — edits WIN
+  // over the LLM's revised overview for their weekdays (v1 limitation: refine
+  // can't change a user-edited weekday; escape hatch = per-day "Reset to AI").
+  // Mutating revised.weekly_overview covers BOTH write locations below
+  // (top-level weekly_overview and plan_payload.weekly_overview).
+  const carriedOverrides = currentPlan.split_overrides || null;
+  if (carriedOverrides && Object.keys(carriedOverrides).length > 0) {
+    revised.weekly_overview = applyOverridesToOverview(revised.weekly_overview, carriedOverrides);
+  }
+
   // Create-then-archive (same pattern as generateInitialPlanBundle): the new
   // plan is created FIRST so a create failure leaves the previous active plan
   // intact instead of stranding the user with zero active plans.
@@ -302,6 +313,9 @@ export async function refinePlanFromChat({ changeRequest, currentPlan }) {
     training_split: revised.training_split,
     recovery_strategy: revised.recovery_strategy,
     weekly_overview: revised.weekly_overview,
+    ...(carriedOverrides && Object.keys(carriedOverrides).length > 0
+      ? { split_overrides: carriedOverrides }
+      : {}),
 
     plan_payload: {
       generation_status: 'overview_ready',
