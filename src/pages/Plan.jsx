@@ -4,7 +4,7 @@ import {
   Sparkles, Loader2, ClipboardList, MessageCircle, SlidersHorizontal,
   RefreshCw, ChevronRight, GitBranch, Compass, Dumbbell, UtensilsCrossed, Leaf, Trophy, Heart,
 } from 'lucide-react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 
 import PlanQuestionnaire from '@/components/plan/PlanQuestionnaire';
 import PremiumPaywall from '@/components/premium/PremiumPaywall';
@@ -58,6 +58,10 @@ const LONG_TERM_SECTIONS = [
 export default function Plan() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Set when PlanGuard bounced a premium user here because they have no active
+  // plan — explain the redirect instead of teleporting them silently.
+  const planRequired = location.state?.reason === 'plan-required';
 
   // UI state
   const [activeTab, setActiveTab] = useState('week');
@@ -540,7 +544,15 @@ export default function Plan() {
         )}
 
         {cacheReady && !planLoading && !hasPlan && !generating && (
-          <EmptyPlanState onGenerate={openQuestionnaire} />
+          <>
+            {planRequired && (
+              <div className="p-3.5 rounded-2xl border text-sm leading-relaxed"
+                style={{ background: 'rgba(200,224,0,0.08)', borderColor: 'rgba(200,224,0,0.35)', color: '#5d635d' }}>
+                You need an active plan to use Execute — build one below to continue.
+              </div>
+            )}
+            <EmptyPlanState onGenerate={openQuestionnaire} />
+          </>
         )}
 
         {cacheReady && !planLoading && hasPlan && !generating && (

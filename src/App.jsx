@@ -244,7 +244,7 @@ function PlanGuard({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPremium, subLoading, cacheReady, location.pathname]);
 
-  if (decision === 'redirect') return <Navigate to="/plan" replace />;
+  if (decision === 'redirect') return <Navigate to="/plan" replace state={{ reason: 'plan-required' }} />;
   if (decision === 'allow') return children;
   return <PlanGuardSkeleton />;
 }
