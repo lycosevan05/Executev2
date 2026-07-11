@@ -199,9 +199,18 @@ class EntityClient {
     this.table = table;
   }
 
-  async _select(criteria = {}) {
+  // NOTE: orderBy on a data-JSON field orders as TEXT (data->>field). All
+  // current orderBy fields are ISO date/timestamp strings, where text order
+  // equals chronological order. A future NUMERIC orderBy field must either
+  // cast ((data->>'x')::numeric via an RPC) or rely on the client-side
+  // sortRecords pass instead of server ordering.
+  async _select(criteria = {}, orderBy = null, limit = null) {
     const client = requireSupabase();
-    let query = client.from(this.table).select('*').limit(MAX_ROWS_PER_QUERY);
+    const parsedLimit = Number(limit);
+    const rowCap = Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, MAX_ROWS_PER_QUERY)
+      : MAX_ROWS_PER_QUERY;
+    let query = client.from(this.table).select('*').limit(rowCap);
 
     for (const [key, value] of Object.entries(criteria || {})) {
       if (!canServerFilter(key, value)) continue;
@@ -214,6 +223,17 @@ class EntityClient {
       }
     }
 
+    // A pushed limit MUST carry an order (otherwise the server returns
+    // arbitrary rows); parseOrder(null) yields the same created_date-desc
+    // default the client sortRecords pass uses.
+    if (orderBy || rowCap < MAX_ROWS_PER_QUERY) {
+      const { field, ascending } = parseOrder(orderBy);
+      const orderKey = field === 'created_date' || field === 'updated_date' || field === 'id'
+        ? field
+        : jsonPath(field);
+      query = query.order(orderKey, { ascending, nullsFirst: false });
+    }
+
     const { data, error } = await query;
     if (error) {
       const fallback = await client.from(this.table).select('*').limit(MAX_ROWS_PER_QUERY);
@@ -224,12 +244,19 @@ class EntityClient {
   }
 
   async list(orderBy = '-created_date', limit = 100) {
-    const records = await this._select();
+    const records = await this._select({}, orderBy, limit);
+    // Client pass kept as a safety net for the _select error-fallback path
+    // (which returns unordered, uncapped rows). Cheap on <= limit rows.
     return applyLimit(sortRecords(records, orderBy), limit);
   }
 
   async filter(criteria = {}, orderBy = null, limit = 100) {
-    const records = await this._select(criteria);
+    // Push the limit down only when every criteria entry is enforceable
+    // server-side; otherwise the server set is broader than the client
+    // match and a pushed limit could truncate rows the client filter keeps.
+    const allServer = Object.entries(criteria || {})
+      .every(([key, value]) => value === undefined || canServerFilter(key, value));
+    const records = await this._select(criteria, orderBy, allServer ? limit : null);
     const filtered = records.filter(record => matchesCriteria(record, criteria));
     return applyLimit(sortRecords(filtered, orderBy), limit);
   }
