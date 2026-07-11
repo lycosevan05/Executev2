@@ -11,6 +11,7 @@ import { loadActiveAIPlan, userScopedFilter, withUserEmail } from '@/lib/persona
 import { getPlanDaySessionTitle } from '@/lib/planDayDisplay';
 import { withBackoff } from '@/lib/withBackoff';
 import { resolveByoSession } from '@/lib/plans/byoCadence';
+import { getOverrideForDate, buildWorkoutPlanPayloadFromOverride } from '@/lib/plans/splitOverrides';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,23 @@ function chooseBestWorkoutPlan(plans = [], masterPlan = null) {
   return safe.find(belongsToActiveOrLegacy) || null;
 }
 
+/** Point an existing DailyLog (never creates one) at a planned workout row. */
+async function linkPlannedWorkoutToDailyLog(date, workoutPlanId) {
+  try {
+    const dailyLogFilter = await userScopedFilter({ date });
+    const dailyLogs = await withBackoff(
+      () => backend.entities.DailyLog.filter(dailyLogFilter),
+    ).catch(() => []);
+    if (dailyLogs.length > 0) {
+      await withBackoff(
+        () => backend.entities.DailyLog.update(dailyLogs[0].id, { planned_workout_id: workoutPlanId }),
+      ).catch(() => {});
+    }
+  } catch {
+    // Non-critical — silently skip
+  }
+}
+
 // ─── Validation ───────────────────────────────────────────────────────────────
 
 function validateWorkout(w) {
@@ -158,6 +176,15 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
 
   const overviewDay = overview?.days?.find(d => d.date === date) || null;
 
+  // User weekly-template override for this date's weekday (null = pure AI day).
+  const override = getOverrideForDate(masterPlan, date);
+
+  // Override-rest wins early. In-window dates already mirror day_type='rest'
+  // into the overview, but this covers out-of-window dates deterministically.
+  if (override?.day_type === 'rest') {
+    return { status: 'rest_day', workoutPlan: null, masterPlan, overviewDay };
+  }
+
   // E. Check for existing WorkoutPlan BEFORE checking overview.
   // Single query for all plans on this date (widest net). chooseBestWorkoutPlan()
   // below picks the best match by source_plan_id + generation_batch_id, so the
@@ -184,8 +211,9 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
     }
     // Fall through to generation with a generic training day context
   } else {
-    // G. Check if it's a rest/recovery/mobility day using day_type (primary) or backward compat
-    if (isNonTrainingDay(overviewDay)) {
+    // G. Check if it's a rest/recovery/mobility day using day_type (primary) or backward compat.
+    // An override-training day is never a rest day (override wins over a stale mirror).
+    if (!override && isNonTrainingDay(overviewDay)) {
       return { status: 'rest_day', workoutPlan: null, masterPlan, overviewDay };
     }
 
@@ -193,6 +221,19 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
     if (!generate) {
       return { status: 'needs_generation', workoutPlan: null, masterPlan, overviewDay };
     }
+  }
+
+  // I0. User-specified exercises for this weekday — construct the plan row
+  // directly from the template override. No LLM call, no invariant reads.
+  if (override && Array.isArray(override.exercises) && override.exercises.length > 0) {
+    const overridePayload = await withUserEmail(
+      buildWorkoutPlanPayloadFromOverride(override, date, masterPlan),
+    );
+    const createdFromOverride = await withBackoff(
+      () => backend.entities.WorkoutPlan.create(overridePayload),
+    );
+    await linkPlannedWorkoutToDailyLog(date, createdFromOverride.id);
+    return { status: 'ready', workoutPlan: createdFromOverride, masterPlan, overviewDay };
   }
 
   // I. Generate workout via AI.
@@ -249,7 +290,12 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
   const readinessText = readinessRecord
     ? `Score: ${readinessRecord.readiness_score ?? 'N/A'}, Energy: ${readinessRecord.energy ?? 'N/A'}/10, Sleep quality: ${readinessRecord.sleep_quality ?? 'N/A'}/10, Soreness: ${readinessRecord.soreness ?? 'N/A'}/10, Stress: ${readinessRecord.stress ?? 'N/A'}/10`
     : 'No readiness data';
-  const sessionTitle = getPlanDaySessionTitle(overviewDay, overviewDay?.training_type || 'General Training');
+  // Type-only override (exercises handled at I0): the LLM fills exercises for
+  // the user's chosen day type — same injection philosophy as the BYO block.
+  const effectiveDay = override
+    ? { ...(overviewDay || {}), day_type: 'training', workout_needed: true, training_type: override.label, session_title: override.label }
+    : overviewDay;
+  const sessionTitle = getPlanDaySessionTitle(effectiveDay, effectiveDay?.training_type || 'General Training');
 
   // BYO ("Input your own plan"): inject ONLY this date's session slice. Pre-mapped
   // in the overview for the first 7 days; resolved via cadence for later dates.
@@ -282,7 +328,7 @@ CRITICAL RULES:
 
 DATE: ${date}
 VISIBLE SESSION TITLE FOR TODAY: ${sessionTitle}
-TRAINING TYPE FOR TODAY: ${overviewDay?.training_type || 'General Training'}
+TRAINING TYPE FOR TODAY: ${effectiveDay?.training_type || 'General Training'}
 TODAY'S PRIORITY: ${overviewDay?.priority || ''}
 RECOVERY FOCUS: ${overviewDay?.recovery_focus || ''}
 ${byoBlock}
@@ -392,19 +438,7 @@ Include 4 to 8 exercises. Every exercise must have name, sets, reps, rest, and n
   );
 
   // Optionally update existing DailyLog with planned_workout_id (do not create one)
-  try {
-    const dailyLogFilter = await userScopedFilter({ date });
-    const dailyLogs = await withBackoff(
-      () => backend.entities.DailyLog.filter(dailyLogFilter),
-    ).catch(() => []);
-    if (dailyLogs.length > 0) {
-      await withBackoff(
-        () => backend.entities.DailyLog.update(dailyLogs[0].id, { planned_workout_id: createdPlan.id }),
-      ).catch(() => {});
-    }
-  } catch {
-    // Non-critical — silently skip
-  }
+  await linkPlannedWorkoutToDailyLog(date, createdPlan.id);
 
   return { status: 'ready', workoutPlan: createdPlan, masterPlan, overviewDay };
 }
