@@ -17,6 +17,7 @@ import { useVitalsLayout } from '@/components/home/useVitalsLayout';
 import VitalsRowWidget from '@/components/home/VitalsRowWidget';
 import VitalsPicker from '@/components/home/VitalsPicker';
 import { loadActiveAIPlan, userScopedFilter } from '@/lib/personalizationSync';
+import { mergeConsumedMax } from '@/lib/nutritionTotals';
 import { getOrCreateWorkoutPlanForDate } from '@/lib/plans/getOrCreateWorkoutPlanForDate';
 import { refreshDynamicReadiness } from '@/lib/readinessScore';
 import MacroTrackerCard from '@/components/home/MacroTrackerCard';
@@ -444,8 +445,10 @@ export default function Home() {
       const up = userProfiles?.[0] || null;
       const baseLog = dailyLogs?.[0] || null;
       const foodLogTotals = aggregateFoodLogs(foodLogs);
+      // Per-field max, not overwrite: the DailyLog may carry ticked-meal
+      // totals that food logs alone would understate (see nutritionTotals.js).
       const log = foodLogTotals.hasFoodLogs
-        ? { ...(baseLog || { date: todayStr }), ...foodLogTotals.totals }
+        ? mergeConsumedMax(baseLog || { date: todayStr }, foodLogTotals.totals)
         : baseLog;
 
       setActivePlan(plan || null);
@@ -530,7 +533,7 @@ export default function Home() {
       if (!log || log.date !== getTodayStr() || (currentUserEmail && log.created_by !== currentUserEmail)) return;
       backend.entities.FoodLog.filter({ date: getTodayStr() }).then(foodLogs => {
         const foodLogTotals = aggregateFoodLogs(foodLogs);
-        setDailyLog(prev => ({ ...(prev || { date: getTodayStr() }), ...foodLogTotals.totals }));
+        setDailyLog(prev => mergeConsumedMax(prev || { date: getTodayStr() }, foodLogTotals.totals));
       }).catch(() => {});
     });
     return unsub;

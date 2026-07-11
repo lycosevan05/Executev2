@@ -398,7 +398,7 @@ export default function LogFood() {
       protein_consumed_g: totalProtein,
       carbs_consumed_g: totalCarbs,
       fats_consumed_g: totalFats,
-    }).catch(() => {});
+    }, { reconcileConsumed: 'food' }).catch(() => {});
 
     appCache.invalidate('home-dashboard');
     appCache.invalidate('nutrition-today-');
@@ -440,7 +440,7 @@ export default function LogFood() {
       protein_consumed_g: totalProtein,
       carbs_consumed_g: totalCarbs,
       fats_consumed_g: totalFats,
-    }).catch(() => {});
+    }, { reconcileConsumed: 'food' }).catch(() => {});
 
     appCache.invalidate('home-dashboard');
     appCache.invalidate('nutrition-today-');

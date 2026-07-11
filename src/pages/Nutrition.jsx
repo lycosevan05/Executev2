@@ -6,6 +6,7 @@ import { backend } from '@/api/backendClient';
 import { getOrCreateMealPlanForDate } from '@/lib/plans/getOrCreateMealPlanForDate';
 import { buildMealPlansForDates } from '@/lib/plans/buildMealPlansForDates';
 import { loadActiveAIPlan, upsertDailyLog, getTodayISODate } from '@/lib/personalizationSync';
+import { tickedTotalsFromMealPlan } from '@/lib/nutritionTotals';
 import PremiumPaywall from '@/components/premium/PremiumPaywall';
 import MealIngredients from '@/components/nutrition/MealIngredients';
 import RecipesTab from '@/components/nutrition/RecipesTab';
@@ -1088,19 +1089,15 @@ export default function Nutrition() {
                             completedMealsUserSetRef.current = true; // lock against fetch override
                             setSessionCompletedMeals(todayStr, newCompleted);
                             setCompletedMeals(newCompleted);
-                            // Persist completed state + sum calories/protein to DailyLog
+                            // Persist completed state + ticked macro sums to DailyLog,
+                            // reconciled (per-field max) against FoodLog totals so a
+                            // tick never clobbers /log-food entries and vice versa.
                             if (mealPlan) {
-                              const consumed = Object.entries(mealPlan).reduce((sum, [t, m]) => {
-                                return sum + (newCompleted.includes(t) ? (m?.calories || 0) : 0);
-                              }, 0);
-                              const protein = Object.entries(mealPlan).reduce((sum, [t, m]) => {
-                                return sum + (newCompleted.includes(t) ? (m?.protein || 0) : 0);
-                              }, 0);
+                              const ticked = tickedTotalsFromMealPlan(mealPlan, newCompleted);
                               upsertDailyLog(todayStr, {
                                 meals_completed: newCompleted,
-                                calories_consumed: consumed,
-                                protein_consumed_g: protein,
-                              }).catch(() => {});
+                                ...ticked,
+                              }, { reconcileConsumed: 'ticked' }).catch(() => {});
                             }
                           }}
                             className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"

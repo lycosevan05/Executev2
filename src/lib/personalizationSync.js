@@ -243,6 +243,29 @@ export async function upsertDailyLog(date, updates, options = {}) {
   const masterPlan = options.masterPlan || await loadActiveCanonicalDailyMasterPlan();
   const existing = await loadDailyLogByDate(date, { masterPlan });
 
+  // Reconcile the two independent "consumed" sources instead of letting the
+  // caller overwrite the other side's contribution (see nutritionTotals.js).
+  // options.reconcileConsumed: 'food'   — updates.* carry fresh FoodLog sums;
+  //                             'ticked' — updates.* carry fresh ticked-meal sums.
+  if (options.reconcileConsumed === 'food' || options.reconcileConsumed === 'ticked') {
+    const { tickedTotalsFromMealPlan, reconcileConsumed } = await import('@/lib/nutritionTotals');
+    let otherSide = {};
+    if (options.reconcileConsumed === 'food') {
+      const mealsCompleted = updates.meals_completed ?? existing?.meals_completed ?? [];
+      if (Array.isArray(mealsCompleted) && mealsCompleted.length > 0) {
+        const mealPlans = await backend.entities.MealPlan
+          .filter({ date }, '-updated_date', 1)
+          .catch(() => []);
+        otherSide = tickedTotalsFromMealPlan(mealPlans?.[0]?.meals, mealsCompleted);
+      }
+    } else {
+      const { foodTotalsFromFoodLogs } = await import('@/lib/nutritionTotals');
+      const foodLogs = await backend.entities.FoodLog.filter({ date }).catch(() => []);
+      otherSide = foodTotalsFromFoodLogs(foodLogs);
+    }
+    updates = { ...updates, ...reconcileConsumed(updates, otherSide) };
+  }
+
   let result;
 
   if (existing?.id) {
