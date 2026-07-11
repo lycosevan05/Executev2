@@ -200,9 +200,15 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
     return { status: 'ready', workoutPlan: existing, masterPlan, overviewDay };
   }
 
-  if (existing && generate) {
-    await backend.entities.WorkoutPlan.delete(existing.id).catch(() => {});
-  }
+  // Replace-then-delete: the stale row (no exercises) is removed only AFTER
+  // the replacement exists, so a failed LLM call/validation never leaves the
+  // date with nothing (create-then-archive pattern, cf. generateInitialPlanBundle).
+  const staleExistingId = existing && generate ? existing.id : null;
+  const deleteStaleExisting = async () => {
+    if (staleExistingId) {
+      await backend.entities.WorkoutPlan.delete(staleExistingId).catch(() => {});
+    }
+  };
 
   // F. If no overview day found but master plan exists — still allow generation
   if (!overviewDay) {
@@ -232,6 +238,7 @@ export async function getOrCreateWorkoutPlanForDate(date, options = {}) {
     const createdFromOverride = await withBackoff(
       () => backend.entities.WorkoutPlan.create(overridePayload),
     );
+    await deleteStaleExisting();
     await linkPlannedWorkoutToDailyLog(date, createdFromOverride.id);
     return { status: 'ready', workoutPlan: createdFromOverride, masterPlan, overviewDay };
   }
@@ -436,6 +443,8 @@ Include 4 to 8 exercises. Every exercise must have name, sets, reps, rest, and n
   const createdPlan = await withBackoff(
     () => backend.entities.WorkoutPlan.create(workoutPlanPayload),
   );
+
+  await deleteStaleExisting();
 
   // Optionally update existing DailyLog with planned_workout_id (do not create one)
   await linkPlannedWorkoutToDailyLog(date, createdPlan.id);
