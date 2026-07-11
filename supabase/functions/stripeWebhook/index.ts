@@ -126,6 +126,9 @@ Deno.serve(async (req) => {
     }
   } catch (err) {
     console.error('[stripeWebhook] Error handling event:', err.message);
+    // 5xx so Stripe retries the delivery — a swallowed error here would
+    // silently drop a subscription state change (matches revenuecatWebhook).
+    return json({ error: 'Internal error' }, 500);
   }
 
   return json({ received: true });
