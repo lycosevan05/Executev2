@@ -450,6 +450,9 @@ export default function Nutrition() {
   const planIdParam = searchParams.get('planId');
   const targetDate = dateParam || getTodayISODate();
   const todayStr = getTodayISODate();
+  // Water + meal-tick writes always target TODAY's DailyLog — hide those
+  // controls when viewing another date so a tap can't silently log to today.
+  const viewingToday = targetDate === todayStr;
 
   // Hydrate instantly from in-memory cache so navigating back to Nutrition is instant.
   const cacheKey = `nutrition-today-${targetDate}`;
@@ -1012,20 +1015,24 @@ export default function Nutrition() {
                       <div className="h-full rounded-full transition-all duration-300"
                         style={{ width: waterGoal ? `${Math.min((waterLiters / waterGoal) * 100, 100)}%` : '0%', background: '#5d8aa8' }} />
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {[0.25, 0.33, 0.5].map(amt => (
-                        <button key={amt} onClick={() => updateWater(Math.min(waterLiters + amt, (waterGoal || 5) * 2))}
-                          className="flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all"
-                          style={{ background: '#f2efe7', borderColor: '#e8e1d4', color: '#5d635d' }}>
-                          +{amt === 0.33 ? '330ml' : `${amt * 1000}ml`}
+                    {viewingToday ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {[0.25, 0.33, 0.5].map(amt => (
+                          <button key={amt} onClick={() => updateWater(Math.min(waterLiters + amt, (waterGoal || 5) * 2))}
+                            className="flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all"
+                            style={{ background: '#f2efe7', borderColor: '#e8e1d4', color: '#5d635d' }}>
+                            +{amt === 0.33 ? '330ml' : `${amt * 1000}ml`}
+                          </button>
+                        ))}
+                        <button onClick={() => updateWater(waterLiters - 0.25)}
+                          className="px-4 py-2.5 rounded-xl text-xs font-bold border"
+                          style={{ background: '#f2efe7', borderColor: '#e8e1d4', color: '#b05a3a' }}>
+                          −
                         </button>
-                      ))}
-                      <button onClick={() => updateWater(waterLiters - 0.25)}
-                        className="px-4 py-2.5 rounded-xl text-xs font-bold border"
-                        style={{ background: '#f2efe7', borderColor: '#e8e1d4', color: '#b05a3a' }}>
-                        −
-                      </button>
-                    </div>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] font-semibold" style={{ color: '#91968e' }}>Water can only be logged on today's date</p>
+                    )}
                     {waterGoal && waterLiters >= waterGoal && (
                       <p className="text-[10px] mt-2 font-semibold" style={{ color: '#8ea400' }}>✓ Daily water goal reached</p>
                     )}
@@ -1084,6 +1091,7 @@ export default function Nutrition() {
                             >
                               <Heart size={13} fill={likedMeals[type] ? '#b05a3a' : 'none'} style={{ color: '#b05a3a' }} />
                             </button>
+                          {viewingToday && (
                           <button onClick={async () => {
                             const newCompleted = isDone ? completedMeals.filter(m => m !== type) : [...completedMeals, type];
                             completedMealsUserSetRef.current = true; // lock against fetch override
@@ -1104,6 +1112,7 @@ export default function Nutrition() {
                               style={{ background: isDone ? 'rgba(200,224,0,0.15)' : '#f2efe7', border: `1px solid ${isDone ? 'rgba(200,224,0,0.4)' : '#e8e1d4'}` }}>
                               {isDone && <Check size={13} style={{ color: ACCENT_DARK }} />}
                             </button>
+                          )}
                             </div>
                         </div>
                         <div className="flex gap-3 mb-2.5">
