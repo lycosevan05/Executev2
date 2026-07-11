@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Loader2, Search, AlertTriangle, Sparkles } from 'lucide-react';
+import { X, Loader2, Search, AlertTriangle, Sparkles, Check } from 'lucide-react';
 import { backend } from '@/api/backendClient';
 
 const ACCENT = '#c8e000';
@@ -10,30 +10,66 @@ function toDateStr(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function readNutriment(nutriments, keys) {
-  for (const key of keys) {
-    const value = nutriments?.[key];
-    if (value !== undefined && value !== null && value !== '') return Math.round(Number(value) || 0);
+function nutrimentNumber(nutriments, key) {
+  const value = nutriments?.[key];
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Parse a gram/ml amount out of strings like "30 g", "2 cookies (28g)", "355 ml".
+function parseServingGrams(...candidates) {
+  for (const s of candidates) {
+    const m = String(s || '').match(/([\d.]+)\s*(?:g|ml)\b/i);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
   }
-  return 0;
+  return null;
 }
 
 // Try multiple product DBs so we always get a result for common codes.
+// IMPORTANT: all macros are resolved from ONE basis (per-serving OR per-100g) —
+// mixing bases per-macro produces nonsense totals.
 async function fetchProductFromOpenFoodFacts(code) {
   const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=product_name,brands,nutriments,serving_size,quantity,image_front_url`);
   const data = await res.json();
   if (!data?.product || data.status === 0) return null;
   const p = data.product;
   const nutriments = p.nutriments || {};
-  const cal = readNutriment(nutriments, ['energy-kcal_serving', 'energy-kcal_100g']);
-  const pro = readNutriment(nutriments, ['proteins_serving', 'proteins_100g']);
-  const car = readNutriment(nutriments, ['carbohydrates_serving', 'carbohydrates_100g']);
-  const fa  = readNutriment(nutriments, ['fat_serving', 'fat_100g']);
+
+  const servingCal = nutrimentNumber(nutriments, 'energy-kcal_serving');
+  let cal, pro, car, fa, servingLabel;
+  if (servingCal !== null) {
+    // Per-serving basis available — use it for every macro.
+    cal = servingCal;
+    pro = nutrimentNumber(nutriments, 'proteins_serving') ?? 0;
+    car = nutrimentNumber(nutriments, 'carbohydrates_serving') ?? 0;
+    fa = nutrimentNumber(nutriments, 'fat_serving') ?? 0;
+    servingLabel = p.serving_size || p.quantity || '1 serving';
+  } else {
+    // Per-100g basis for every macro; scale to serving size when parseable.
+    cal = nutrimentNumber(nutriments, 'energy-kcal_100g') ?? 0;
+    pro = nutrimentNumber(nutriments, 'proteins_100g') ?? 0;
+    car = nutrimentNumber(nutriments, 'carbohydrates_100g') ?? 0;
+    fa = nutrimentNumber(nutriments, 'fat_100g') ?? 0;
+    const grams = parseServingGrams(p.serving_size, p.quantity);
+    if (grams) {
+      const factor = grams / 100;
+      cal *= factor; pro *= factor; car *= factor; fa *= factor;
+      servingLabel = p.serving_size || p.quantity;
+    } else {
+      servingLabel = 'per 100g';
+    }
+  }
+
+  cal = Math.round(cal); pro = Math.round(pro); car = Math.round(car); fa = Math.round(fa);
   // OFF often has product entries with all zeros — treat as unusable
   if (!cal && !pro && !car && !fa && !p.product_name) return null;
   return {
     name: p.product_name || p.brands || `Barcode ${code}`,
-    serving: p.serving_size || p.quantity || '1 serving',
+    serving: servingLabel,
     calories: cal, protein: pro, carbs: car, fats: fa,
   };
 }
@@ -79,10 +115,12 @@ export default function BarcodeLogModal({ onClose, onSave, selectedDate }) {
   const detectedRef = useRef(false);
   const aiInFlightRef = useRef(false);
 
-  const [step, setStep] = useState('scan'); // scan | manual | lookup
+  const [step, setStep] = useState('scan'); // scan | manual | lookup | review
   const [manualCode, setManualCode] = useState('');
   const [error, setError] = useState(null);
   const [loadingProduct, setLoadingProduct] = useState(false);
+  const [product, setProduct] = useState(null); // looked-up product pending review
+  const [saving, setSaving] = useState(false);
   const [aiScanning, setAiScanning] = useState(false);
   const [scanHint, setScanHint] = useState('Point your camera at the barcode.');
 
@@ -104,10 +142,10 @@ export default function BarcodeLogModal({ onClose, onSave, selectedDate }) {
     // Light haptic feedback if available
     if (navigator.vibrate) navigator.vibrate(40);
     stopCamera();
-    await lookupAndSave(clean);
+    await lookupProduct(clean);
   }
 
-  async function lookupAndSave(code) {
+  async function lookupProduct(code) {
     if (!code) return;
     setLoadingProduct(true);
     setError(null);
@@ -115,14 +153,14 @@ export default function BarcodeLogModal({ onClose, onSave, selectedDate }) {
 
     try {
       // 1. Try Open Food Facts
-      let product = await fetchProductFromOpenFoodFacts(code).catch(() => null);
+      let found = await fetchProductFromOpenFoodFacts(code).catch(() => null);
 
       // 2. AI fallback so we always return something
-      if (!product) {
-        product = await aiEstimateProduct(code).catch(() => null);
+      if (!found) {
+        found = await aiEstimateProduct(code).catch(() => null);
       }
 
-      if (!product) {
+      if (!found) {
         setError('Could not find nutrition for this barcode. Try again or enter it manually.');
         detectedRef.current = false;
         setStep('manual');
@@ -130,6 +168,27 @@ export default function BarcodeLogModal({ onClose, onSave, selectedDate }) {
         return;
       }
 
+      setProduct({ ...found, barcode: code });
+      setStep('review');
+      setLoadingProduct(false);
+    } catch (_) {
+      setError('Could not look up this barcode. Try typing the numbers.');
+      detectedRef.current = false;
+      setStep('manual');
+      setLoadingProduct(false);
+    }
+  }
+
+  function setProductField(field, raw) {
+    const n = Math.max(0, Math.round(Number(raw) || 0));
+    setProduct(prev => ({ ...prev, [field]: n }));
+  }
+
+  async function confirmSave() {
+    if (!product || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
       const dateStr = toDateStr(selectedDate);
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -139,7 +198,7 @@ export default function BarcodeLogModal({ onClose, onSave, selectedDate }) {
         time: timeStr,
         method: 'barcode',
         mealType: 'snack',
-        barcode: code,
+        barcode: product.barcode,
         foods: [{
           name: product.name,
           portion: product.serving,
@@ -156,10 +215,8 @@ export default function BarcodeLogModal({ onClose, onSave, selectedDate }) {
 
       onClose();
     } catch (_) {
-      setError('Could not look up this barcode. Try typing the numbers.');
-      detectedRef.current = false;
-      setStep('manual');
-      setLoadingProduct(false);
+      setError('Could not save this food. Try again.');
+      setSaving(false);
     }
   }
 
@@ -324,7 +381,7 @@ export default function BarcodeLogModal({ onClose, onSave, selectedDate }) {
         <div className="flex items-center justify-between px-6 pt-4 pb-3 flex-shrink-0">
           <div>
             <h3 className="text-base font-bold" style={{ color: '#141613' }}>Scan Barcode</h3>
-            <p className="text-xs mt-0.5" style={{ color: '#91968e' }}>Auto-logs the food when detected</p>
+            <p className="text-xs mt-0.5" style={{ color: '#91968e' }}>Scan, review the nutrition, then log</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-xl flex items-center justify-center border"
             style={{ background: '#f2efe7', borderColor: '#e8e1d4' }}>
@@ -375,13 +432,64 @@ export default function BarcodeLogModal({ onClose, onSave, selectedDate }) {
                   className="w-full px-4 py-3 rounded-xl border text-sm outline-none"
                   style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#141613' }}
                 />
-                <button onClick={() => lookupAndSave(manualCode)} disabled={!manualCode || loadingProduct}
+                <button onClick={() => lookupProduct(manualCode)} disabled={!manualCode || loadingProduct}
                   className="w-full py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-2"
                   style={{ background: manualCode ? ACCENT : '#e8e1d4', color: '#141613' }}>
-                  {loadingProduct ? <><Loader2 size={15} className="animate-spin" /> Searching…</> : <><Search size={15} /> Find & log food</>}
+                  {loadingProduct ? <><Loader2 size={15} className="animate-spin" /> Searching…</> : <><Search size={15} /> Find food</>}
                 </button>
                 <button onClick={() => { setError(null); setStep('scan'); }} className="w-full py-3 rounded-xl text-sm font-semibold border" style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}>
                   Back to camera
+                </button>
+              </motion.div>
+            )}
+
+            {step === 'review' && product && (
+              <motion.div key="review" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-3 pt-2">
+                {error && (
+                  <div className="flex items-start gap-2 p-3 rounded-xl border text-xs" style={{ background: 'rgba(176,90,58,0.06)', borderColor: 'rgba(176,90,58,0.25)', color: '#b05a3a' }}>
+                    <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" /> {error}
+                  </div>
+                )}
+                <div className="p-4 rounded-2xl border" style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
+                  <p className="text-sm font-bold" style={{ color: '#141613' }}>{product.name}</p>
+                  <p className="text-xs mt-0.5" style={{ color: '#91968e' }}>{product.serving}</p>
+                  {product.aiEstimated && (
+                    <div className="flex items-center gap-1.5 mt-2 text-[10px] font-semibold" style={{ color: ACCENT_DARK }}>
+                      <Sparkles size={10} /> AI estimate — double-check the values
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ['calories', 'Calories'],
+                    ['protein', 'Protein (g)'],
+                    ['carbs', 'Carbs (g)'],
+                    ['fats', 'Fats (g)'],
+                  ].map(([field, label]) => (
+                    <label key={field} className="block">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: '#91968e' }}>{label}</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="0"
+                        value={product[field]}
+                        onChange={e => setProductField(field, e.target.value)}
+                        className="w-full mt-1 px-3 py-2.5 rounded-xl border text-sm outline-none"
+                        style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#141613' }}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <button onClick={confirmSave} disabled={saving}
+                  className="w-full py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-2"
+                  style={{ background: ACCENT, color: '#141613', opacity: saving ? 0.7 : 1 }}>
+                  {saving ? <><Loader2 size={15} className="animate-spin" /> Logging…</> : <><Check size={15} /> Log food</>}
+                </button>
+                <button onClick={() => { setProduct(null); setError(null); detectedRef.current = false; setStep('scan'); }}
+                  disabled={saving}
+                  className="w-full py-3 rounded-xl text-sm font-semibold border"
+                  style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}>
+                  Scan again
                 </button>
               </motion.div>
             )}
