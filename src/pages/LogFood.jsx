@@ -412,13 +412,14 @@ export default function LogFood() {
     const savedEntries = await Promise.all(entries.map(entry =>
       backend.entities.FoodLog.create({
         date: entry.date,
-        log_method: entry.method === 'ai_photo' ? 'photo' : 'manual',
+        log_method: entry.method === 'ai_photo' ? 'photo' : (entry.method || 'manual'),
         meal_type: entry.mealType || null,
         foods: entry.foods || [],
         total_calories: entry.total_calories || 0,
         total_protein_g: entry.total_protein || 0,
         total_carbs_g: entry.total_carbs || 0,
         total_fats_g: entry.total_fats || 0,
+        total_fiber_g: entry.total_fiber || 0,
         time_logged: entry.time,
         notes: entry.label,
       }).catch(() => null)
