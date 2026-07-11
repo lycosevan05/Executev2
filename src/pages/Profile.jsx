@@ -71,6 +71,9 @@ function DeleteAccountModal({ onConfirm, onCancel, logout }) {
         <p className="text-sm text-center mb-6 leading-relaxed" style={{ color: '#5d635d' }}>
           This action is <strong>permanent and irreversible</strong>. All your cloud data, workouts, nutrition logs, goals, and account information will be permanently deleted.
         </p>
+        <p className="text-xs text-center mb-6 leading-relaxed" style={{ color: '#5d635d' }}>
+          Web subscriptions are cancelled automatically. If you subscribed through the App&nbsp;Store, also cancel it in iOS Settings → Apple&nbsp;ID → Subscriptions — Apple doesn&apos;t let apps cancel it for you.
+        </p>
         <div className="space-y-3">
           <button
             onClick={onCancel}
