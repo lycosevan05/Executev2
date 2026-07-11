@@ -1,16 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, Loader2, Dumbbell, Search, ChevronDown, ChevronUp,
-  Check, Leaf, BatteryCharging, RotateCcw, Target, Calendar, SlidersHorizontal, Play,
+  Check, Leaf, BatteryCharging, RotateCcw, Target, Calendar, Pencil,
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { backend } from '@/api/backendClient';
 import { getUnitSystem, kgToLbs } from '@/lib/units';
 import WorkoutCompleteAnimation from '@/components/workouts/WorkoutCompleteAnimation';
 import WorkoutHeroCard from '@/components/workouts/WorkoutHeroCard';
-import CustomSplitSheet from '@/components/workouts/CustomSplitSheet';
+import SplitDayEditorSheet from '@/components/workouts/SplitDayEditorSheet';
 import { getOrCreateWorkoutPlanForDate } from '@/lib/plans/getOrCreateWorkoutPlanForDate';
+import {
+  weekdayNameForDate,
+  applyOverridesToOverview,
+  buildWorkoutPlanPayloadFromOverride,
+  saveSplitOverride,
+  saveSplitOverrides,
+} from '@/lib/plans/splitOverrides';
 import { buildWorkoutPlansForDates } from '@/lib/plans/buildWorkoutPlansForDates';
 import { loadActiveAIPlan, userScopedFilter } from '@/lib/personalizationSync';
 import { toast } from '@/components/ui/use-toast';
@@ -355,7 +362,7 @@ function RestDayCard({ overviewDay, onViewRecovery }) {
 
 // ─── Split row components ─────────────────────────────────────────────────────
 
-function SplitRestRow({ dateLabel, isToday, overviewDay, index }) {
+function SplitRestRow({ dateLabel, isToday, overviewDay, index, onEdit }) {
   const [expanded, setExpanded] = useState(false);
   const dayType = overviewDay?.day_type || 'rest';
   const badge = dayType === 'mobility' ? 'Mobility' : dayType === 'recovery' ? 'Recovery' : 'Rest';
@@ -376,6 +383,11 @@ function SplitRestRow({ dateLabel, isToday, overviewDay, index }) {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold px-3 py-1 rounded-full" style={{ background: '#e8e1d4', color: '#91968e' }}>{badge}</span>
+          <button onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            className="w-7 h-7 rounded-lg flex items-center justify-center"
+            style={{ background: '#f2efe7' }}>
+            <Pencil size={12} style={{ color: '#91968e' }} />
+          </button>
           {expanded ? <ChevronUp size={14} style={{ color: '#91968e' }} /> : <ChevronDown size={14} style={{ color: '#91968e' }} />}
         </div>
       </button>
@@ -413,7 +425,7 @@ function SplitRestRow({ dateLabel, isToday, overviewDay, index }) {
   );
 }
 
-function SplitReadyRow({ date, dateLabel, isToday, plan, overviewDay, index, navigate }) {
+function SplitReadyRow({ date, dateLabel, isToday, plan, overviewDay, index, navigate, onEdit }) {
   const [expanded, setExpanded] = useState(isToday);
   const exercises = plan.exercises || [];
   const workoutName = plan.name?.replace(/^Day\s+\d+\s*[—\-–]\s*/i, '') || getPlanDaySessionTitle(overviewDay, 'Workout');
@@ -443,6 +455,11 @@ function SplitReadyRow({ date, dateLabel, isToday, plan, overviewDay, index, nav
               Start
             </button>
           )}
+          <button onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            className="w-7 h-7 rounded-lg flex items-center justify-center"
+            style={{ background: '#f2efe7' }}>
+            <Pencil size={12} style={{ color: '#91968e' }} />
+          </button>
           {exercises.length > 0 && (
             expanded ? <ChevronUp size={13} style={{ color: '#91968e' }} /> : <ChevronDown size={13} style={{ color: '#91968e' }} />
           )}
@@ -474,7 +491,7 @@ function SplitReadyRow({ date, dateLabel, isToday, plan, overviewDay, index, nav
   );
 }
 
-function SplitNeedsBuildRow({ date, dateLabel, isToday, overviewDay, onBuild, index }) {
+function SplitNeedsBuildRow({ date, dateLabel, isToday, overviewDay, onBuild, index, onEdit }) {
   const sessionTitle = getPlanDaySessionTitle(overviewDay, 'Workout scheduled');
 
   return (
@@ -496,11 +513,18 @@ function SplitNeedsBuildRow({ date, dateLabel, isToday, overviewDay, onBuild, in
             <p className="text-xs" style={{ color: '#91968e' }}>{overviewDay?.priority || 'Ready to build'}</p>
           </div>
         </div>
-        <button onClick={() => onBuild(date)}
-          className="flex-shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold ml-3 flex items-center gap-1.5"
-          style={{ background: ACCENT, color: '#141613' }}>
-          <Sparkles size={11} /> Build
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+          <button onClick={() => onEdit()}
+            className="w-7 h-7 rounded-lg flex items-center justify-center"
+            style={{ background: '#f2efe7' }}>
+            <Pencil size={12} style={{ color: '#91968e' }} />
+          </button>
+          <button onClick={() => onBuild(date)}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5"
+            style={{ background: ACCENT, color: '#141613' }}>
+            <Sparkles size={11} /> Build
+          </button>
+        </div>
       </div>
       {overviewDay?.recovery_focus && (
         <div className="px-4 pb-3">
@@ -512,7 +536,7 @@ function SplitNeedsBuildRow({ date, dateLabel, isToday, overviewDay, onBuild, in
 }
 
 // SplitDayRow: driven by overviewDay (not by rolling date array)
-function SplitDayRow({ date, overviewDay, splitResult, index, onBuild, navigate }) {
+function SplitDayRow({ date, overviewDay, splitResult, index, onBuild, navigate, onEdit }) {
   const isToday = date === getTodayIso();
   const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
@@ -536,124 +560,16 @@ function SplitDayRow({ date, overviewDay, splitResult, index, onBuild, navigate 
 
   // Rest / recovery / mobility day
   if (isRest) {
-    return <SplitRestRow dateLabel={dateLabel} isToday={isToday} overviewDay={overviewDay} index={index} />;
+    return <SplitRestRow dateLabel={dateLabel} isToday={isToday} overviewDay={overviewDay} index={index} onEdit={onEdit} />;
   }
 
   // Training day with built workout
   if (status === 'ready' && plan) {
-    return <SplitReadyRow date={date} dateLabel={dateLabel} isToday={isToday} plan={plan} overviewDay={overviewDay} index={index} navigate={navigate} />;
+    return <SplitReadyRow date={date} dateLabel={dateLabel} isToday={isToday} plan={plan} overviewDay={overviewDay} index={index} navigate={navigate} onEdit={onEdit} />;
   }
 
   // Training day — needs build
-  return <SplitNeedsBuildRow date={date} dateLabel={dateLabel} isToday={isToday} overviewDay={overviewDay} onBuild={onBuild} index={index} />;
-}
-
-// ─── Custom workout today card ────────────────────────────────────────────────
-
-function CustomWorkoutTodayCard({ customDay, splitName, onEditSplit, navigate }) {
-  const isRest = !customDay?.type || customDay.type === 'Rest';
-  const exercises = customDay?.exercises || [];
-
-  if (isRest) {
-    return (
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-        className="rounded-3xl overflow-hidden" style={{ background: '#ffffff', border: '1px solid #e8e1d4' }}>
-        <div className="px-6 pt-6 pb-4">
-          <div className="flex items-start gap-4 mb-3">
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
-              style={{ background: 'rgba(93,138,93,0.1)', border: '1px solid rgba(93,138,93,0.2)' }}>
-              <Leaf size={24} style={{ color: '#5d8a5d' }} />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: '#91968e' }}>
-                {splitName || 'My Custom Split'} · Today
-              </p>
-              <h2 className="text-xl font-black tracking-tight" style={{ color: '#141613' }}>Rest Day</h2>
-              <p className="text-sm mt-0.5" style={{ color: '#5d635d' }}>{customDay?.day || ''} — Recovery & rest.</p>
-            </div>
-          </div>
-        </div>
-        <div className="px-6 pb-6">
-          <button onClick={onEditSplit}
-            className="w-full py-3.5 rounded-2xl text-sm font-semibold flex items-center justify-center gap-2 border"
-            style={{ background: '#f9f7f3', borderColor: '#e8e1d4', color: '#5d635d' }}>
-            <SlidersHorizontal size={14} /> Edit Split
-          </button>
-        </div>
-      </motion.div>
-    );
-  }
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-      className="rounded-3xl overflow-hidden"
-      style={{ background: 'linear-gradient(145deg, #141613 0%, #1a1f1a 100%)', border: '1px solid rgba(200,224,0,0.18)' }}>
-      <div className="p-5">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(200,224,0,0.15)' }}>
-                <Dumbbell size={12} style={{ color: ACCENT }} />
-              </div>
-              <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: ACCENT_DARK }}>
-                {splitName || 'My Custom Split'} · Today
-              </span>
-            </div>
-            <h2 className="text-lg font-black" style={{ color: '#ffffff', letterSpacing: '-0.03em' }}>
-              {customDay?.type || customDay?.day || "Today's Workout"}
-            </h2>
-            <p className="text-xs mt-0.5" style={{ color: '#5d635d' }}>
-              {customDay?.day} · {exercises.length} exercise{exercises.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-          <button onClick={onEditSplit}
-            className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: 'rgba(255,255,255,0.07)' }}>
-            <SlidersHorizontal size={13} style={{ color: '#5d635d' }} />
-          </button>
-        </div>
-
-        {/* Exercises */}
-        {exercises.length > 0 ? (
-          <div className="space-y-1.5 mb-4">
-            {exercises.map((ex, i) => (
-              <div key={i} className="flex items-center justify-between px-3 py-2 rounded-xl"
-                style={{ background: 'rgba(255,255,255,0.04)' }}>
-                <div className="flex items-center gap-2">
-                  <span className="w-4 h-4 rounded-md flex items-center justify-center text-[9px] font-bold"
-                    style={{ background: 'rgba(200,224,0,0.12)', color: ACCENT_DARK }}>{i + 1}</span>
-                  <p className="text-xs font-medium" style={{ color: '#c8cac8' }}>{ex.name}</p>
-                </div>
-                <p className="text-[10px]" style={{ color: '#4a4f4a' }}>{ex.sets}×{ex.reps}</p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="px-3 py-3 rounded-xl mb-4" style={{ background: 'rgba(255,255,255,0.04)' }}>
-            <p className="text-xs" style={{ color: '#4a4f4a' }}>No exercises set for this day. Edit your split to add exercises.</p>
-          </div>
-        )}
-
-        {/* CTA */}
-        <motion.button whileTap={{ scale: 0.97 }}
-          onClick={() => navigate('/workout-session', {
-            state: {
-              workout: {
-                name: customDay?.type || 'Custom Workout',
-                exercises: exercises,
-                date: getTodayIso(),
-                source: 'custom_split',
-              },
-            },
-          })}
-          className="w-full py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2"
-          style={{ background: ACCENT, color: '#141613' }}>
-          <Play size={14} /> Start Workout
-        </motion.button>
-      </div>
-    </motion.div>
-  );
+  return <SplitNeedsBuildRow date={date} dateLabel={dateLabel} isToday={isToday} overviewDay={overviewDay} onBuild={onBuild} index={index} onEdit={onEdit} />;
 }
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -693,30 +609,59 @@ export default function Workouts() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState(null);
 
-  // Custom split
-  const [showCustomSplit, setShowCustomSplit] = useState(false);
-  const [customSplit, setCustomSplit] = useState(null);
-  const [showSplitSourcePicker, setShowSplitSourcePicker] = useState(false);
-  const [activeSplitSource, setActiveSplitSource] = useState('ai'); // 'ai' | 'custom'
+  // Per-day split editor (weekly template edits)
+  const [editingDay, setEditingDay] = useState(null); // { date, weekday, initial, hasOverride } | null
 
   const { isPremium } = useSubscription();
   const [showPremiumPaywall, setShowPremiumPaywall] = useState(false);
   const unitSystem = getUnitSystem();
 
-  // Load saved custom split from user profile on mount
+  // ── One-time migration: legacy custom split → template edits ──────────────
+  // Folds a saved `user.custom_split` into split_overrides on the active AI
+  // plan (existing editor edits win), then clears the legacy fields. Durable
+  // idempotency: custom_split is cleared ONLY after the plan update succeeds,
+  // so a failure simply re-runs the merge on a later mount.
+  const migrationAttempted = useRef(false);
   useEffect(() => {
-    backend.auth.me().then(user => {
-      if (user?.custom_split) {
-        try {
-          const parsed = JSON.parse(user.custom_split);
-          setCustomSplit(parsed);
-          if (user?.active_split_source) setActiveSplitSource(user.active_split_source);
-        } catch (_) {
-          // Ignore malformed saved split data.
-        }
+    if (!activePlan?.id || migrationAttempted.current) return;
+    migrationAttempted.current = true;
+    const plan = activePlan;
+    (async () => {
+      let user;
+      try { user = await backend.auth.me(); } catch { return; }
+      if (!user?.custom_split) return;
+      let parsed;
+      try { parsed = JSON.parse(user.custom_split); } catch { return; } // never clear on a parse bug
+      const migrated = {};
+      for (const day of parsed?.days || []) {
+        if (!day?.day || !day?.type) continue;
+        const isRest = day.type === 'Rest';
+        migrated[day.day] = {
+          day_type: isRest ? 'rest' : 'training',
+          label: day.type,
+          exercises: isRest ? [] : (day.exercises || [])
+            .filter(ex => String(ex?.name || '').trim())
+            .map(ex => ({ name: String(ex.name).trim(), sets: String(ex.sets ?? '3'), reps: String(ex.reps ?? '10') })),
+          edited_at: new Date().toISOString(),
+          origin: 'custom_split_migration',
+        };
       }
-    }).catch(() => {});
-  }, []);
+      try {
+        if (Object.keys(migrated).length > 0) {
+          const existing = plan.split_overrides || {};
+          const nextOverrides = { ...migrated, ...existing }; // editor edits win
+          const changedWeekdays = Object.keys(migrated).filter(k => !existing[k]);
+          const updated = await saveSplitOverrides({ masterPlan: plan, nextOverrides, changedWeekdays });
+          setActivePlan(updated);
+        }
+        // Durable marker — only after the plan row holds the overrides.
+        await backend.auth.updateMe({ custom_split: null, active_split_source: null });
+      } catch {
+        migrationAttempted.current = false; // retry on a later mount
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePlan?.id]);
 
   const [searchParams] = useSearchParams();
   const dateParam = searchParams.get('date');
@@ -943,6 +888,142 @@ export default function Workouts() {
     }
   };
 
+  // ── Split day editor: open + optimistic save ──────────────────────────────
+  const openDayEditor = (day) => {
+    const weekday = weekdayNameForDate(day.date);
+    const override = activePlan?.split_overrides?.[weekday] || null;
+    const initial = override
+      ? { label: override.label, day_type: override.day_type, exercises: override.exercises || [] }
+      : {
+          label: getPlanDaySessionTitle(day, day?.training_type || ''),
+          day_type: isNonTrainingDay(day) ? 'rest' : 'training',
+          exercises: (splitResults[day.date]?.workoutPlan?.exercises || [])
+            .map(ex => ({ name: ex.name, sets: ex.sets, reps: ex.reps })),
+        };
+    setEditingDay({ date: day.date, weekday, initial, hasOverride: !!override });
+  };
+
+  // Saves a weekly-template edit (`edit === null` = reset to AI). Optimistic:
+  // plan + split row + today state update read-free pre-await; rolled back with
+  // a destructive toast on failure. For exercises edits the real WorkoutPlan
+  // row is materialized right after (instant, no LLM) so Start has a real id.
+  const handleSplitDayEdit = async (edit) => {
+    const editing = editingDay;
+    if (!editing || !activePlan) return;
+    setEditingDay(null);
+
+    const { date, weekday } = editing;
+    const affectsToday = date === getTodayIso();
+
+    // Snapshots for rollback
+    const prevPlan = activePlan;
+    const prevSplit = splitResults;
+    const prevSplitCache = appCache.get('workouts-split');
+    const prevTodayCache = appCache.get('workouts-today');
+    const prevWorkout = workout;
+    const prevWorkoutStatus = workoutStatus;
+    const prevOverviewDay = overviewDay;
+
+    // Compute the next plan in-memory (mirrors what saveSplitOverride persists)
+    const nextOverrides = { ...(prevPlan.split_overrides || {}) };
+    if (edit) {
+      nextOverrides[weekday] = { ...edit, edited_at: new Date().toISOString(), origin: 'editor' };
+    } else {
+      delete nextOverrides[weekday];
+    }
+    const overview = prevPlan.weekly_overview || prevPlan.plan_payload?.weekly_overview || null;
+    const mirrored = applyOverridesToOverview(overview, nextOverrides);
+    const nextPlan = {
+      ...prevPlan,
+      split_overrides: nextOverrides,
+      weekly_overview: mirrored,
+      plan_payload: { ...(prevPlan.plan_payload || {}), weekly_overview: mirrored },
+    };
+    setActivePlan(nextPlan);
+    appCache.set('ai-plan:daily', nextPlan);
+
+    // Optimistic split row for the edited date
+    const mirroredDay = mirrored?.days?.find(d => d.date === date) || null;
+    let optimistic;
+    if (edit) {
+      if (edit.day_type === 'rest') {
+        optimistic = { status: 'rest_day', workoutPlan: null };
+      } else if (edit.exercises?.length > 0) {
+        optimistic = { status: 'ready', workoutPlan: buildWorkoutPlanPayloadFromOverride(edit, date, prevPlan) };
+      } else {
+        optimistic = { status: 'needs_generation', workoutPlan: null };
+      }
+    } else {
+      optimistic = isNonTrainingDay(mirroredDay)
+        ? { status: 'rest_day', workoutPlan: null }
+        : { status: 'needs_generation', workoutPlan: null };
+    }
+    const nextSplit = { ...prevSplit, [date]: optimistic };
+    setSplitResults(nextSplit);
+    appCache.set('workouts-split', { planId: prevPlan.id, results: nextSplit });
+
+    if (affectsToday) {
+      setWorkoutStatus(optimistic.status);
+      setWorkout(optimistic.workoutPlan);
+      setOverviewDay(mirroredDay);
+      appCache.set('workouts-today', {
+        activePlan: nextPlan,
+        workout: optimistic.workoutPlan,
+        workoutStatus: optimistic.status,
+        overviewDay: mirroredDay,
+      });
+    } else if (prevTodayCache) {
+      appCache.set('workouts-today', { ...prevTodayCache, activePlan: nextPlan });
+    }
+
+    try {
+      const updated = await saveSplitOverride({ masterPlan: prevPlan, weekday, override: edit });
+      setActivePlan(updated);
+
+      // Exercises edit → materialize the real row now (no LLM) so Start works.
+      if (edit && edit.day_type !== 'rest' && edit.exercises?.length > 0) {
+        const result = await getOrCreateWorkoutPlanForDate(date, { generate: true, masterPlan: updated }).catch(() => null);
+        if (result?.workoutPlan) {
+          setSplitResults(prev => {
+            const merged = { ...prev, [date]: { status: result.status, workoutPlan: result.workoutPlan } };
+            appCache.set('workouts-split', { planId: updated.id, results: merged });
+            return merged;
+          });
+          if (affectsToday) {
+            setWorkoutStatus(result.status);
+            setWorkout(result.workoutPlan);
+            setOverviewDay(result.overviewDay || mirroredDay);
+            appCache.set('workouts-today', {
+              activePlan: updated,
+              workout: result.workoutPlan,
+              workoutStatus: result.status,
+              overviewDay: result.overviewDay || mirroredDay,
+            });
+          }
+        }
+      }
+    } catch {
+      // Roll everything back
+      setActivePlan(prevPlan);
+      setSplitResults(prevSplit);
+      appCache.set('ai-plan:daily', prevPlan);
+      if (prevSplitCache) appCache.set('workouts-split', prevSplitCache);
+      else appCache.invalidate('workouts-split');
+      if (prevTodayCache) appCache.set('workouts-today', prevTodayCache);
+      else appCache.invalidate('workouts-today');
+      if (affectsToday) {
+        setWorkout(prevWorkout);
+        setWorkoutStatus(prevWorkoutStatus);
+        setOverviewDay(prevOverviewDay);
+      }
+      toast({
+        variant: 'destructive',
+        title: "Couldn't save your edit",
+        description: 'Your changes were rolled back. Please try again.',
+      });
+    }
+  };
+
   // ── Load split tab — rolling days from today forward ─────────────────────
   const activePlanId = activePlan?.id || null;
   useEffect(() => {
@@ -1044,14 +1125,6 @@ export default function Workouts() {
   const todayOverviewDay = overviewDays.find(d => d.date === targetDate) || overviewDay;
   const todayIsRestDay = workoutStatus === 'rest_day' || (activePlan && todayOverviewDay && isNonTrainingDay(todayOverviewDay));
 
-  // Custom split today: map JS day-of-week to the day name in the split
-  const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const todayDayName = DAY_NAMES[new Date().getDay()];
-  const customTodayDay = customSplit?.days?.find(d => d.day === todayDayName) || null;
-  const isUsingCustomSplit = activeSplitSource === 'custom' && customSplit?.days?.length > 0;
-
-  // console.log('[Workouts] weeklyOverview days', weeklyOverview?.days?.length, '| rolling', rollingDays?.length);
-
   return (
     <div className="min-h-screen" style={{ background: '#f6f2e8' }}>
       <AnimatePresence>
@@ -1065,102 +1138,15 @@ export default function Workouts() {
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {showCustomSplit && (
-          <CustomSplitSheet
-            existingSplit={customSplit || null}
-            onClose={() => setShowCustomSplit(false)}
-            onSave={(split) => {
-              setCustomSplit(split);
-              setActiveSplitSource('custom');
-              backend.auth.updateMe({ active_split_source: 'custom' }).catch(() => {});
-              setShowCustomSplit(false);
-            }}
+        {editingDay && (
+          <SplitDayEditorSheet
+            weekday={editingDay.weekday}
+            initial={editingDay.initial}
+            hasOverride={editingDay.hasOverride}
+            onClose={() => setEditingDay(null)}
+            onSave={handleSplitDayEdit}
+            onReset={() => handleSplitDayEdit(null)}
           />
-        )}
-      </AnimatePresence>
-
-      {/* Split source picker */}
-      <AnimatePresence>
-        {showSplitSourcePicker && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex flex-col justify-end"
-            style={{ background: 'rgba(20,22,19,0.55)', backdropFilter: 'blur(4px)' }}
-            onClick={() => setShowSplitSourcePicker(false)}
-          >
-            <motion.div
-              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="rounded-t-3xl p-5 space-y-3"
-              style={{ background: '#f6f2e8' }}
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex justify-center mb-1">
-                <div className="w-10 h-1 rounded-full" style={{ background: '#ddd6c8' }} />
-              </div>
-              <p className="text-base font-black tracking-tight" style={{ color: '#141613' }}>Which split to show?</p>
-              <p className="text-xs" style={{ color: '#91968e' }}>Choose which plan drives your weekly schedule.</p>
-
-              {/* AI Plan option */}
-              <button
-                onClick={() => {
-                  setActiveSplitSource('ai');
-                  backend.auth.updateMe({ active_split_source: 'ai' }).catch(() => {});
-                  setShowSplitSourcePicker(false);
-                }}
-                className="w-full flex items-center gap-4 p-4 rounded-2xl border text-left transition-all"
-                style={{
-                  background: activeSplitSource === 'ai' ? 'rgba(200,224,0,0.08)' : '#ffffff',
-                  borderColor: activeSplitSource === 'ai' ? 'rgba(200,224,0,0.45)' : '#e8e1d4',
-                }}
-              >
-                <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(200,224,0,0.12)' }}>
-                  <Sparkles size={18} style={{ color: ACCENT_DARK }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold" style={{ color: '#141613' }}>AI Plan</p>
-                  <p className="text-xs" style={{ color: '#91968e' }}>Your personalized AI-generated split</p>
-                </div>
-                {activeSplitSource === 'ai' && <Check size={16} style={{ color: ACCENT_DARK }} />}
-              </button>
-
-              {/* Custom split option */}
-              <button
-                onClick={() => {
-                  setActiveSplitSource('custom');
-                  backend.auth.updateMe({ active_split_source: 'custom' }).catch(() => {});
-                  setShowSplitSourcePicker(false);
-                }}
-                className="w-full flex items-center gap-4 p-4 rounded-2xl border text-left transition-all"
-                style={{
-                  background: activeSplitSource === 'custom' ? 'rgba(200,224,0,0.08)' : '#ffffff',
-                  borderColor: activeSplitSource === 'custom' ? 'rgba(200,224,0,0.45)' : '#e8e1d4',
-                }}
-              >
-                <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
-                  style={{ background: '#f2efe7' }}>
-                  <SlidersHorizontal size={18} style={{ color: '#5d635d' }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold" style={{ color: '#141613' }}>{customSplit?.name || 'My Custom Split'}</p>
-                  <p className="text-xs" style={{ color: '#91968e' }}>
-                    {(customSplit?.days || []).filter(d => d.type && d.type !== 'Rest').length} training days · manually built
-                  </p>
-                </div>
-                {activeSplitSource === 'custom' && <Check size={16} style={{ color: ACCENT_DARK }} />}
-              </button>
-
-              {/* Edit custom split */}
-              <button
-                onClick={() => { setShowSplitSourcePicker(false); setShowCustomSplit(true); }}
-                className="w-full py-3 rounded-2xl border text-sm font-semibold"
-                style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}
-              >
-                Edit custom split
-              </button>
-            </motion.div>
-          </motion.div>
         )}
       </AnimatePresence>
 
@@ -1198,88 +1184,63 @@ export default function Workouts() {
           {activeTab === 'today' && (
             <motion.div key="today" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }} className="space-y-4">
 
-              {/* Custom split — show today's custom workout */}
-              {isUsingCustomSplit && (
-                <CustomWorkoutTodayCard
-                  customDay={customTodayDay}
-                  splitName={customSplit?.name}
-                  onEditSplit={() => setShowCustomSplit(true)}
-                  navigate={navigate}
-                />
+              {/* No active plan at all */}
+              {!planLoading && workoutStatus !== 'loading' && workoutStatus !== 'idle' && !activePlan && (
+                <NoPlanState onGenerate={() => isPremium ? navigate('/plan?generate=true') : setShowPremiumPaywall(true)} />
               )}
 
-              {/* AI plan flow — only when not using custom split */}
-              {!isUsingCustomSplit && (
+              {/* Active plan exists — show relevant state */}
+              {workoutStatus === 'idle' && !activePlan && (
+                <div className="p-5 rounded-3xl border" style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
+                  <div className="h-4 w-24 rounded-full mb-3" style={{ background: '#f2efe7' }} />
+                  <div className="h-7 w-52 rounded-full mb-2" style={{ background: '#f2efe7' }} />
+                  <div className="h-3 w-40 rounded-full" style={{ background: '#f2efe7' }} />
+                </div>
+              )}
+
+              {workoutStatus !== 'loading' && workoutStatus !== 'idle' && activePlan && (
                 <>
-                  {/* No active plan at all */}
-                  {!planLoading && workoutStatus !== 'loading' && workoutStatus !== 'idle' && !activePlan && (
-                    <NoPlanState onGenerate={() => isPremium ? navigate('/plan?generate=true') : setShowPremiumPaywall(true)} />
+                  {workoutStatus === 'ready' && workout && (
+                    <WorkoutHeroCard
+                      workout={workout}
+                      generating={false}
+                      onGenerate={() => handleBuildWorkout()}
+                    />
                   )}
 
-                  {/* Active plan exists — show relevant state */}
-                  {workoutStatus === 'idle' && !activePlan && (
-                    <div className="p-5 rounded-3xl border" style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
-                      <div className="h-4 w-24 rounded-full mb-3" style={{ background: '#f2efe7' }} />
-                      <div className="h-7 w-52 rounded-full mb-2" style={{ background: '#f2efe7' }} />
-                      <div className="h-3 w-40 rounded-full" style={{ background: '#f2efe7' }} />
-                    </div>
+                  {(workoutStatus === 'needs_generation') && (
+                    <BuildWorkoutCard
+                      overviewDay={todayOverviewDay}
+                      onBuild={() => isPremium ? handleBuildWeekAhead() : setShowPremiumPaywall(true)}
+                      generating={generatingWorkout}
+                      error={generationError}
+                    />
                   )}
 
-                  {workoutStatus !== 'loading' && workoutStatus !== 'idle' && activePlan && (
-                    <>
-                      {workoutStatus === 'ready' && workout && (
-                        <WorkoutHeroCard
-                          workout={workout}
-                          generating={false}
-                          onGenerate={() => handleBuildWorkout()}
-                        />
-                      )}
+                  {(workoutStatus === 'rest_day' || todayIsRestDay) && workoutStatus !== 'needs_generation' && workoutStatus !== 'ready' && (
+                    <RestDayCard
+                      overviewDay={todayOverviewDay}
+                      onViewRecovery={() => navigate(`/recovery?date=${targetDate}&source=workouts`)}
+                    />
+                  )}
 
-                      {(workoutStatus === 'needs_generation') && (
-                        <BuildWorkoutCard
-                          overviewDay={todayOverviewDay}
-                          onBuild={() => isPremium ? handleBuildWeekAhead() : setShowPremiumPaywall(true)}
-                          generating={generatingWorkout}
-                          error={generationError}
-                        />
-                      )}
+                  {workoutStatus === 'no_plan' && (
+                    <BuildWorkoutCard
+                      overviewDay={todayOverviewDay}
+                      onBuild={() => handleBuildWorkout()}
+                      generating={generatingWorkout}
+                      error={generationError}
+                    />
+                  )}
 
-                      {(workoutStatus === 'rest_day' || todayIsRestDay) && workoutStatus !== 'needs_generation' && workoutStatus !== 'ready' && (
-                        <RestDayCard
-                          overviewDay={todayOverviewDay}
-                          onViewRecovery={() => navigate(`/recovery?date=${targetDate}&source=workouts`)}
-                        />
-                      )}
-
-                      {workoutStatus === 'no_plan' && (
-                        <BuildWorkoutCard
-                          overviewDay={todayOverviewDay}
-                          onBuild={() => handleBuildWorkout()}
-                          generating={generatingWorkout}
-                          error={generationError}
-                        />
-                      )}
-
-                      {(workoutStatus === 'needs_generation' || workoutStatus === 'no_plan') && !generatingWorkout && (
-                        <PlanSummaryCard
-                          planSummary={planSummary}
-                          trainingSplit={trainingSplit}
-                          onViewSplit={() => setActiveTab('split')}
-                        />
-                      )}
-                    </>
+                  {(workoutStatus === 'needs_generation' || workoutStatus === 'no_plan') && !generatingWorkout && (
+                    <PlanSummaryCard
+                      planSummary={planSummary}
+                      trainingSplit={trainingSplit}
+                      onViewSplit={() => setActiveTab('split')}
+                    />
                   )}
                 </>
-              )}
-
-              {/* Switch source hint */}
-              {isUsingCustomSplit && (
-                <button
-                  onClick={() => setShowSplitSourcePicker(true)}
-                  className="w-full py-2.5 rounded-2xl border text-xs font-semibold flex items-center justify-center gap-1.5"
-                  style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#91968e' }}>
-                  <SlidersHorizontal size={11} /> Switch to AI Plan
-                </button>
               )}
             </motion.div>
           )}
@@ -1298,84 +1259,17 @@ export default function Workouts() {
                   ))}
                 </div>
               ) : !activePlan ? (
-                <div className="space-y-4">
-                  <NoPlanState onGenerate={() => navigate('/plan?generate=true')} />
-                  <div className="text-center">
-                    <p className="text-xs mb-3" style={{ color: '#91968e' }}>Or build your own split manually</p>
-                    <button onClick={() => customSplit ? setShowSplitSourcePicker(true) : setShowCustomSplit(true)}
-                      className="flex items-center gap-2 px-5 py-3 rounded-2xl border text-sm font-semibold mx-auto"
-                      style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}>
-                      <SlidersHorizontal size={14} /> Customize Split
-                    </button>
-                  </div>
-                </div>
+                <NoPlanState onGenerate={() => navigate('/plan?generate=true')} />
               ) : !overviewDays.length ? (
                 <NoOverviewCard onRegenerate={() => navigate('/plan?generate=true')} />
               ) : (
                 <>
                   {/* Split header */}
-                  <div className="flex items-center justify-between px-1 mb-2">
-                    <p className="text-xs font-bold uppercase tracking-widest" style={{ color: '#91968e' }}>
-                      {activeSplitSource === 'custom' ? (customSplit?.name || 'My Custom Split') : 'AI Training Schedule'}
-                    </p>
-                    <button
-                      onClick={() => customSplit ? setShowSplitSourcePicker(true) : setShowCustomSplit(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold"
-                      style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}
-                    >
-                      <SlidersHorizontal size={11} /> Customize
-                    </button>
-                  </div>
+                  <p className="text-xs font-bold uppercase tracking-widest px-1 mb-2" style={{ color: '#91968e' }}>
+                    Weekly Schedule
+                  </p>
 
-                  {/* Custom split view */}
-                  {activeSplitSource === 'custom' && customSplit?.days?.length > 0 ? (
-                    <div className="space-y-2">
-                      {customSplit.days.map((day, i) => {
-                        const isRest = !day.type || day.type === 'Rest';
-                        const exCount = (day.exercises || []).length;
-                        return (
-                          <div key={i} className="rounded-2xl border overflow-hidden px-4 py-3.5"
-                            style={{ background: isRest ? '#f9f7f3' : '#ffffff', borderColor: isRest ? '#e8e1d4' : 'rgba(200,224,0,0.35)' }}>
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-xs font-black"
-                                style={{ background: isRest ? '#f2efe7' : 'rgba(200,224,0,0.15)', color: isRest ? '#91968e' : ACCENT_DARK }}>
-                                {day.day.slice(0, 2)}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-bold" style={{ color: '#141613' }}>{day.day}</p>
-                                <p className="text-xs" style={{ color: '#5d635d' }}>
-                                  {day.type || 'Rest'}
-                                  {!isRest && exCount > 0 ? ` · ${exCount} exercise${exCount !== 1 ? 's' : ''}` : ''}
-                                </p>
-                              </div>
-                              {!isRest && exCount > 0 && (
-                                <span className="text-[10px] font-semibold px-2 py-1 rounded-full" style={{ background: 'rgba(200,224,0,0.12)', color: ACCENT_DARK }}>
-                                  {exCount} ex
-                                </span>
-                              )}
-                            </div>
-                            {!isRest && (day.exercises || []).length > 0 && (
-                              <div className="mt-2.5 space-y-1.5 pl-12">
-                                {day.exercises.map((ex, ei) => (
-                                  <div key={ei} className="flex items-center justify-between">
-                                    <p className="text-xs font-medium" style={{ color: '#141613' }}>{ex.name}</p>
-                                    <p className="text-xs" style={{ color: '#91968e' }}>{ex.sets}×{ex.reps}</p>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      <button
-                        onClick={() => setShowCustomSplit(true)}
-                        className="w-full py-3 rounded-2xl border text-sm font-semibold flex items-center justify-center gap-2"
-                        style={{ background: '#ffffff', borderColor: '#e8e1d4', color: '#5d635d' }}
-                      >
-                        <SlidersHorizontal size={13} /> Edit split
-                      </button>
-                    </div>
-                  ) : rollingDays.length === 0 ? (
+                  {rollingDays.length === 0 ? (
                     <div className="p-5 rounded-2xl border text-center" style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
                       <p className="text-sm font-semibold mb-1" style={{ color: '#141613' }}>No upcoming training days found.</p>
                       <p className="text-xs" style={{ color: '#91968e' }}>Your plan continues from today. New future weeks can be generated later.</p>
@@ -1409,6 +1303,7 @@ export default function Workouts() {
                           index={i}
                           onBuild={handleBuildWorkout}
                           navigate={navigate}
+                          onEdit={() => openDayEditor(day)}
                         />
                       ))}
                     </>
