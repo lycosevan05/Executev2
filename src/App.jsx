@@ -26,12 +26,10 @@ import Meals from './pages/Meals';
 import Workouts from './pages/Workouts';
 import Recovery from './pages/Recovery';
 import Nutrition from './pages/Nutrition';
-import Onboarding from './pages/Onboarding';
 import LogFood from './pages/LogFood';
 import MyWeek from './pages/MyWeek';
 import WorkoutSession from './pages/WorkoutSession';
 import TrackingHistoryPage from './pages/TrackingHistoryPage';
-import PersonalizeQuestionnaire from './pages/PersonalizeQuestionnaire';
 import Billing from './pages/Billing';
 import Progress from './pages/Progress';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -311,12 +309,10 @@ const AuthenticatedApp = () => {
         <Route path="/workouts" element={<Workouts />} />
         <Route path="/recovery" element={<Recovery />} />
         <Route path="/nutrition" element={<PlanGuard><Nutrition /></PlanGuard>} />
-        <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/log-food" element={<LogFood />} />
         <Route path="/my-week" element={<MyWeek />} />
         <Route path="/workout-session" element={<WorkoutSession />} />
         <Route path="/tracking-history" element={<TrackingHistoryPage />} />
-        <Route path="/personalize" element={<PersonalizeQuestionnaire />} />
         <Route path="/billing" element={<Billing />} />
         <Route path="/progress" element={<Progress />} />
         <Route path="/privacy" element={<PrivacyPolicy />} />

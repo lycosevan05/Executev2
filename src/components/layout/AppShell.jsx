@@ -16,7 +16,7 @@ const navItems = [
 const APP_ROUTES = [
   '/home', '/plan', '/track', '/insights', '/goals', '/profile', '/meals',
   '/workouts', '/recovery', '/nutrition', '/customize', '/log-food', '/my-week',
-  '/tracking-history', '/personalize', '/onboarding', '/workout-session', '/progress', '/billing',
+  '/tracking-history', '/workout-session', '/progress', '/billing',
 ];
 
 function getTabRoot(pathname) {
