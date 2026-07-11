@@ -29,6 +29,7 @@ import LogModal from '@/components/track/LogModal';
 import { ALL_CATEGORIES } from '@/components/track/categories';
 import { loadCustomTrackers } from '@/lib/customTrackers';
 import { saveVitalLog, getDailyLogUpdatesForCategory } from '@/lib/vitalsLog';
+import { toast } from '@/components/ui/use-toast';
 
 const PAGE_KEY = 'home';
 const HOME_CACHE_KEY = 'home-dashboard';
@@ -358,13 +359,21 @@ export default function Home() {
     setActiveVital(null);
     if (!cat) return;
     // Instant optimistic merge from the in-memory dailyLog — zero reads, pre-await.
+    // Snapshot first so a failed write can roll back instead of showing a
+    // phantom "saved" value until the next authoritative reload.
+    const snapshot = dailyLog;
     const updates = getDailyLogUpdatesForCategory(cat.id, val, dailyLog);
     if (updates) setDailyLog(prev => ({ ...(prev || {}), ...updates }));
     // Authoritative write; the DailyLog subscription reconciles any drift.
     try {
       await saveVitalLog({ categoryId: cat.id, value: val });
     } catch {
-      // swallow; Home stays usable, next authoritative reload corrects it
+      if (updates) setDailyLog(snapshot);
+      toast({
+        variant: 'destructive',
+        title: `Couldn't save ${cat.label || 'log'}`,
+        description: 'Check your connection and try again.',
+      });
     }
   };
 

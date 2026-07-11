@@ -6,6 +6,7 @@ import { backend } from '@/api/backendClient';
 import { loadCustomTrackers, saveCustomTrackers } from '@/lib/customTrackers';
 import { getTodayISODate } from '@/lib/personalizationSync';
 import LogModal from '@/components/track/LogModal';
+import { toast } from '@/components/ui/use-toast';
 import { ALL_CATEGORIES, DEFAULT_ACTIVE, ACCENT, ACCENT_DARK } from '@/components/track/categories';
 import {
   loadActiveCanonicalMasterPlan,
@@ -278,6 +279,9 @@ export default function Track() {
   const handleSave = async (categoryId, value) => {
     setActiveModal(null);
 
+    // Snapshot the pre-save value so a failed write rolls back instead of
+    // leaving a phantom "saved" value on the card.
+    const prevValue = logged[categoryId];
     try {
       const res = await saveVitalLog({
         categoryId,
@@ -291,6 +295,13 @@ export default function Track() {
       if (res.nextPlanContext && !planContext) setPlanContext(res.nextPlanContext);
     } catch (err) {
       console.warn('[Track] Failed to save DailyLog update', err);
+      setLogged(prev => ({ ...prev, [categoryId]: prevValue }));
+      const cat = [...ALL_CATEGORIES, ...customCategories].find(c => c.id === categoryId);
+      toast({
+        variant: 'destructive',
+        title: `Couldn't save ${cat?.label || 'log'}`,
+        description: 'Check your connection and try again.',
+      });
     }
   };
 
