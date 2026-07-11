@@ -1,5 +1,5 @@
 import { handleCors, json } from '../_shared/cors.ts';
-import { createServiceClient, upsertRecordBy } from '../_shared/records.ts';
+import { createServiceClient } from '../_shared/records.ts';
 
 /**
  * revenuecatWebhook
@@ -67,13 +67,14 @@ async function upsertSubscription(userId: string, data: Record<string, unknown>)
     user_id: userId,
     updated_at: new Date().toISOString(),
   };
-  return upsertRecordBy(
-    service,
-    'user_subscriptions',
-    { user_id: userId },
-    payload,
-    userId,
-  );
+  // Atomic INSERT ... ON CONFLICT via RPC — the old read-then-write
+  // upsertRecordBy raced with stripeWebhook and could duplicate rows.
+  const { data, error } = await service.rpc('upsert_user_subscription', {
+    p_user_id: userId,
+    p_data: payload,
+  });
+  if (error) throw error;
+  return data;
 }
 
 /**
