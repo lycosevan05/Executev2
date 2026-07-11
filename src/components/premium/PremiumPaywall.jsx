@@ -37,7 +37,10 @@ const BENEFITS = [
   },
 ];
 
-export default function PremiumPaywall({ onClose, context = '' }) {
+// onSuccess (optional): called instead of onClose after a CONFIRMED purchase so
+// the caller can continue the action that hit the paywall (e.g. open the plan
+// questionnaire) instead of dropping the user back where they were.
+export default function PremiumPaywall({ onClose, onSuccess = null, context = '' }) {
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState('');
@@ -81,7 +84,7 @@ export default function PremiumPaywall({ onClose, context = '' }) {
       // iOS path resolves inline after StoreKit completes — refresh entitlement and close.
       if (result?.ok) {
         await refresh?.(true);
-        onClose?.();
+        (onSuccess || onClose)?.();
       }
     } catch (err) {
       setError(err?.message || 'Could not start checkout. Please try again.');

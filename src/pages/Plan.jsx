@@ -201,8 +201,10 @@ export default function Plan() {
   }, []);
 
   const openQuestionnaire = ({ isRefresh = false } = {}) => {
-    if (!isPremium) { setShowPremiumPaywall(true); return; }
+    // Record the intent before gating so a purchase completed from the paywall
+    // resumes the SAME flow (onSuccess below opens the questionnaire directly).
     setIsRefreshFlow(isRefresh);
+    if (!isPremium) { setShowPremiumPaywall(true); return; }
     setShowQuestionnaire(true);
   };
   const refreshPlan = () => openQuestionnaire({ isRefresh: true });
@@ -354,7 +356,7 @@ export default function Plan() {
 
   const handleStartToday = () => {
     if (activePlan) navigate('/workouts');
-    else setShowQuestionnaire(true);
+    else openQuestionnaire();
   };
 
   const hasPlan = Boolean(activePlan);
@@ -378,7 +380,11 @@ export default function Plan() {
       {/* ── Questionnaire overlay ── */}
       <AnimatePresence>
         {showPremiumPaywall && (
-          <PremiumPaywall onClose={() => setShowPremiumPaywall(false)} context="AI plan generation requires Execute Premium" />
+          <PremiumPaywall
+            onClose={() => setShowPremiumPaywall(false)}
+            onSuccess={() => { setShowPremiumPaywall(false); setShowQuestionnaire(true); }}
+            context="AI plan generation requires Execute Premium"
+          />
       )}
       {showQuestionnaire && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
