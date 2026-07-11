@@ -75,6 +75,9 @@ export default function PlanGeneratingOverlay() {
   }, []);
 
   const overallProgress = Math.min((elapsed / TOTAL_DURATION) * 100, 98);
+  // The scripted timeline has run out but generation is still in flight (LLM
+  // retries/backoff can take minutes). Be honest instead of freezing at 98%.
+  const stalled = elapsed >= TOTAL_DURATION;
   const estimatedSecondsLeft = Math.ceil((TOTAL_DURATION - elapsed) / 1000);
   const timeLabel = estimatedSecondsLeft > 60
     ? `~${Math.ceil(estimatedSecondsLeft / 60)} min left`
@@ -112,17 +115,28 @@ export default function PlanGeneratingOverlay() {
       <div className="w-full max-w-xs mb-2">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-bold" style={{ color: ACCENT_DARK }}>
-            {Math.round(overallProgress)}%
+            {stalled ? 'Finishing up' : `${Math.round(overallProgress)}%`}
           </span>
-          <span className="text-xs" style={{ color: '#91968e' }}>{timeLabel}</span>
+          <span className="text-xs" style={{ color: '#91968e' }}>
+            {stalled ? 'This can take a couple of minutes…' : timeLabel}
+          </span>
         </div>
         <div className="h-2 w-full rounded-full overflow-hidden" style={{ background: '#e8e1d4' }}>
-          <motion.div
-            className="h-full rounded-full"
-            style={{ background: `linear-gradient(90deg, ${ACCENT_DARK}, ${ACCENT})` }}
-            animate={{ width: `${overallProgress}%` }}
-            transition={{ duration: 0.3, ease: 'linear' }}
-          />
+          {stalled ? (
+            <motion.div
+              className="h-full rounded-full"
+              style={{ width: '40%', background: `linear-gradient(90deg, ${ACCENT_DARK}, ${ACCENT})` }}
+              animate={{ x: ['-100%', '250%'] }}
+              transition={{ repeat: Infinity, duration: 1.4, ease: 'easeInOut' }}
+            />
+          ) : (
+            <motion.div
+              className="h-full rounded-full"
+              style={{ background: `linear-gradient(90deg, ${ACCENT_DARK}, ${ACCENT})` }}
+              animate={{ width: `${overallProgress}%` }}
+              transition={{ duration: 0.3, ease: 'linear' }}
+            />
+          )}
         </div>
       </div>
 
@@ -174,7 +188,7 @@ export default function PlanGeneratingOverlay() {
                 >
                   {step.label}
                 </p>
-                {isActive && (
+                {isActive && !stalled && (
                   <div className="mt-1 h-0.5 w-full rounded-full overflow-hidden" style={{ background: '#e8e1d4' }}>
                     <motion.div
                       className="h-full rounded-full"
