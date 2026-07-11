@@ -178,6 +178,8 @@ function applyLimit(records, limit) {
   return records.slice(0, parsedLimit);
 }
 
+let _warnedPatchRecordFallback = false;
+
 function jsonPath(column) {
   return `data->>${column}`;
 }
@@ -276,6 +278,29 @@ class EntityClient {
 
   async update(id, updates = {}) {
     const client = requireSupabase();
+
+    // Fast path: single round-trip JSONB shallow merge via patch_record RPC
+    // (same top-level merge semantics as the legacy read-merge-write below).
+    const patch = { ...updates };
+    delete patch.id;
+    delete patch.created_date;
+    delete patch.updated_date;
+    const rpc = await client.rpc('patch_record', {
+      p_table: this.table,
+      p_id: id,
+      p_patch: patch,
+    });
+    if (!rpc.error) {
+      const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+      if (!row) throw toBackendError({ message: `update: no row ${id} in ${this.table}` }, 404);
+      return flattenRecord(row);
+    }
+    if (!_warnedPatchRecordFallback) {
+      _warnedPatchRecordFallback = true;
+      console.warn('[backendClient] patch_record RPC unavailable, falling back to read-merge-write:', rpc.error?.message);
+    }
+
+    // Legacy path: two round-trips (read, merge locally, write).
     const existing = await this.filter({ id }, null, 1);
     const nextData = { ...(existing?.[0] || {}), ...updates };
     delete nextData.id;
