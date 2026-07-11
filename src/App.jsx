@@ -288,11 +288,13 @@ const AuthenticatedApp = () => {
   if (authError) {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
-    } else if (authError.type === 'missing_config') {
-      return <AuthScreen missingConfig />;
-    } else if (authError.type === 'auth_required') {
-      return <AuthScreen />;
     }
+    if (authError.type === 'missing_config') {
+      return <AuthScreen missingConfig />;
+    }
+    // 'auth_required', 'unknown', and any future type: never fall through to
+    // the authenticated shell while an auth error is present.
+    return <AuthScreen />;
   }
 
   return (
