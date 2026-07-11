@@ -18,7 +18,7 @@ const BENEFITS = [
   {
     icon: Dumbbell,
     title: 'Personalized training',
-    desc: 'Training plans that adjust to your goals, progress, and recovery.',
+    desc: 'Training plans built around your goals — refine them anytime with your AI coach.',
   },
   {
     icon: UtensilsCrossed,
@@ -146,7 +146,7 @@ export default function PremiumPaywall({ onClose, onSuccess = null, context = ''
             </span>
           </div>
           <h2 className="text-xl font-black tracking-tight" style={{ color: '#ffffff', letterSpacing: '-0.02em' }}>
-            Your adaptive performance plan
+            Your personal performance plan
           </h2>
         </div>
 
