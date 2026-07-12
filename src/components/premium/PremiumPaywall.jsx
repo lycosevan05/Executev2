@@ -212,7 +212,7 @@ export default function PremiumPaywall({ onClose, onSuccess = null, context = ''
                 key={i}
                 initial={{ opacity: 0, x: -8 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.04 + i * 0.05 }}
+                transition={{ delay: 0.04 + Math.min(i, 6) * 0.05 }}
                 className="flex items-start gap-3"
               >
                 <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"

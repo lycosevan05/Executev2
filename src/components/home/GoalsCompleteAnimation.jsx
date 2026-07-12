@@ -95,7 +95,7 @@ export default function GoalsCompleteAnimation({ onDismiss }) {
               key={tag}
               initial={{ opacity: 0, scale: 0.7 }}
               animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.5 + i * 0.08 }}
+              transition={{ delay: 0.5 + Math.min(i, 6) * 0.08 }}
               className="px-3 py-1.5 rounded-full text-xs font-semibold"
               style={{ background: 'rgba(200,224,0,0.12)', color: '#8ea400' }}
             >

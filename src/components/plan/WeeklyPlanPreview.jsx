@@ -29,7 +29,7 @@ function DayCard({ day, name, duration, type, isToday, index }) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.05 + index * 0.05 }}
+      transition={{ delay: 0.05 + Math.min(index, 6) * 0.05 }}
       className="flex-shrink-0 flex flex-col items-center p-3.5 rounded-2xl"
       style={{
         background: '#ffffff',

@@ -152,7 +152,7 @@ export default function PlanGeneratingOverlay() {
               key={step.id}
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: isPending ? 0.35 : 1, x: 0 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ delay: Math.min(i, 6) * 0.05 }}
               className="flex items-center gap-3"
             >
               {/* Step indicator */}

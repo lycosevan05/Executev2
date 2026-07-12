@@ -594,7 +594,7 @@ Return 4 insights. Each insight needs:
                       key={`${ins.what}-${i}`}
                       initial={{ opacity: 0, x: -8 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.1 + i * 0.07 }}
+                      transition={{ delay: 0.1 + Math.min(i, 6) * 0.07 }}
                       className="p-4 rounded-xl border"
                       style={{ background: '#ffffff', borderColor: '#e8e1d4' }}
                     >
