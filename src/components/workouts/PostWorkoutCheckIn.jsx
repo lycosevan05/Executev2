@@ -170,7 +170,7 @@ export default function PostWorkoutCheckIn({ onDone, onBack }) {
         <motion.div className="h-full" style={{ background: ACCENT }} animate={{ width: `${((step + 1) / steps.length) * 100}%` }} transition={{ duration: 0.3 }} />
       </div>
 
-      <div className="flex-1 px-6 pt-10 pb-6 overflow-y-auto">
+      <div className="flex-1 px-6 pt-safe-header pb-6 overflow-y-auto">
         <p className="text-[10px] uppercase tracking-widest mb-6" style={{ color: '#4a4f4a' }}>Post-Workout Check-in · {step + 1}/{steps.length}</p>
 
         <AnimatePresence mode="wait">

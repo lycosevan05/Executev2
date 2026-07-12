@@ -43,7 +43,7 @@ export default function LogModal({ category, onClose, onSave, currentValue }) {
         className="w-full max-w-md mx-auto rounded-t-3xl flex flex-col"
         style={{
           background: '#fbf8f1',
-          maxHeight: '88vh',
+          maxHeight: '88dvh',
           boxShadow: '0 -8px 40px rgba(20,22,19,0.18)',
         }}
         onClick={e => e.stopPropagation()}

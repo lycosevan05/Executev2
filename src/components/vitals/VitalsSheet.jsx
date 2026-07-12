@@ -128,7 +128,7 @@ export default function VitalsSheet({ open, onClose, data, insights }) {
       >
         {/* Header */}
         <div
-          className="flex items-center justify-between px-5 pt-12 pb-4 flex-shrink-0"
+          className="flex items-center justify-between px-5 pt-safe-header pb-4 flex-shrink-0"
           style={{ background: 'rgba(251,248,241,0.97)', backdropFilter: 'blur(20px)', borderBottom: '1px solid #e8e1d4' }}
         >
           <div>

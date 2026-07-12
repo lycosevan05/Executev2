@@ -73,7 +73,7 @@ RULES:
       className="fixed inset-0 z-50 flex flex-col overflow-y-auto" style={{ background: '#0f1010' }}>
 
       {/* Header */}
-      <div className="px-6 pt-16 pb-6 text-center">
+      <div className="px-6 pt-safe-header pb-6 text-center">
         <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', damping: 14 }}
           className="w-20 h-20 rounded-full mx-auto mb-5 flex items-center justify-center"
           style={{ background: 'rgba(200,224,0,0.15)', border: '2px solid rgba(200,224,0,0.35)' }}>

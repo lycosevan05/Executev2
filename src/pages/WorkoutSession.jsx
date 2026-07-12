@@ -867,7 +867,7 @@ export default function WorkoutSession() {
       {!showSummary && (
         <>
           {/* TOP BAR */}
-          <div className="flex items-center gap-3 px-4 pt-14 pb-4 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-3 px-4 pt-safe-header pb-4 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <button onClick={() => navigate('/workouts')} aria-label="Close workout"
               className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(255,255,255,0.07)' }}>
               <X size={22} style={{ color: '#c4c9c0' }} />
