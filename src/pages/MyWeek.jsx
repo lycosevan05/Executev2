@@ -49,7 +49,7 @@ const PHASES = {
 
 function EmptyState() {
   return (
-    <div className="px-5 pt-10 pb-32 flex flex-col items-center text-center">
+    <div className="px-5 pt-10 pb-6 flex flex-col items-center text-center">
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
         <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6"
           style={{ background: 'rgba(200,224,0,0.1)', border: '1px solid rgba(200,224,0,0.2)' }}>
@@ -74,7 +74,7 @@ function EmptyState() {
 
 function PhaseLoader({ phase }) {
   return (
-    <div className="px-5 pt-16 pb-32 flex flex-col items-center text-center">
+    <div className="px-5 pt-16 pb-6 flex flex-col items-center text-center">
       <motion.div
         className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
         style={{ background: 'rgba(200,224,0,0.1)', border: '1px solid rgba(200,224,0,0.2)' }}
@@ -89,7 +89,7 @@ function PhaseLoader({ phase }) {
 
 function ErrorState({ onRetry }) {
   return (
-    <div className="px-5 pt-8 pb-32 flex flex-col items-center text-center">
+    <div className="px-5 pt-8 pb-6 flex flex-col items-center text-center">
       <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5" style={{ background: 'rgba(176,90,58,0.08)' }}>
         <AlertCircle size={22} style={{ color: '#b05a3a' }} />
       </div>
@@ -742,7 +742,7 @@ export default function MyWeek() {
               {/* ── TODAY TAB ── */}
               {activeTab === 'today' && (
                 <motion.div key="today" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  className="px-5 pb-32 pt-5 space-y-4">
+                  className="px-5 pb-6 pt-5 space-y-4">
                   {todayDay ? (
                     <>
                       <DayDetailCard
@@ -772,7 +772,7 @@ export default function MyWeek() {
               {/* ── THIS WEEK TAB ── */}
               {activeTab === 'week' && (
                 <motion.div key="week" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  className="px-5 pb-32 pt-5 space-y-5">
+                  className="px-5 pb-6 pt-5 space-y-5">
 
                   {/* Plan banner */}
                   <PlanReadyBanner plan={weeklyPlan} />

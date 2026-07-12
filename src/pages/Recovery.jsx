@@ -433,7 +433,7 @@ Use safety language always: "guidance", "recommendation", "consider consulting a
         </div>
       </div>
 
-      <div className="px-5 pb-32 pt-4">
+      <div className="px-5 pb-6 pt-4">
         {hydrating ? (
           <div className="flex justify-center py-20">
             <Loader2 size={20} className="animate-spin" style={{ color: '#8ea400' }} />

@@ -1177,7 +1177,7 @@ export default function Workouts() {
         </div>
       </div>
 
-      <div className="px-5 pb-32 pt-5">
+      <div className="px-5 pb-6 pt-5">
         <div>
 
           {/* ── TODAY TAB ── */}

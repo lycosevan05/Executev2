@@ -114,7 +114,7 @@ export default function TrackingHistoryPage() {
       </div>
 
       {/* Content */}
-      <div className="px-5 pt-5 pb-24 space-y-3">
+      <div className="px-5 pt-5 pb-6 space-y-3">
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <span className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"

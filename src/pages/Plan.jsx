@@ -427,7 +427,7 @@ export default function Plan() {
                 Close
               </button>
             </div>
-            <div className="px-5 pb-24 pt-5 space-y-4">
+            <div className="px-5 pb-6 pt-5 space-y-4">
               {!savedPlan ? (
                 <div className="flex flex-col items-center py-20 text-center">
                   <p className="text-base font-bold mb-2" style={{ color: '#141613' }}>No saved plan yet</p>

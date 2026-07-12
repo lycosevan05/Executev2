@@ -145,7 +145,7 @@ export default function Billing() {
         </div>
       </div>
 
-      <div className="px-5 pb-32 pt-5 space-y-4">
+      <div className="px-5 pb-6 pt-5 space-y-4">
 
         {loading ? (
           <div className="flex flex-col items-center py-20 gap-3">

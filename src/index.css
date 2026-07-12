@@ -247,6 +247,9 @@ html { scroll-behavior: auto; }
 .pt-safe { padding-top: max(1rem, env(safe-area-inset-top)); }
 .pt-safe-header { padding-top: max(3rem, calc(env(safe-area-inset-top) + 1rem)); }
 .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 8px); }
+/* Single source of truth for clearing the fixed bottom nav (pill ~70px + safe area).
+   Applied once on AppShell's <main>; pages should not re-pad for the nav. */
+.pb-nav-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 5rem); }
 
 /* Lock horizontal overscroll (kills swipe-back chaining) but keep the vertical
    rubber-band so the parchment background reveals natively on the window scroll. */

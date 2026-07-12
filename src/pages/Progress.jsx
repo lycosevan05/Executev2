@@ -414,7 +414,7 @@ export default function Progress() {
         </div>
       </div>
 
-      <div className="px-5 pb-36 pt-5 space-y-4">
+      <div className="px-5 pb-6 pt-5 space-y-4">
 
         {/* Empty state — no goals */}
         {goals.length === 0 && (

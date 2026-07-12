@@ -818,7 +818,7 @@ export default function Nutrition() {
         </div>
       </div>
 
-      <div className="px-5 pb-32 pt-4">
+      <div className="px-5 pb-6 pt-4">
         <div>
 
           {/* ── TODAY TAB ── */}

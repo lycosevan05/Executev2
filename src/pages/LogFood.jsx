@@ -461,7 +461,7 @@ export default function LogFood() {
         <p className="text-xs mt-0.5" style={{ color: '#91968e' }}>Track meals and see how today supports your goals.</p>
       </div>
 
-      <div className="px-4 pb-32 pt-4 max-w-xl mx-auto space-y-4">
+      <div className="px-4 pb-6 pt-4 max-w-xl mx-auto space-y-4">
 
         {/* 1. Date navigator */}
         <div className="rounded-2xl border px-3" style={{ background: '#ffffff', borderColor: '#e8e1d4' }}>
