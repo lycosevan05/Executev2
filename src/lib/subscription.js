@@ -49,6 +49,15 @@ export function bustSubscriptionCache() {
   _cacheTime = 0;
 }
 
+/**
+ * Synchronous peek at the last-known subscription row (ignores TTL). Powers the
+ * SWR seed in useSubscription and PlanGuard's cached-sub classification. Returns
+ * null after logout (bustSubscriptionCache) so it can't leak across a session.
+ */
+export function peekCachedSubscription() {
+  return _cachedSubscription;
+}
+
 // ─── Core check ───────────────────────────────────────────────────────────────
 
 /**

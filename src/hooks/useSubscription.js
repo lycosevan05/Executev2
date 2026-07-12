@@ -4,16 +4,20 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { loadUserSubscription, isPremiumUser, hasBillingIssue as checkBillingIssue } from '@/lib/subscription';
+import { loadUserSubscription, isPremiumUser, hasBillingIssue as checkBillingIssue, peekCachedSubscription } from '@/lib/subscription';
 import { useAuth } from '@/lib/AuthContext';
 
 export function useSubscription() {
   const { rcCustomerInfo } = useAuth();
-  const [subscription, setSubscription] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // SWR: seed from the module cache so a warm navigation renders the last-known
+  // state immediately and revalidates in the background — no loading flash.
+  const [subscription, setSubscription] = useState(() => peekCachedSubscription());
+  const [loading, setLoading] = useState(() => peekCachedSubscription() == null);
 
   const refresh = useCallback(async (force = true) => {
-    setLoading(true);
+    // Only show a loading state when we have nothing cached to paint; otherwise
+    // revalidate silently (stale-while-revalidate).
+    if (peekCachedSubscription() == null) setLoading(true);
     const sub = await loadUserSubscription(force);
     setSubscription(sub);
     setLoading(false);

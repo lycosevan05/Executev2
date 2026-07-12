@@ -14,6 +14,8 @@ import { useSubscription } from '@/hooks/useSubscription';
 import { useCacheHydrated } from '@/hooks/useCacheHydrated';
 import { appCache } from '@/lib/appCache';
 import { isGenerating } from '@/lib/planGenerationState';
+import { syncDecide, classifySubState } from '@/lib/planGuardDecision';
+import { peekCachedSubscription, isPremiumUser } from '@/lib/subscription';
 
 // Page imports
 import Home from './pages/Home';
@@ -205,23 +207,24 @@ function PlanGuard({ children }) {
   const cacheReady = useCacheHydrated();
   const location = useLocation();
 
-  const syncDecide = () => {
-    if (subLoading || !cacheReady) return 'checking';
-    // Not premium: paid-only gating doesn't apply here (questionnaire is
-    // premium-gated downstream). Don't block the screen.
-    if (!isPremium) return 'allow';
-    // A generation in flight — never bounce a user mid-build.
-    if (isGenerating()) return 'allow';
-    // Fast-path POSITIVE: cache already holds a plan.
-    const cachedPlan = appCache.get('ai-plan:daily') || appCache.get('plan-page')?.activePlan;
-    return cachedPlan ? 'allow' : 'confirm';
+  const decide = () => {
+    const hasCachedPlan = Boolean(appCache.get('ai-plan:daily') || appCache.get('plan-page')?.activePlan);
+    const subState = classifySubState(isPremium, peekCachedSubscription(), isPremiumUser);
+    return syncDecide({
+      subLoading,
+      cacheReady,
+      isPremium,
+      generating: isGenerating(),
+      hasCachedPlan,
+      subState,
+    });
   };
 
-  const [decision, setDecision] = useState(syncDecide);
+  const [decision, setDecision] = useState(decide);
 
   useEffect(() => {
     let cancelled = false;
-    const d = syncDecide();
+    const d = decide();
     if (d !== 'confirm') {
       setDecision(d);
       return;
