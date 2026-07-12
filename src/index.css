@@ -248,8 +248,9 @@ html { scroll-behavior: auto; }
 .pt-safe-header { padding-top: max(3rem, calc(env(safe-area-inset-top) + 1rem)); }
 .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 8px); }
 
-/* Disable overscroll deadspace */
-html, body { overscroll-behavior: none; }
+/* Lock horizontal overscroll (kills swipe-back chaining) but keep the vertical
+   rubber-band so the parchment background reveals natively on the window scroll. */
+html, body { overscroll-behavior-x: none; }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }

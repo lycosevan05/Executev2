@@ -28,11 +28,10 @@ export default function AppShell({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // scrollPositions[tabRoot] = scrollTop
+  // scrollPositions[tabRoot] = window.scrollY
   const scrollPositions = useRef({});
   // Per-tab history stacks: { [tabRoot]: string[] }
   const tabHistories = useRef({});
-  const mainRef = useRef(null);
   const prevTabRef = useRef(null);
   // Tracks the intended current path. Reconciled to the committed route after
   // every navigation (effect below) AND set optimistically inside handleTabPress
@@ -72,23 +71,28 @@ export default function AppShell({ children }) {
     return () => window.removeEventListener('execute:customize-mode', handleCustomizeChange);
   }, []);
 
-  // Save scroll position of outgoing tab, restore for incoming tab
+  // Save scroll position of outgoing tab, restore for incoming tab. The document
+  // (window) is the real scroller — <main> is never overflow-scrolled — so we
+  // read/write window.scrollY, not an element's scrollTop.
   useEffect(() => {
-    const el = mainRef.current;
-    if (!el) return;
-
     const prevTab = prevTabRef.current;
 
     // Save outgoing tab scroll
     if (prevTab && prevTab !== currentTab) {
-      scrollPositions.current[prevTab] = el.scrollTop;
+      scrollPositions.current[prevTab] = window.scrollY;
     }
 
     // Restore incoming tab scroll
     if (currentTab) {
       const saved = scrollPositions.current[currentTab] ?? 0;
-      // Use rAF to ensure DOM has painted before restoring
-      requestAnimationFrame(() => { el.scrollTop = saved; });
+      // rAF so the DOM has painted before restoring. Clamp to the current
+      // scrollable height: this restore now actually applies (main.scrollTop
+      // always read 0 before), and if content hasn't painted to full height yet
+      // an unclamped restore would land at the wrong offset.
+      requestAnimationFrame(() => {
+        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        window.scrollTo(0, Math.min(saved, maxScroll));
+      });
     }
 
     prevTabRef.current = currentTab;
@@ -125,8 +129,8 @@ export default function AppShell({ children }) {
         currentPathRef.current = path;
         navigate(path, { replace: true });
       } else {
-        // Already at root — scroll to top
-        if (mainRef.current) mainRef.current.scrollTop = 0;
+        // Already at root — scroll to top (window is the scroller)
+        window.scrollTo(0, 0);
         scrollPositions.current[path] = 0;
       }
     } else {
@@ -141,7 +145,7 @@ export default function AppShell({ children }) {
 
   return (
     <div className="min-h-screen font-inter flex flex-col max-w-md mx-auto relative" style={{ background: '#f6f2e8' }}>
-      <main ref={mainRef} className={`ios-scroll flex-1 ${hideNav ? '' : 'pb-20'}`}>
+      <main className={`ios-scroll flex-1 ${hideNav ? '' : 'pb-20'}`}>
         {children}
       </main>
 
