@@ -190,6 +190,19 @@ function canServerFilter(key, value) {
 
 async function currentSupabaseUser() {
   const client = requireSupabase();
+  // getSession() reads the persisted session from local storage (no
+  // /auth/v1/user network round-trip) and refreshes the token in the background
+  // when needed. Every subsequent data request still carries the JWT and is
+  // verified server-side under RLS, so a local read can't leak another user's
+  // data. Callers that need an authoritative server identity check use
+  // meServerValidated() instead.
+  const { data, error } = await client.auth.getSession();
+  if (error) throw toBackendError(error, 401);
+  return data?.session?.user || null;
+}
+
+async function serverValidatedSupabaseUser() {
+  const client = requireSupabase();
   const { data, error } = await client.auth.getUser();
   if (error) throw toBackendError(error, 401);
   return data?.user || null;
@@ -369,6 +382,14 @@ export const backend = {
   auth: {
     async me() {
       const user = await currentSupabaseUser();
+      if (!user) throw toBackendError({ message: 'Authentication required', status: 401 }, 401);
+      return normalizeUser(user);
+    },
+    // Server-validated identity (network /auth/v1/user round-trip). Reserved for
+    // the rare caller that must confirm the token against the auth server rather
+    // than trust the locally-persisted session (e.g. destructive account ops).
+    async meServerValidated() {
+      const user = await serverValidatedSupabaseUser();
       if (!user) throw toBackendError({ message: 'Authentication required', status: 401 }, 401);
       return normalizeUser(user);
     },

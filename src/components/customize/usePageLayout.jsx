@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { backend } from '@/api/backendClient';
+import { appCache } from '@/lib/appCache';
 import { getDefaultOrder } from './pageLayouts';
 
 // Simple in-memory cache to avoid redundant fetches
@@ -16,6 +17,22 @@ export function usePageLayout(pageKey) {
     let cancelled = false;
     async function load() {
       try {
+        // Cache-first: the active uid is available synchronously, so serve a warm
+        // layout without waiting on any auth/network round-trip. deactivate()
+        // nulls activeUid on logout (verified) so this can't serve user A's
+        // cached layout to user B after a shared-device switch.
+        const activeUid = appCache.getActiveUid();
+        if (activeUid) {
+          const warm = layoutCache[`${activeUid}_${pageKey}`];
+          if (warm) {
+            setWidgetOrder(warm.widgetOrder);
+            setHiddenWidgets(warm.hiddenWidgets);
+            setRecordId(warm.recordId);
+            setLoading(false);
+            return;
+          }
+        }
+
         const user = await backend.auth.me();
         if (!user || cancelled) return;
 

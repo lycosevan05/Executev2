@@ -16,7 +16,7 @@ import { usePageLayout } from '@/components/customize/usePageLayout';
 import { useVitalsLayout } from '@/components/home/useVitalsLayout';
 import VitalsRowWidget from '@/components/home/VitalsRowWidget';
 import VitalsPicker from '@/components/home/VitalsPicker';
-import { loadActiveAIPlan, userScopedFilter } from '@/lib/personalizationSync';
+import { loadActiveAIPlan, userScopedFilter, getCurrentUserEmail } from '@/lib/personalizationSync';
 import { mergeConsumedMax } from '@/lib/nutritionTotals';
 import { getOrCreateWorkoutPlanForDate } from '@/lib/plans/getOrCreateWorkoutPlanForDate';
 import { refreshDynamicReadiness } from '@/lib/readinessScore';
@@ -508,7 +508,7 @@ export default function Home() {
   // Live-sync DailyLog changes (workout completion, calorie updates, food logging) without full reload
   useEffect(() => {
     let currentUserEmail = '';
-    backend.auth.me().then(user => { currentUserEmail = user?.email || ''; }).catch(() => {});
+    getCurrentUserEmail().then(email => { currentUserEmail = email || ''; }).catch(() => {});
     const unsub = backend.entities.DailyLog.subscribe((event) => {
       if (event.type === 'update' || event.type === 'create') {
         const log = event.data;
@@ -527,7 +527,7 @@ export default function Home() {
   // Live-sync FoodLog changes so calorie and macro rings update immediately
   useEffect(() => {
     let currentUserEmail = '';
-    backend.auth.me().then(user => { currentUserEmail = user?.email || ''; }).catch(() => {});
+    getCurrentUserEmail().then(email => { currentUserEmail = email || ''; }).catch(() => {});
     const unsub = backend.entities.FoodLog.subscribe((event) => {
       const log = event.data;
       if (!log || log.date !== getTodayStr() || (currentUserEmail && log.created_by !== currentUserEmail)) return;
@@ -542,7 +542,7 @@ export default function Home() {
   // Also live-sync ReadinessCheckIn so home score updates after check-in
   useEffect(() => {
     let currentUserEmail = '';
-    backend.auth.me().then(user => { currentUserEmail = user?.email || ''; }).catch(() => {});
+    getCurrentUserEmail().then(email => { currentUserEmail = email || ''; }).catch(() => {});
     const unsub = backend.entities.ReadinessCheckIn.subscribe((event) => {
       if (event.type === 'update' || event.type === 'create') {
         const rec = event.data;
