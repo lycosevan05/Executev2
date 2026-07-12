@@ -106,7 +106,7 @@ export default function MealEditModal({ meal, mealType, mealPlanId, onClose, onS
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex flex-col"
+      className="fixed inset-0 z-[60] flex flex-col"
       style={{ background: '#f6f2e8' }}
     >
       {/* Header */}

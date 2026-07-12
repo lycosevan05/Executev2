@@ -765,7 +765,7 @@ export default function WorkoutSession() {
       <AnimatePresence>
         {showAddCustom && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-end justify-center"
+            className="fixed inset-0 z-[60] flex items-end justify-center"
             style={{ background: 'rgba(0,0,0,0.7)' }}
             onClick={() => setShowAddCustom(false)}>
             <motion.div

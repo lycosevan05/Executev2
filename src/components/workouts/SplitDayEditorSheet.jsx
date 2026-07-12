@@ -71,7 +71,7 @@ export default function SplitDayEditorSheet({ weekday, initial, hasOverride, onC
   return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[9999] flex flex-col justify-end"
+      className="fixed inset-0 z-[60] flex flex-col justify-end"
       style={{ background: 'rgba(20,22,19,0.55)', backdropFilter: 'blur(4px)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >

@@ -71,7 +71,7 @@ function ManageWidgetsSheet({ activeIds, onToggle, onClose, customCategories, on
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-end"
+      className="fixed inset-0 z-[60] flex items-end"
       style={{ background: 'rgba(20,22,19,0.45)' }}
       onClick={onClose}
     >

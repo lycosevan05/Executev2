@@ -164,7 +164,7 @@ export default function PostWorkoutCheckIn({ onDone, onBack }) {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex flex-col" style={{ background: '#0f1010' }}>
+      className="fixed inset-0 z-[60] flex flex-col" style={{ background: '#0f1010' }}>
       {/* Progress */}
       <div className="h-0.5 w-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
         <motion.div className="h-full" style={{ background: ACCENT }} animate={{ width: `${((step + 1) / steps.length) * 100}%` }} transition={{ duration: 0.3 }} />

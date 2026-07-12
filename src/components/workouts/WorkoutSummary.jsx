@@ -70,7 +70,7 @@ RULES:
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex flex-col overflow-y-auto" style={{ background: '#0f1010' }}>
+      className="fixed inset-0 z-[60] flex flex-col overflow-y-auto" style={{ background: '#0f1010' }}>
 
       {/* Header */}
       <div className="px-6 pt-safe-header pb-6 text-center">

@@ -34,7 +34,7 @@ export default function LogModal({ category, onClose, onSave, currentValue }) {
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 flex items-end"
-      style={{ background: 'rgba(20,22,19,0.5)', zIndex: 9999 }}
+      style={{ background: 'rgba(20,22,19,0.5)', zIndex: 60 }}
       onClick={onClose}
     >
       <motion.div

@@ -233,7 +233,7 @@ Return JSON:
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 9999,
+        zIndex: 70,
         display: 'flex',
         flexDirection: 'column',
         background: '#f6f2e8',

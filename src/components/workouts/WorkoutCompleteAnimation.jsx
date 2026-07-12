@@ -37,7 +37,7 @@ export default function WorkoutCompleteAnimation({ onDismiss, workoutName }) {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
       transition={{ type: 'spring', damping: 18, stiffness: 250 }}
-      className="fixed inset-0 z-50 flex items-center justify-center px-8"
+      className="fixed inset-0 z-[60] flex items-center justify-center px-8"
       style={{ background: 'rgba(20,22,19,0.6)', backdropFilter: 'blur(8px)' }}
       onClick={onDismiss}
     >

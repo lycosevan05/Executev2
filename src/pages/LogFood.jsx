@@ -346,10 +346,10 @@ export default function LogFood() {
   const dateStr = toDateStr(selectedDate);
 
   useEffect(() => {
-    const isCameraOverlayOpen = showPhotoLog || showBarcodeLog;
-    window.dispatchEvent(new CustomEvent('execute:blocking-overlay', { detail: { open: isCameraOverlayOpen } }));
+    const isOverlayOpen = showPhotoLog || showBarcodeLog || showAI || showManual;
+    window.dispatchEvent(new CustomEvent('execute:blocking-overlay', { detail: { open: isOverlayOpen } }));
     return () => window.dispatchEvent(new CustomEvent('execute:blocking-overlay', { detail: { open: false } }));
-  }, [showPhotoLog, showBarcodeLog]);
+  }, [showPhotoLog, showBarcodeLog, showAI, showManual]);
 
   // Load FoodLog records for the selected date from backend
   useEffect(() => {

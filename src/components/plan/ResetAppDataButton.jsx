@@ -82,7 +82,7 @@ export default function ResetAppDataButton() {
       <AnimatePresence>
         {showConfirm && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-end"
+            className="fixed inset-0 z-[60] flex items-end"
             style={{ background: 'rgba(20,22,19,0.4)' }}
             onClick={() => !resetting && setShowConfirm(false)}>
             <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
