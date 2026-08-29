@@ -1,0 +1,70 @@
+name: ExecuteNative
+options:
+  bundleIdPrefix: com.executelabs
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    TARGETED_DEVICE_FAMILY: "1"
+packages:
+  Supabase:
+    url: https://github.com/supabase/supabase-swift.git
+    from: "2.0.0"
+  RevenueCat:
+    url: https://github.com/RevenueCat/purchases-ios-spm.git
+    from: "5.0.0"
+targets:
+  ExecuteNative:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ExecuteNative
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.executelabs.execute.native-dev
+        INFOPLIST_FILE: ExecuteNative/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug:
+          base:
+            CODE_SIGN_STYLE: Automatic
+        Release:
+          base:
+            CODE_SIGN_STYLE: Automatic
+    configFiles:
+      Debug: Configuration/Debug.xcconfig
+      Release: Configuration/Release.xcconfig
+    dependencies:
+      - package: Supabase
+        product: Supabase
+      - package: RevenueCat
+        product: RevenueCat
+  ExecuteNativeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ExecuteNativeTests
+    dependencies:
+      - target: ExecuteNative
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.executelabs.execute.native-dev.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  ExecuteNative:
+    build:
+      targets:
+        ExecuteNative: all
+        ExecuteNativeTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - ExecuteNativeTests
