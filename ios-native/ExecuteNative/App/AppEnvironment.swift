@@ -1,5 +1,11 @@
 import Foundation
+import OSLog
 import Supabase
+
+private let environmentStartupLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.executelabs.execute.native-dev",
+    category: "Startup"
+)
 
 @MainActor
 final class AppEnvironment: ObservableObject {
@@ -51,7 +57,13 @@ final class AppEnvironment: ObservableObject {
         let router = AppRouter()
         do {
             let configuration = try AppConfiguration.load()
+#if DEBUG
+            environmentStartupLogger.debug("[Startup] Configuration loaded")
+#endif
             let client = SupabaseClient(supabaseURL: configuration.supabaseURL, supabaseKey: configuration.supabaseAnonKey)
+#if DEBUG
+            environmentStartupLogger.debug("[Startup] Supabase initialized")
+#endif
             let authService = SupabaseAuthService(client: client, configuration: configuration)
             let subscriptionService = RevenueCatSubscriptionService(configuration: configuration)
             return AppEnvironment(

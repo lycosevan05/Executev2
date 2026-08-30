@@ -67,7 +67,16 @@ final class RevenueCatSubscriptionService: SubscriptionServicing {
 @MainActor
 final class MockSubscriptionService: SubscriptionServicing {
     var state = PremiumState.free
-    func configure(appUserID: String) async throws {}
+    var configureError: AppError?
+
+    init(state: PremiumState = .free, configureError: AppError? = nil) {
+        self.state = state
+        self.configureError = configureError
+    }
+
+    func configure(appUserID: String) async throws {
+        if let configureError { throw configureError }
+    }
     func currentPremiumState() async throws -> PremiumState { state }
     func restorePurchases() async throws -> PremiumState { state }
 }

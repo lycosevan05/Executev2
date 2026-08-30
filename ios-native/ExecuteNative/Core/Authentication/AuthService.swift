@@ -12,7 +12,7 @@ enum OAuthProvider: String, CaseIterable, Sendable {
 }
 
 @MainActor
-protocol AuthServicing: AnyObject {
+protocol AuthServicing: AnyObject, Sendable {
     func restoreSession() async throws -> ExecuteUser?
     func sendEmailOTP(to email: String) async throws
     func verifyEmailOTP(email: String, token: String) async throws -> ExecuteUser

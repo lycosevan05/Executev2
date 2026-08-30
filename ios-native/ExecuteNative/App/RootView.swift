@@ -4,8 +4,16 @@ struct RootView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
     var body: some View {
+        StartupRootView(appState: environment.appState)
+    }
+}
+
+private struct StartupRootView: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
         Group {
-            switch environment.appState.launchState {
+            switch appState.launchState {
             case .launching:
                 ExecuteLoadingView()
             case .needsConfiguration(let error):
@@ -16,12 +24,12 @@ struct RootView: View {
                 AppShellView()
             case .failed(let error):
                 ExecuteErrorState(error: error) {
-                    Task { await environment.appState.retryStartup() }
+                    Task { await appState.retryStartup() }
                 }
                 .executeScreen()
             }
         }
-        .task { await environment.appState.start() }
+        .task { await appState.start() }
     }
 }
 

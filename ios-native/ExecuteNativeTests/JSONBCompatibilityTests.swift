@@ -47,3 +47,73 @@ final class NavigationTests: XCTestCase {
         XCTAssertTrue(router.pathBinding(for: .home).wrappedValue.isEmpty)
     }
 }
+
+@MainActor
+final class StartupStateTests: XCTestCase {
+    func testNoSessionTransitionsToSignedOut() async {
+        let state = makeState(authService: MockAuthService())
+
+        await state.start()
+
+        XCTAssertEqual(state.launchState, .signedOut)
+    }
+
+    func testValidSessionTransitionsToSignedInWhenRevenueCatFails() async {
+        let user = ExecuteUser(id: UUID(), email: "member@example.com", displayName: "Member")
+        let subscriptionError = AppError(title: "RevenueCat unavailable", message: "Offline")
+        let state = makeState(
+            authService: MockAuthService(restoredUser: user),
+            subscriptionService: MockSubscriptionService(configureError: subscriptionError)
+        )
+
+        await state.start()
+
+        XCTAssertEqual(state.launchState, .signedIn(user))
+    }
+
+    func testSessionFailureTransitionsToRecoverableFailure() async {
+        let authError = AppError(title: "Auth unavailable", message: "Session storage failed")
+        let state = makeState(authService: MockAuthService(restoreError: authError))
+
+        await state.start()
+
+        XCTAssertEqual(state.launchState, .failed(authError))
+    }
+
+    func testSessionTimeoutDoesNotRemainLaunching() async {
+        let authService = MockAuthService(restoreDelayNanoseconds: 1_000_000_000)
+        let state = makeState(authService: authService, timeoutNanoseconds: 1_000_000)
+
+        await state.start()
+
+        guard case .failed(let error) = state.launchState else {
+            return XCTFail("Expected a recoverable startup failure")
+        }
+        XCTAssertEqual(error.title, "Session restoration timed out")
+    }
+
+    func testConfigurationFailureTransitionsToConfigurationScreen() async {
+        let configurationError = AppError(title: "Configuration needed", message: "Missing URL")
+        let state = makeState(authService: MockAuthService(), configurationError: configurationError)
+
+        await state.start()
+
+        XCTAssertEqual(state.launchState, .needsConfiguration(configurationError))
+    }
+
+    private func makeState(
+        authService: AuthServicing,
+        subscriptionService: SubscriptionServicing = MockSubscriptionService(),
+        configurationError: AppError? = nil,
+        timeoutNanoseconds: UInt64 = 100_000_000
+    ) -> AppState {
+        AppState(
+            authService: authService,
+            cache: UserScopedCacheStore(),
+            router: AppRouter(),
+            subscriptionService: subscriptionService,
+            configurationError: configurationError,
+            sessionRestoreTimeoutNanoseconds: timeoutNanoseconds
+        )
+    }
+}

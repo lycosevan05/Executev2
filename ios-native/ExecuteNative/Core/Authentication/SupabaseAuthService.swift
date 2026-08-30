@@ -12,8 +12,12 @@ final class SupabaseAuthService: AuthServicing {
     }
 
     func restoreSession() async throws -> ExecuteUser? {
-        guard let session = try? await client.auth.session else { return nil }
-        return Self.user(from: session.user)
+        do {
+            let session = try await client.auth.session
+            return Self.user(from: session.user)
+        } catch AuthError.sessionMissing {
+            return nil
+        }
     }
 
     func sendEmailOTP(to email: String) async throws {

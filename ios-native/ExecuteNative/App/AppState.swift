@@ -1,4 +1,10 @@
 import SwiftUI
+import OSLog
+
+private let startupLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.executelabs.execute.native-dev",
+    category: "Startup"
+)
 
 enum AppLaunchState: Equatable {
     case launching
@@ -18,37 +24,60 @@ final class AppState: ObservableObject {
     let router: AppRouter
     private let subscriptionService: SubscriptionServicing
     private let configurationError: AppError?
+    private let sessionRestoreTimeoutNanoseconds: UInt64
     private var didStart = false
+    private var subscriptionRefreshTask: Task<Void, Never>?
 
     init(
         authService: AuthServicing,
         cache: UserScopedCacheStore,
         router: AppRouter,
         subscriptionService: SubscriptionServicing,
-        configurationError: AppError?
+        configurationError: AppError?,
+        sessionRestoreTimeoutNanoseconds: UInt64 = 10_000_000_000
     ) {
         self.authService = authService
         self.cache = cache
         self.router = router
         self.subscriptionService = subscriptionService
         self.configurationError = configurationError
+        self.sessionRestoreTimeoutNanoseconds = sessionRestoreTimeoutNanoseconds
     }
 
     func start() async {
         guard !didStart else { return }
         didStart = true
+#if DEBUG
+        startupLogger.debug("[Startup] Bootstrap started")
+#endif
         if let configurationError {
             launchState = .needsConfiguration(configurationError)
+#if DEBUG
+            startupLogger.error("[Startup] Configuration validation failed")
+#endif
             return
         }
         do {
-            if let user = try await authService.restoreSession() {
+#if DEBUG
+            startupLogger.debug("[Startup] Restoring Supabase session")
+#endif
+            if let user = try await restoreSessionWithTimeout() {
+#if DEBUG
+                startupLogger.debug("[Startup] Session result: authenticated")
+#endif
                 await activate(user)
             } else {
                 launchState = .signedOut
+#if DEBUG
+                startupLogger.debug("[Startup] Session result: none")
+                startupLogger.debug("[Startup] Startup complete")
+#endif
             }
         } catch {
             launchState = .failed(AppError.from(error, title: "Could not restore your session"))
+#if DEBUG
+            startupLogger.error("[Startup] Session restoration failed")
+#endif
         }
     }
 
@@ -83,6 +112,7 @@ final class AppState: ObservableObject {
 
     func signOut() async {
         do {
+            subscriptionRefreshTask?.cancel()
             try await authService.signOut()
             await cache.deactivate()
             premiumState = .free
@@ -100,13 +130,58 @@ final class AppState: ObservableObject {
 
     private func activate(_ user: ExecuteUser) async {
         await cache.activate(userID: user.id)
-        do {
-            // RevenueCat identity deliberately stays email-based to match the existing webhook contract.
-            try await subscriptionService.configure(appUserID: user.email)
-            premiumState = (try? await subscriptionService.currentPremiumState()) ?? .free
-        } catch {
-            premiumState = .free
-        }
+#if DEBUG
+        startupLogger.debug("[Startup] User cache activated")
+#endif
+
+        // Authentication is sufficient to open the app. RevenueCat is optional startup work.
         launchState = .signedIn(user)
+#if DEBUG
+        startupLogger.debug("[Startup] Startup complete")
+#endif
+
+        subscriptionRefreshTask?.cancel()
+        subscriptionRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                // Email identity preserves the existing RevenueCat webhook contract.
+                try await subscriptionService.configure(appUserID: user.email)
+                guard !Task.isCancelled else { return }
+                premiumState = try await subscriptionService.currentPremiumState()
+#if DEBUG
+                startupLogger.debug("[Startup] RevenueCat initialized")
+#endif
+            } catch {
+                guard !Task.isCancelled else { return }
+                premiumState = .free
+#if DEBUG
+                startupLogger.error("[Startup] RevenueCat unavailable; continuing with server state")
+#endif
+            }
+        }
+    }
+
+    private func restoreSessionWithTimeout() async throws -> ExecuteUser? {
+        let authService = authService
+        let timeout = sessionRestoreTimeoutNanoseconds
+
+        return try await withThrowingTaskGroup(of: ExecuteUser?.self) { group in
+            group.addTask {
+                try await authService.restoreSession()
+            }
+            group.addTask {
+                try await Task<Never, Never>.sleep(nanoseconds: timeout)
+                throw AppError(
+                    title: "Session restoration timed out",
+                    message: "Execute could not finish restoring your session. Check your connection and try again."
+                )
+            }
+
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else {
+                throw AppError(title: "Startup failed", message: "Session restoration ended unexpectedly.")
+            }
+            return result
+        }
     }
 }
