@@ -1,5 +1,11 @@
 import Foundation
+import OSLog
 import SwiftUI
+
+private let navigationLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.executelabs.execute.native-dev",
+    category: "Navigation"
+)
 
 enum AppTab: String, CaseIterable, Hashable, Identifiable {
     case home
@@ -66,6 +72,9 @@ final class AppRouter: ObservableObject {
     @Published private(set) var scrollAnchors: [AppTab: String] = [:]
 
     func select(_ tab: AppTab) {
+#if DEBUG
+        navigationLogger.debug("[Navigation] Selected tab: \(self.selectedTab.rawValue, privacy: .public) -> \(tab.rawValue, privacy: .public)")
+#endif
         if selectedTab == tab {
             paths[tab] = []
             scrollAnchors[tab] = nil

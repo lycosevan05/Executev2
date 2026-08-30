@@ -39,12 +39,40 @@ final class JSONBCompatibilityTests: XCTestCase {
 
 @MainActor
 final class NavigationTests: XCTestCase {
+    func testSelectingEachTabUpdatesSelectedTab() {
+        let router = AppRouter()
+
+        for tab in AppTab.allCases {
+            router.select(tab)
+            XCTAssertEqual(router.selectedTab, tab)
+        }
+    }
+
     func testSelectingActiveTabResetsItsPath() {
         let router = AppRouter()
         let binding = router.pathBinding(for: .home)
         binding.wrappedValue = [.goals]
         router.select(.home)
         XCTAssertTrue(router.pathBinding(for: .home).wrappedValue.isEmpty)
+    }
+
+    func testTabPathsRemainIndependent() {
+        let router = AppRouter()
+        router.pathBinding(for: .home).wrappedValue = [.goals]
+        router.pathBinding(for: .track).wrappedValue = [.trackingHistory]
+
+        router.select(.nutrition)
+
+        XCTAssertEqual(router.pathBinding(for: .home).wrappedValue, [.goals])
+        XCTAssertEqual(router.pathBinding(for: .track).wrappedValue, [.trackingHistory])
+
+        router.select(.home)
+        XCTAssertEqual(router.pathBinding(for: .home).wrappedValue, [.goals])
+
+        router.select(.home)
+
+        XCTAssertTrue(router.pathBinding(for: .home).wrappedValue.isEmpty)
+        XCTAssertEqual(router.pathBinding(for: .track).wrappedValue, [.trackingHistory])
     }
 }
 

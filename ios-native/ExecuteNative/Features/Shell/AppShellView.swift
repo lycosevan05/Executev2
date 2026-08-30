@@ -4,10 +4,19 @@ struct AppShellView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
     var body: some View {
+        AppShellContentView(router: environment.router)
+    }
+}
+
+private struct AppShellContentView: View {
+    @ObservedObject var router: AppRouter
+    @EnvironmentObject private var environment: AppEnvironment
+
+    var body: some View {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if environment.router.isBottomBarVisible {
-                    ExecuteTabBar(selectedTab: environment.router.selectedTab) { environment.router.select($0) }
+                if router.isBottomBarVisible {
+                    ExecuteTabBar(selectedTab: router.selectedTab) { router.select($0) }
                         .padding(.horizontal, ExecuteSpacing.md)
                         .padding(.top, ExecuteSpacing.xs)
                         .padding(.bottom, ExecuteSpacing.xs)
@@ -16,17 +25,17 @@ struct AppShellView: View {
             }
             .fullScreenCover(
                 isPresented: Binding(
-                    get: { environment.router.fullScreenRoute != nil },
-                    set: { if !$0 { environment.router.dismissFullScreenRoute() } }
+                    get: { router.fullScreenRoute != nil },
+                    set: { if !$0 { router.dismissFullScreenRoute() } }
                 )
             ) {
-                WorkoutSessionPlaceholder(onDismiss: environment.router.dismissFullScreenRoute)
+                WorkoutSessionPlaceholder(onDismiss: router.dismissFullScreenRoute)
             }
     }
 
     @ViewBuilder
     private var content: some View {
-        switch environment.router.selectedTab {
+        switch router.selectedTab {
         case .home: tabStack(for: .home)
         case .workouts: tabStack(for: .workouts)
         case .track: tabStack(for: .track)
@@ -36,7 +45,7 @@ struct AppShellView: View {
     }
 
     private func tabStack(for tab: AppTab) -> some View {
-        NavigationStack(path: environment.router.pathBinding(for: tab)) {
+        NavigationStack(path: router.pathBinding(for: tab)) {
             TabPlaceholderView(tab: tab)
                 .navigationDestination(for: AppRoute.self) { route in
                     RoutePlaceholderView(route: route)
