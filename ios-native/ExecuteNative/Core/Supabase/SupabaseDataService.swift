@@ -32,6 +32,7 @@ private struct PatchRecordParameters: Encodable {
     }
 }
 
+@MainActor
 protocol EntityDataServicing {
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>]
     func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload>
@@ -39,6 +40,7 @@ protocol EntityDataServicing {
     func delete(_ table: EntityTable, id: UUID) async throws
 }
 
+@MainActor
 final class SupabaseDataService: EntityDataServicing {
     private let client: SupabaseClient
 

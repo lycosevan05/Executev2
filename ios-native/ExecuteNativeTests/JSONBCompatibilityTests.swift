@@ -77,6 +77,79 @@ final class NavigationTests: XCTestCase {
 }
 
 @MainActor
+final class HomeLogicTests: XCTestCase {
+    func testManualCalorieTargetOverridesPlanTarget() {
+        let nutritionProfile = HomeNutritionProfile(
+            calorieTarget: 2_100,
+            calorieTargetSource: "manual",
+            proteinTargetG: nil,
+            carbsTargetG: nil,
+            fatsTargetG: nil
+        )
+        let plan = HomeAIPlan(
+            planType: "daily",
+            status: "active",
+            source: nil,
+            generationBatchID: nil,
+            planPayload: nil,
+            weeklyOverview: nil,
+            nutritionTargets: HomeNutritionTargets(calories: 2_500, proteinG: nil, carbsG: nil, fatG: nil, fatsG: nil),
+            planSummary: nil
+        )
+
+        XCTAssertEqual(HomeCalculations.calorieTarget(nutritionProfile: nutritionProfile, activePlan: plan), 2_100)
+    }
+
+    func testFoodLogTotalsNeverLowerExistingDailyLogValues() {
+        let dailyLog = HomeDailyLog(
+            date: "2026-08-30",
+            caloriesConsumed: 1_200,
+            caloriesBurned: nil,
+            proteinConsumedG: 110,
+            carbsConsumedG: 90,
+            fatsConsumedG: 40,
+            waterLiters: nil,
+            sleepHours: nil,
+            steps: nil,
+            mood: nil,
+            energy: nil,
+            workoutDurationMinutes: nil,
+            weightKg: nil,
+            plannedWorkoutID: nil,
+            plannedMealPlanID: nil,
+            checklistItems: nil,
+            plannedChecklistItems: nil,
+            planItemsCompleted: nil
+        )
+        let foodLogs = [HomeFoodLog(date: "2026-08-30", totalCalories: 900, totalProteinG: 70, totalCarbsG: 120, totalFatsG: 25)]
+
+        let merged = HomeCalculations.mergeFoodTotals(into: dailyLog, foodLogs: foodLogs, date: "2026-08-30")
+
+        XCTAssertEqual(merged.caloriesConsumed, 1_200)
+        XCTAssertEqual(merged.proteinConsumedG, 110)
+        XCTAssertEqual(merged.carbsConsumedG, 120)
+        XCTAssertEqual(merged.fatsConsumedG, 40)
+    }
+
+    func testDecreasingGoalProgressUsesStartValue() {
+        let goal = HomeGoal(status: "active", currentValue: 90, targetValue: 70, startValue: 110, targetDirection: "decrease")
+        XCTAssertEqual(HomeCalculations.goalProgress(goal), 0.5, accuracy: 0.0001)
+    }
+
+    func testWidgetVisibilityAndOrderRemainUserManaged() {
+        let model = HomeViewModel.preview()
+        model.setWidget(.calorieBalance, isVisible: false)
+
+        XCTAssertFalse(model.visibleWidgets.contains(.calorieBalance))
+
+        model.setWidget(.calorieBalance, isVisible: true)
+        model.moveWidgets(from: IndexSet(integer: model.widgetOrder.count - 1), to: 0)
+
+        XCTAssertEqual(model.visibleWidgets.first, .calorieBalance)
+    }
+}
+
+@MainActor
 final class StartupStateTests: XCTestCase {
     func testNoSessionTransitionsToSignedOut() async {
         let state = makeState(authService: MockAuthService())

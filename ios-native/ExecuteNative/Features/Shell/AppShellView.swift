@@ -46,10 +46,16 @@ private struct AppShellContentView: View {
 
     private func tabStack(for tab: AppTab) -> some View {
         NavigationStack(path: router.pathBinding(for: tab)) {
-            TabPlaceholderView(tab: tab)
-                .navigationDestination(for: AppRoute.self) { route in
-                    RoutePlaceholderView(route: route)
+            Group {
+                if tab == .home {
+                    HomeView()
+                } else {
+                    TabPlaceholderView(tab: tab)
                 }
+            }
+            .navigationDestination(for: AppRoute.self) { route in
+                RoutePlaceholderView(route: route)
+            }
         }
     }
 }

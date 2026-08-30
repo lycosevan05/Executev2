@@ -13,6 +13,7 @@ struct RealtimeChange: Sendable {
     let row: BackendRow?
 }
 
+@MainActor
 struct RealtimeSubscription {
     private let cancellation: () async -> Void
 

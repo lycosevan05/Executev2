@@ -24,7 +24,7 @@ struct CacheEnvelope: Codable, Sendable {
     }
 }
 
-enum CacheRead<Value> {
+enum CacheRead<Value: Sendable>: Sendable {
     case missing
     case fresh(Value)
     case stale(Value)
@@ -55,7 +55,7 @@ actor UserScopedCacheStore {
         activeUserID = nil
     }
 
-    func read<Value: Decodable>(_ key: CacheKey, as type: Value.Type) -> CacheRead<Value> {
+    func read<Value: Decodable & Sendable>(_ key: CacheKey, as type: Value.Type) -> CacheRead<Value> {
         guard let envelope = envelope(for: key), let value = try? decoder.decode(Value.self, from: envelope.data) else {
             return .missing
         }
