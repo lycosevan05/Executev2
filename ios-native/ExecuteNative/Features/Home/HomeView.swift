@@ -58,8 +58,8 @@ struct HomeDashboardView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, ExecuteSpacing.md)
+            .padding(.horizontal, 16)
+            .padding(.top, ExecuteSpacing.sm)
             .padding(.bottom, ExecuteSpacing.xl)
         }
         .scrollIndicators(.hidden)
@@ -95,19 +95,21 @@ struct HomeDashboardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: ExecuteSpacing.sm) {
+        HStack(alignment: .top, spacing: ExecuteSpacing.sm) {
             Text("\(model.greeting), \(model.userName)")
-                .font(ExecuteTypography.display(20))
+                .font(ExecuteTypography.display(31))
                 .foregroundStyle(ExecuteColor.charcoal)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Spacer(minLength: 4)
-            HomeHeaderButton(symbol: "chart.line.uptrend.xyaxis", label: "Progress", action: model.openProgress)
-            HomeHeaderButton(symbol: "slider.horizontal.3", label: "Customize Home", isActive: isCustomizationPresented) { isCustomizationPresented = true }
-            HomeHeaderButton(symbol: "person", label: "Profile", action: model.openProfile)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
+            HStack(spacing: ExecuteSpacing.xs) {
+                HomeHeaderButton(symbol: "chart.line.uptrend.xyaxis", label: "Progress", action: model.openProgress)
+                HomeHeaderButton(symbol: "slider.horizontal.3", label: "Customize Home", isActive: isCustomizationPresented) { isCustomizationPresented = true }
+                HomeHeaderButton(symbol: "person", label: "Profile", action: model.openProfile)
+            }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, ExecuteSpacing.sm)
+        .padding(.horizontal, 16)
+        .padding(.vertical, ExecuteSpacing.md)
         .background(ExecuteColor.parchmentLight.opacity(0.95))
         .overlay(alignment: .bottom) { Rectangle().fill(ExecuteColor.warmBorder).frame(height: 1) }
     }
@@ -172,7 +174,7 @@ private struct HomeHeaderButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 17, weight: .semibold))
-                .frame(width: 44, height: 44)
+                .frame(width: 54, height: 54)
                 .background(isActive ? ExecuteColor.chartreuse : ExecuteColor.parchmentLight)
                 .foregroundStyle(isActive ? ExecuteColor.charcoal : ExecuteColor.olive)
                 .clipShape(Circle())
@@ -248,6 +250,14 @@ private struct HomeCompletionCelebration: View {
     }
 }
 
-#Preview("Home") {
+#Preview("Home · Populated") {
     HomeDashboardView(model: .preview())
+}
+
+#Preview("Home · Partial data") {
+    HomeDashboardView(model: .partialPreview())
+}
+
+#Preview("Home · Fresh user") {
+    HomeDashboardView(model: .emptyPreview())
 }

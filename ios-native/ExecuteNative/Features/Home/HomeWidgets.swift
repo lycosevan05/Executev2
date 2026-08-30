@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct HomePlanBanner: View {
     let snapshot: HomeDashboardSnapshot
@@ -26,7 +27,10 @@ struct HomePlanBanner: View {
                     }
                     .foregroundStyle(ExecuteColor.chartreuseDark)
                     if let priority, !priority.isEmpty {
-                        Text(priority).font(ExecuteTypography.label(15).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
+                        Text(priority)
+                            .font(ExecuteTypography.display(21))
+                            .foregroundStyle(ExecuteColor.charcoal)
+                            .lineSpacing(1)
                     }
                 }
                 .padding(ExecuteSpacing.md)
@@ -225,7 +229,7 @@ struct HomeQuickLinks: View {
                     Image(systemName: "play.fill").font(.system(size: 13, weight: .semibold)).opacity(0.6)
                 }
                 .padding(.horizontal, ExecuteSpacing.md)
-                .frame(minHeight: 64)
+                .frame(minHeight: 78)
                 .foregroundStyle(ExecuteColor.charcoal)
                 .background(isRestDay ? ExecuteColor.parchmentLight : ExecuteColor.chartreuse)
                 .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous))
@@ -234,7 +238,7 @@ struct HomeQuickLinks: View {
                 }
                 .shadow(color: isRestDay ? ExecuteColor.charcoal.opacity(0.07) : ExecuteColor.chartreuse.opacity(0.38), radius: isRestDay ? 6 : 18, y: 3)
             }
-            .buttonStyle(ExecutePressStyle())
+            .buttonStyle(HomeHapticPressStyle())
             .redacted(reason: isLoading ? .placeholder : [])
 
             HStack(spacing: ExecuteSpacing.xs) {
@@ -294,15 +298,18 @@ struct HomeDailyChecklistCard: View {
                     .padding(.vertical, ExecuteSpacing.md)
                 } else {
                     HomeProgressBar(progress: progress, tint: ExecuteColor.chartreuse, height: 6)
-                    ForEach(items) { item in
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         Button { toggle(item) } label: { HomeChecklistRow(item: item) }
                             .buttonStyle(ExecutePressStyle())
+                        if index < items.count - 1 {
+                            Divider().overlay(ExecuteColor.warmBorder.opacity(0.65))
+                        }
                     }
                     Button(action: customize) {
                         Label("Customize Checklist", systemImage: "slider.horizontal.3")
                             .font(ExecuteTypography.caption(12).weight(.semibold))
                             .foregroundStyle(ExecuteColor.mist)
-                            .frame(maxWidth: .infinity, minHeight: 42)
+                            .frame(maxWidth: .infinity, minHeight: 40)
                             .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).stroke(ExecuteColor.warmBorder))
                     }
                     .buttonStyle(ExecutePressStyle())
@@ -389,7 +396,7 @@ private struct HomeMacroRing: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: ExecuteSpacing.xs) {
-                HomeRing(progress: target.map { consumed / $0 } ?? 0, tint: isOver ? ExecuteColor.destructive : tint, lineWidth: 5) {
+                HomeRing(progress: target.map { consumed / $0 } ?? 0, tint: isOver ? ExecuteColor.destructive : tint, lineWidth: 5, size: 58) {
                     Text("\(Int(consumed.rounded()))").font(ExecuteTypography.caption(11).weight(.bold)).foregroundStyle(ExecuteColor.charcoal)
                     Text("g").font(ExecuteTypography.caption(8)).foregroundStyle(ExecuteColor.mist)
                 }
@@ -414,12 +421,14 @@ private struct HomeRing<Content: View>: View {
     let progress: Double
     let tint: Color
     let lineWidth: CGFloat
+    let size: CGFloat
     let content: Content
 
-    init(progress: Double, tint: Color, lineWidth: CGFloat, @ViewBuilder content: () -> Content) {
+    init(progress: Double, tint: Color, lineWidth: CGFloat, size: CGFloat = 72, @ViewBuilder content: () -> Content) {
         self.progress = progress
         self.tint = tint
         self.lineWidth = lineWidth
+        self.size = size
         self.content = content()
     }
 
@@ -433,7 +442,7 @@ private struct HomeRing<Content: View>: View {
                 .animation(.easeOut(duration: 1), value: progress)
             VStack(spacing: 1) { content }
         }
-        .frame(width: 72, height: 72)
+        .frame(width: size, height: size)
     }
 }
 
@@ -449,11 +458,15 @@ private struct HomeVitalTile: View {
         let progress = goal.map { value / $0 } ?? 0
         VStack(spacing: 5) {
             Image(systemName: vital.symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(progress >= 0.8 ? ExecuteColor.chartreuseDark : ExecuteColor.mist)
-            Text(displayValue).font(ExecuteTypography.caption(12).weight(.bold)).foregroundStyle(ExecuteColor.charcoal)
+            Text(displayValue)
+                .font(ExecuteTypography.caption(11).weight(.bold))
+                .foregroundStyle(ExecuteColor.charcoal)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Text(vital.title).font(ExecuteTypography.caption(9)).foregroundStyle(ExecuteColor.mist)
             if goal != nil { HomeProgressBar(progress: progress, tint: progress >= 1 ? ExecuteColor.chartreuse : ExecuteColor.chartreuseLight, height: 2) }
         }
-        .frame(maxWidth: .infinity, minHeight: 92)
+        .frame(maxWidth: .infinity, minHeight: 78)
         .padding(.horizontal, 4)
         .background(progress >= 1 ? ExecuteColor.chartreuse.opacity(0.08) : ExecuteColor.parchmentLight)
         .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
@@ -488,14 +501,14 @@ private struct HomeVitalTile: View {
 
     private var displayValue: String {
         switch vital {
-        case .steps: return rawValue > 0 ? String(format: "%.1fk", rawValue / 1_000) : "—"
-        case .sleep: return rawValue > 0 ? String(format: "%.1fh", rawValue) : "—"
-        case .water: return rawValue > 0 ? String(format: "%.1fL", rawValue) : "—"
-        case .mood: return rawValue > 0 ? "\(Int(rawValue))/5" : "—"
-        case .energy: return rawValue > 0 ? "\(Int(rawValue))/10" : "—"
-        case .workout: return rawValue > 0 ? "\(Int(rawValue))m" : "—"
-        case .weight: return rawValue > 0 ? String(format: "%.1f", rawValue) : "—"
-        case .calories: return rawValue > 0 ? (rawValue >= 1_000 ? String(format: "%.1fk", rawValue / 1_000) : "\(Int(rawValue))") : "—"
+        case .steps: return rawValue > 0 ? String(format: "%.1fk", rawValue / 1_000) : "No data"
+        case .sleep: return rawValue > 0 ? String(format: "%.1fh", rawValue) : "Log sleep"
+        case .water: return rawValue > 0 ? String(format: "%.1fL", rawValue) : "Log water"
+        case .mood: return rawValue > 0 ? "\(Int(rawValue))/5" : "Log mood"
+        case .energy: return rawValue > 0 ? "\(Int(rawValue))/10" : "Log energy"
+        case .workout: return rawValue > 0 ? "\(Int(rawValue))m" : "Log workout"
+        case .weight: return rawValue > 0 ? String(format: "%.1f", rawValue) : "Log weight"
+        case .calories: return rawValue > 0 ? (rawValue >= 1_000 ? String(format: "%.1fk", rawValue / 1_000) : "\(Int(rawValue))") : "Log calories"
         }
     }
 }
@@ -505,13 +518,9 @@ private struct HomeChecklistRow: View {
 
     var body: some View {
         HStack(spacing: ExecuteSpacing.sm) {
-            Image(systemName: item.completed ? "checkmark" : "")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(ExecuteColor.chartreuseDark)
-                .frame(width: 24, height: 24)
-                .background(item.completed ? ExecuteColor.chartreuse.opacity(0.15) : Color.clear)
-                .clipShape(Circle())
-                .overlay(Circle().stroke(item.completed ? ExecuteColor.chartreuseDark : ExecuteColor.warmBorder, lineWidth: 2))
+            Image(systemName: item.completed ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 23, weight: .semibold))
+                .foregroundStyle(item.completed ? ExecuteColor.chartreuseDark : ExecuteColor.warmBorder)
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title).font(ExecuteTypography.body(14).weight(.medium)).foregroundStyle(item.completed ? ExecuteColor.mist : ExecuteColor.charcoal).strikethrough(item.completed, color: ExecuteColor.mist)
                 if !item.detail.isEmpty { Text(item.detail).font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.mist).multilineTextAlignment(.leading) }
@@ -519,11 +528,9 @@ private struct HomeChecklistRow: View {
             Spacer(minLength: 4)
             Circle().fill(dotColor).frame(width: 6, height: 6)
         }
-        .padding(ExecuteSpacing.sm)
+        .padding(.vertical, ExecuteSpacing.xs)
+        .padding(.horizontal, ExecuteSpacing.xxs)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(item.completed ? ExecuteColor.chartreuse.opacity(0.06) : ExecuteColor.parchmentLight)
-        .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).stroke(item.completed ? ExecuteColor.chartreuse.opacity(0.3) : ExecuteColor.warmBorder))
     }
 
     private var dotColor: Color {
@@ -550,7 +557,7 @@ private struct HomeQuickLink: View {
                 Text(title).font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
                 Text(subtitle).font(ExecuteTypography.caption(9)).foregroundStyle(ExecuteColor.mist).lineLimit(1)
             }
-            .frame(maxWidth: .infinity, minHeight: 92)
+            .frame(maxWidth: .infinity, minHeight: 84)
             .background(ExecuteColor.parchmentLight)
             .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).stroke(ExecuteColor.warmBorder))
@@ -573,5 +580,17 @@ struct HomeProgressBar: View {
                 .animation(.easeOut(duration: 0.8), value: progress)
         }
         .frame(height: height)
+    }
+}
+
+private struct HomeHapticPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(ExecuteMotion.quick, value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { isPressed in
+                if isPressed { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+            }
     }
 }

@@ -68,6 +68,41 @@ final class HomeViewModel: ObservableObject {
         return model
     }
 
+    static func partialPreview() -> HomeViewModel {
+        let model = preview()
+        model.snapshot.dailyLog = HomeDailyLog(
+            date: HomeDate.todayString,
+            caloriesConsumed: 420,
+            caloriesBurned: nil,
+            proteinConsumedG: 28,
+            carbsConsumedG: nil,
+            fatsConsumedG: nil,
+            waterLiters: nil,
+            sleepHours: nil,
+            steps: nil,
+            mood: nil,
+            energy: nil,
+            workoutDurationMinutes: nil,
+            weightKg: nil,
+            plannedWorkoutID: nil,
+            plannedMealPlanID: nil,
+            checklistItems: nil,
+            plannedChecklistItems: nil,
+            planItemsCompleted: nil
+        )
+        model.snapshot.workoutPlan = nil
+        model.snapshot.mealPlan = nil
+        model.snapshot.readiness = nil
+        model.snapshot.goals = []
+        return model
+    }
+
+    static func emptyPreview() -> HomeViewModel {
+        let model = HomeViewModel(dataService: nil, cache: UserScopedCacheStore(), realtimeService: nil, router: AppRouter())
+        model.isInitialLoading = false
+        return model
+    }
+
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
         self.user = user
