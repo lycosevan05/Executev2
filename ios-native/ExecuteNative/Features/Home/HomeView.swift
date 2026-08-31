@@ -103,7 +103,7 @@ struct HomeDashboardView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
             HStack(spacing: ExecuteSpacing.xs) {
-                HomeHeaderButton(symbol: "chart.line.uptrend.xyaxis", label: "Progress", action: model.openProgress)
+                HomeHeaderButton(symbol: "chart.line.uptrend.xyaxis", label: "Progress", isAccented: true, action: model.openProgress)
                 HomeHeaderButton(symbol: "slider.horizontal.3", label: "Customize Home", isActive: isCustomizationPresented) { isCustomizationPresented = true }
                 HomeHeaderButton(symbol: "person", label: "Profile", action: model.openProfile)
             }
@@ -168,6 +168,7 @@ private struct HomeHeaderButton: View {
     let symbol: String
     let label: String
     var isActive = false
+    var isAccented = false
     let action: () -> Void
 
     var body: some View {
@@ -175,10 +176,10 @@ private struct HomeHeaderButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 17, weight: .semibold))
                 .frame(width: 54, height: 54)
-                .background(isActive ? ExecuteColor.chartreuse : ExecuteColor.parchmentLight)
-                .foregroundStyle(isActive ? ExecuteColor.charcoal : ExecuteColor.olive)
+                .background(isActive ? ExecuteColor.chartreuse : isAccented ? ExecuteHomeStyle.accentWash : ExecuteColor.parchmentLight)
+                .foregroundStyle(isActive ? ExecuteColor.charcoal : isAccented ? ExecuteColor.chartreuseDark : ExecuteColor.olive)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(isActive ? ExecuteColor.chartreuse : ExecuteColor.warmBorder))
+                .overlay(Circle().stroke(isActive ? ExecuteColor.chartreuse : isAccented ? ExecuteHomeStyle.accentBorder : ExecuteColor.warmBorder))
                 .shadow(color: ExecuteColor.charcoal.opacity(0.06), radius: 4, y: 1)
         }
         .buttonStyle(ExecutePressStyle())

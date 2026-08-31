@@ -31,6 +31,9 @@ enum ExecuteHomeStyle {
     static let utilityRadius: CGFloat = 18
     static let heroShadow = (color: ExecuteColor.charcoal.opacity(0.10), radius: CGFloat(16), y: CGFloat(5))
     static let utilityShadow = (color: ExecuteColor.charcoal.opacity(0.055), radius: CGFloat(7), y: CGFloat(2))
+    static let accentWash = ExecuteColor.chartreuse.opacity(0.12)
+    static let positiveWash = ExecuteColor.chartreuse.opacity(0.075)
+    static let accentBorder = ExecuteColor.chartreuseDark.opacity(0.24)
 }
 
 enum ExecuteMotion {

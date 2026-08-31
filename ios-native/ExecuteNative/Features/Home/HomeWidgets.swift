@@ -6,12 +6,14 @@ private enum HomeSurfaceLevel {
     case elevated
     case utility
     case quiet
+    case positive
 
     var background: Color {
         switch self {
-        case .plan: ExecuteColor.chartreuse.opacity(0.075)
+        case .plan: ExecuteColor.chartreuse.opacity(0.13)
         case .elevated, .utility: ExecuteColor.parchmentLight
         case .quiet: ExecuteColor.parchmentLight.opacity(0.76)
+        case .positive: ExecuteHomeStyle.positiveWash
         }
     }
 
@@ -20,23 +22,26 @@ private enum HomeSurfaceLevel {
         case .plan: ExecuteHomeStyle.heroRadius
         case .elevated: ExecuteHomeStyle.cardRadius
         case .utility, .quiet: ExecuteHomeStyle.utilityRadius
+        case .positive: ExecuteHomeStyle.utilityRadius
         }
     }
 
     var border: Color {
         switch self {
-        case .plan: ExecuteColor.chartreuse.opacity(0.34)
+        case .plan: ExecuteColor.chartreuse.opacity(0.44)
         case .elevated: ExecuteColor.warmBorder.opacity(0.55)
         case .utility: ExecuteColor.warmBorder.opacity(0.42)
         case .quiet: ExecuteColor.warmBorder.opacity(0.28)
+        case .positive: ExecuteHomeStyle.accentBorder
         }
     }
 
     var shadow: (color: Color, radius: CGFloat, y: CGFloat) {
         switch self {
-        case .plan: (ExecuteColor.chartreuse.opacity(0.05), 9, 2)
+        case .plan: (ExecuteColor.chartreuse.opacity(0.09), 10, 3)
         case .elevated: ExecuteHomeStyle.heroShadow
         case .utility, .quiet: ExecuteHomeStyle.utilityShadow
+        case .positive: (ExecuteColor.chartreuse.opacity(0.08), 8, 2)
         }
     }
 }
@@ -161,7 +166,11 @@ struct HomeCalorieBalanceCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, ExecuteSpacing.xs)
                         .padding(.vertical, 7)
-                        .background(ExecuteColor.chartreuse.opacity(0.1))
+                        .background(ExecuteHomeStyle.accentWash)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous)
+                                .stroke(ExecuteHomeStyle.accentBorder)
+                        }
                         .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
                 }
 
@@ -204,6 +213,11 @@ struct HomeReadinessCard: View {
     let caption: String?
     let openRecovery: () -> Void
 
+    private var surface: HomeSurfaceLevel {
+        guard let score = readiness?.readinessScore, score >= 80 else { return .utility }
+        return .positive
+    }
+
     var body: some View {
         Button(action: openRecovery) {
             VStack {
@@ -217,7 +231,7 @@ struct HomeReadinessCard: View {
                     }
                     if let score = readiness?.readinessScore {
                         HStack(alignment: .lastTextBaseline, spacing: ExecuteSpacing.xs) {
-                            Text("\(Int(score.rounded()))").font(ExecuteTypography.display(30)).foregroundStyle(ExecuteColor.charcoal)
+                            Text("\(Int(score.rounded()))").font(ExecuteTypography.display(30)).foregroundStyle(ExecuteColor.chartreuseDark)
                             Text("/100").font(ExecuteTypography.caption(12)).foregroundStyle(ExecuteColor.mist)
                         }
                         HomeProgressBar(progress: score / 100, tint: ExecuteColor.chartreuse, height: 8)
@@ -227,7 +241,7 @@ struct HomeReadinessCard: View {
                 }
                 .padding(ExecuteSpacing.md)
             }
-            .homeSurface(.utility)
+            .homeSurface(surface)
         }
         .buttonStyle(ExecutePressStyle())
     }
@@ -268,7 +282,7 @@ struct HomeQuickLinks: View {
                     Image(systemName: isRestDay ? "leaf.fill" : "dumbbell.fill")
                         .font(.system(size: 18, weight: .semibold))
                         .frame(width: 40, height: 40)
-                        .background(isRestDay ? ExecuteColor.chartreuse.opacity(0.12) : ExecuteColor.charcoal.opacity(0.1))
+                        .background(isRestDay ? ExecuteColor.chartreuse.opacity(0.14) : ExecuteColor.chartreuseLight.opacity(0.36))
                         .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 2) {
                         Text(workoutTitle)
@@ -405,7 +419,7 @@ struct HomeProgressSnapshot: View {
                         .font(ExecuteTypography.caption(10)).foregroundStyle(ExecuteColor.mist)
                 }
                 .padding(ExecuteSpacing.md)
-                .homeSurface(.utility)
+                .homeSurface(progress >= 0.8 ? .positive : .utility)
             }
         }
     }
@@ -450,13 +464,13 @@ private struct HomeMacroRing: View {
         Button(action: action) {
             VStack(spacing: ExecuteSpacing.xs) {
                 HomeRing(progress: target.map { consumed / $0 } ?? 0, tint: isOver ? ExecuteColor.destructive : tint, lineWidth: 5, size: 58) {
-                    Text("\(Int(consumed.rounded()))").font(ExecuteTypography.caption(11).weight(.bold)).foregroundStyle(ExecuteColor.charcoal)
+                    Text("\(Int(consumed.rounded()))").font(ExecuteTypography.caption(11).weight(.bold)).foregroundStyle(ringTint)
                     Text("g").font(ExecuteTypography.caption(8)).foregroundStyle(ExecuteColor.mist)
                 }
-                Text(title).font(ExecuteTypography.caption(10).weight(.bold)).foregroundStyle(ExecuteColor.mist)
+                Text(title).font(ExecuteTypography.caption(10).weight(.bold)).foregroundStyle(ringTint)
                 Text(target.map { isOver ? "+\(Int((consumed - $0).rounded()))g" : "/ \(Int($0.rounded()))g" } ?? "Set target")
                     .font(ExecuteTypography.caption(9))
-                    .foregroundStyle(isOver ? ExecuteColor.destructive : ExecuteColor.mist.opacity(0.8))
+                    .foregroundStyle(isOver ? ExecuteColor.destructive : tint.opacity(0.9))
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, ExecuteSpacing.sm)
@@ -466,6 +480,7 @@ private struct HomeMacroRing: View {
     }
 
     private var isOver: Bool { target.map { consumed > $0 } ?? false }
+    private var ringTint: Color { isOver ? ExecuteColor.destructive : tint }
 }
 
 private struct HomeRing<Content: View>: View {
@@ -519,7 +534,7 @@ private struct HomeVitalTile: View {
         }
         .frame(maxWidth: .infinity, minHeight: 78)
         .padding(.horizontal, 4)
-        .homeSurface(progress >= 1 ? .utility : .quiet)
+        .homeSurface(progress >= 1 ? .positive : .quiet)
     }
 
     private var rawValue: Double {
@@ -580,6 +595,8 @@ private struct HomeChecklistRow: View {
         .padding(.vertical, ExecuteSpacing.xs)
         .padding(.horizontal, ExecuteSpacing.xxs)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(item.completed ? ExecuteColor.chartreuse.opacity(0.06) : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
     }
 
     private var dotColor: Color {
@@ -602,7 +619,12 @@ private struct HomeQuickLink: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: ExecuteSpacing.xs) {
-                Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(ExecuteColor.chartreuseDark)
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(ExecuteColor.chartreuseDark)
+                    .frame(width: 34, height: 34)
+                    .background(ExecuteHomeStyle.accentWash)
+                    .clipShape(Circle())
                 Text(title).font(ExecuteTypography.label(11).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
                 Text(subtitle).font(ExecuteTypography.caption(9)).foregroundStyle(ExecuteColor.mist).lineLimit(1)
             }
