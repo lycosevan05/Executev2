@@ -30,13 +30,12 @@ enum ExecuteMotion {
 }
 
 enum ExecuteTypography {
-    // Inter is the established web font. Add the licensed font file to Resources/Fonts
-    // in a later asset pass; iOS falls back to the system font until then.
-    static func display(_ size: CGFloat) -> Font { .custom("Inter", size: size).weight(.bold) }
-    static func title(_ size: CGFloat = 22) -> Font { .custom("Inter", size: size).weight(.semibold) }
-    static func body(_ size: CGFloat = 16) -> Font { .custom("Inter", size: size).weight(.regular) }
-    static func label(_ size: CGFloat = 13) -> Font { .custom("Inter", size: size).weight(.medium) }
-    static func caption(_ size: CGFloat = 11) -> Font { .custom("Inter", size: size).weight(.medium) }
+    // Use the bundled PostScript names so SwiftUI does not silently fall back to SF Pro.
+    static func display(_ size: CGFloat) -> Font { .custom("Inter-Black", size: size) }
+    static func title(_ size: CGFloat = 22) -> Font { .custom("Inter-SemiBold", size: size) }
+    static func body(_ size: CGFloat = 16) -> Font { .custom("Inter-Regular", size: size) }
+    static func label(_ size: CGFloat = 13) -> Font { .custom("Inter-Medium", size: size) }
+    static func caption(_ size: CGFloat = 11) -> Font { .custom("Inter-Medium", size: size) }
 }
 
 struct ExecuteScreen: ViewModifier {
