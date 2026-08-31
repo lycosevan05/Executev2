@@ -44,7 +44,7 @@ struct HomeDashboardView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: ExecuteSpacing.md) {
+            LazyVStack(spacing: ExecuteHomeStyle.sectionGap) {
                 if let error = model.error, model.snapshot.activePlan == nil, model.snapshot.dailyLog == nil, model.snapshot.userProfile == nil {
                     HomeLoadError(error: error) { Task { await model.refresh() } }
                         .padding(.top, ExecuteSpacing.xl)
@@ -58,7 +58,7 @@ struct HomeDashboardView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, ExecuteHomeStyle.screenInset)
             .padding(.top, ExecuteSpacing.sm)
             .padding(.bottom, ExecuteSpacing.xl)
         }

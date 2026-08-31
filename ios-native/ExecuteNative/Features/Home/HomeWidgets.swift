@@ -1,6 +1,58 @@
 import SwiftUI
 import UIKit
 
+private enum HomeSurfaceLevel {
+    case plan
+    case elevated
+    case utility
+    case quiet
+
+    var background: Color {
+        switch self {
+        case .plan: ExecuteColor.chartreuse.opacity(0.075)
+        case .elevated, .utility: ExecuteColor.parchmentLight
+        case .quiet: ExecuteColor.parchmentLight.opacity(0.76)
+        }
+    }
+
+    var radius: CGFloat {
+        switch self {
+        case .plan: ExecuteHomeStyle.heroRadius
+        case .elevated: ExecuteHomeStyle.cardRadius
+        case .utility, .quiet: ExecuteHomeStyle.utilityRadius
+        }
+    }
+
+    var border: Color {
+        switch self {
+        case .plan: ExecuteColor.chartreuse.opacity(0.34)
+        case .elevated: ExecuteColor.warmBorder.opacity(0.55)
+        case .utility: ExecuteColor.warmBorder.opacity(0.42)
+        case .quiet: ExecuteColor.warmBorder.opacity(0.28)
+        }
+    }
+
+    var shadow: (color: Color, radius: CGFloat, y: CGFloat) {
+        switch self {
+        case .plan: (ExecuteColor.chartreuse.opacity(0.05), 9, 2)
+        case .elevated: ExecuteHomeStyle.heroShadow
+        case .utility, .quiet: ExecuteHomeStyle.utilityShadow
+        }
+    }
+}
+
+private extension View {
+    func homeSurface(_ level: HomeSurfaceLevel) -> some View {
+        background(level.background)
+            .clipShape(RoundedRectangle(cornerRadius: level.radius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: level.radius, style: .continuous)
+                    .stroke(level.border, lineWidth: 1)
+            }
+            .shadow(color: level.shadow.color, radius: level.shadow.radius, y: level.shadow.y)
+    }
+}
+
 struct HomePlanBanner: View {
     let snapshot: HomeDashboardSnapshot
     let isLoading: Bool
@@ -34,18 +86,14 @@ struct HomePlanBanner: View {
                     }
                 }
                 .padding(ExecuteSpacing.md)
-                .background(ExecuteColor.chartreuse.opacity(0.07))
-                .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous).stroke(ExecuteColor.chartreuse.opacity(0.3)))
+                .homeSurface(.plan)
             } else if isLoading {
                 VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
                     Capsule().fill(ExecuteColor.chartreuseDark.opacity(0.22)).frame(width: 104, height: 10)
                     RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).fill(ExecuteColor.chartreuse.opacity(0.18)).frame(height: 40)
                 }
                 .padding(ExecuteSpacing.md)
-                .background(ExecuteColor.chartreuse.opacity(0.07))
-                .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous).stroke(ExecuteColor.chartreuse.opacity(0.3)))
+                .homeSurface(.plan)
                 .redacted(reason: .placeholder)
             } else {
                 VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
@@ -67,9 +115,7 @@ struct HomePlanBanner: View {
                     .buttonStyle(ExecutePressStyle())
                 }
                 .padding(ExecuteSpacing.md)
-                .background(ExecuteColor.chartreuse.opacity(0.07))
-                .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous).stroke(ExecuteColor.chartreuse.opacity(0.3)))
+                .homeSurface(.plan)
             }
         }
     }
@@ -85,7 +131,7 @@ struct HomeCalorieBalanceCard: View {
     private var remaining: Double? { budget.map { $0 - consumed } }
 
     var body: some View {
-        ExecuteCard {
+        VStack(spacing: 0) {
             VStack(spacing: ExecuteSpacing.sm) {
                 HStack(spacing: ExecuteSpacing.xxs) {
                     Image(systemName: "flame.fill").font(.system(size: 13)).foregroundStyle(ExecuteColor.chartreuseDark)
@@ -132,8 +178,10 @@ struct HomeCalorieBalanceCard: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .padding(ExecuteSpacing.sm)
+            .padding(.horizontal, ExecuteSpacing.md)
+            .padding(.vertical, ExecuteSpacing.sm)
         }
+        .homeSurface(.elevated)
     }
 }
 
@@ -158,7 +206,7 @@ struct HomeReadinessCard: View {
 
     var body: some View {
         Button(action: openRecovery) {
-            ExecuteCard {
+            VStack {
                 VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
                     HStack {
                         Text("READINESS").font(ExecuteTypography.caption(10).weight(.bold)).foregroundStyle(ExecuteColor.mist)
@@ -179,6 +227,7 @@ struct HomeReadinessCard: View {
                 }
                 .padding(ExecuteSpacing.md)
             }
+            .homeSurface(.utility)
         }
         .buttonStyle(ExecutePressStyle())
     }
@@ -217,24 +266,26 @@ struct HomeQuickLinks: View {
             Button(action: openWorkout) {
                 HStack(spacing: ExecuteSpacing.sm) {
                     Image(systemName: isRestDay ? "leaf.fill" : "dumbbell.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 32, height: 32)
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 40, height: 40)
                         .background(isRestDay ? ExecuteColor.chartreuse.opacity(0.12) : ExecuteColor.charcoal.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
+                        .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(workoutTitle).font(ExecuteTypography.label(15).weight(.bold))
-                        Text(workoutDetail).font(ExecuteTypography.caption(10)).opacity(0.6)
+                        Text(workoutTitle)
+                            .font(ExecuteTypography.label(16).weight(.bold))
+                            .lineLimit(2)
+                        Text(workoutDetail).font(ExecuteTypography.caption(11)).opacity(0.62)
                     }
                     Spacer()
                     Image(systemName: "play.fill").font(.system(size: 13, weight: .semibold)).opacity(0.6)
                 }
                 .padding(.horizontal, ExecuteSpacing.md)
-                .frame(minHeight: 78)
+                .frame(minHeight: 82)
                 .foregroundStyle(ExecuteColor.charcoal)
                 .background(isRestDay ? ExecuteColor.parchmentLight : ExecuteColor.chartreuse)
-                .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.heroRadius, style: .continuous))
                 .overlay {
-                    if isRestDay { RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous).stroke(ExecuteColor.warmBorder) }
+                    if isRestDay { RoundedRectangle(cornerRadius: ExecuteHomeStyle.heroRadius, style: .continuous).stroke(ExecuteColor.warmBorder) }
                 }
                 .shadow(color: isRestDay ? ExecuteColor.charcoal.opacity(0.07) : ExecuteColor.chartreuse.opacity(0.38), radius: isRestDay ? 6 : 18, y: 3)
             }
@@ -276,7 +327,7 @@ struct HomeDailyChecklistCard: View {
     let customize: () -> Void
 
     var body: some View {
-        ExecuteCard {
+        VStack {
             VStack(spacing: ExecuteSpacing.sm) {
                 HStack {
                     Text("TODAY'S ACTIONS").font(ExecuteTypography.caption(10).weight(.bold)).foregroundStyle(ExecuteColor.mist)
@@ -316,6 +367,7 @@ struct HomeDailyChecklistCard: View {
                 }
             }
             .padding(ExecuteSpacing.md)
+            .homeSurface(.utility)
         }
     }
 
@@ -333,7 +385,7 @@ struct HomeProgressSnapshot: View {
         if !goals.isEmpty {
             let onTrack = goals.filter { HomeCalculations.goalProgress($0) > 0 }.count
             let progress = goals.map(HomeCalculations.goalProgress).reduce(0, +) / Double(goals.count)
-            ExecuteCard {
+            VStack {
                 VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
                     HStack {
                         Label("Progress", systemImage: "chart.line.uptrend.xyaxis")
@@ -353,6 +405,7 @@ struct HomeProgressSnapshot: View {
                         .font(ExecuteTypography.caption(10)).foregroundStyle(ExecuteColor.mist)
                 }
                 .padding(ExecuteSpacing.md)
+                .homeSurface(.utility)
             }
         }
     }
@@ -407,9 +460,7 @@ private struct HomeMacroRing: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, ExecuteSpacing.sm)
-            .background(ExecuteColor.parchmentLight)
-            .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).stroke(ExecuteColor.warmBorder))
+            .homeSurface(.utility)
         }
         .buttonStyle(ExecutePressStyle())
     }
@@ -468,9 +519,7 @@ private struct HomeVitalTile: View {
         }
         .frame(maxWidth: .infinity, minHeight: 78)
         .padding(.horizontal, 4)
-        .background(progress >= 1 ? ExecuteColor.chartreuse.opacity(0.08) : ExecuteColor.parchmentLight)
-        .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).stroke(progress >= 1 ? ExecuteColor.chartreuse.opacity(0.35) : ExecuteColor.warmBorder))
+        .homeSurface(progress >= 1 ? .utility : .quiet)
     }
 
     private var rawValue: Double {
@@ -553,15 +602,12 @@ private struct HomeQuickLink: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: ExecuteSpacing.xs) {
-                Image(systemName: symbol).font(.system(size: 16, weight: .semibold)).foregroundStyle(ExecuteColor.chartreuseDark)
-                Text(title).font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
+                Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(ExecuteColor.chartreuseDark)
+                Text(title).font(ExecuteTypography.label(11).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
                 Text(subtitle).font(ExecuteTypography.caption(9)).foregroundStyle(ExecuteColor.mist).lineLimit(1)
             }
-            .frame(maxWidth: .infinity, minHeight: 84)
-            .background(ExecuteColor.parchmentLight)
-            .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).stroke(ExecuteColor.warmBorder))
-            .shadow(color: ExecuteColor.charcoal.opacity(0.07), radius: 6, y: 1)
+            .frame(maxWidth: .infinity, minHeight: 80)
+            .homeSurface(.utility)
         }
         .buttonStyle(ExecutePressStyle())
     }

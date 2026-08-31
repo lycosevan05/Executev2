@@ -22,6 +22,17 @@ enum ExecuteShadow {
     static let lime = (color: ExecuteColor.chartreuse.opacity(0.38), radius: CGFloat(18), y: CGFloat(4))
 }
 
+enum ExecuteHomeStyle {
+    static let screenInset: CGFloat = 18
+    static let sectionGap: CGFloat = 16
+    static let relatedGap: CGFloat = 10
+    static let heroRadius: CGFloat = 26
+    static let cardRadius: CGFloat = 22
+    static let utilityRadius: CGFloat = 18
+    static let heroShadow = (color: ExecuteColor.charcoal.opacity(0.10), radius: CGFloat(16), y: CGFloat(5))
+    static let utilityShadow = (color: ExecuteColor.charcoal.opacity(0.055), radius: CGFloat(7), y: CGFloat(2))
+}
+
 enum ExecuteMotion {
     static let quick = Animation.easeOut(duration: 0.15)
     static let standard = Animation.easeInOut(duration: 0.2)
