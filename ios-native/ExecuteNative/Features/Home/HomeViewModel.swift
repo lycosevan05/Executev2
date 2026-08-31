@@ -41,7 +41,7 @@ final class HomeViewModel: ObservableObject {
         self.hiddenChecklistDefaults = Set(UserDefaults.standard.stringArray(forKey: checklistDefaultsKey) ?? [])
     }
 
-    static func preview() -> HomeViewModel {
+    static func preview(name: String = "Alex") -> HomeViewModel {
         let model = HomeViewModel(dataService: nil, cache: UserScopedCacheStore(), realtimeService: nil, router: AppRouter())
         model.snapshot = HomeDashboardSnapshot(
             activePlan: HomeAIPlan(
@@ -59,7 +59,7 @@ final class HomeViewModel: ObservableObject {
             workoutPlan: HomeWorkoutPlan(date: HomeDate.todayString, sourcePlanID: nil, generationBatchID: nil, status: "ready", name: "Upper Strength", type: "Strength", duration: "45 min", workoutSummary: "Compound lifts and accessories"),
             mealPlan: HomeMealPlan(date: HomeDate.todayString, sourcePlanID: nil, generationBatchID: nil, totalCalories: 2400, totalProteinG: 180, totalCarbsG: 260, totalFatsG: 72),
             readiness: HomeReadiness(date: HomeDate.todayString, readinessScore: 82, energy: 7),
-            userProfile: HomeUserProfile(displayName: "Alex", stepGoalDaily: 10_000, waterGoalLiters: 2.5, sleepGoalHours: 8),
+            userProfile: HomeUserProfile(displayName: name, stepGoalDaily: 10_000, waterGoalLiters: 2.5, sleepGoalHours: 8),
             nutritionProfile: nil,
             goals: [HomeGoal(status: "active", currentValue: 4, targetValue: 10, startValue: 0, targetDirection: "increase")],
             customChecklistItems: []
@@ -68,8 +68,8 @@ final class HomeViewModel: ObservableObject {
         return model
     }
 
-    static func partialPreview() -> HomeViewModel {
-        let model = preview()
+    static func partialPreview(name: String = "Alex") -> HomeViewModel {
+        let model = preview(name: name)
         model.snapshot.dailyLog = HomeDailyLog(
             date: HomeDate.todayString,
             caloriesConsumed: 420,
@@ -97,8 +97,9 @@ final class HomeViewModel: ObservableObject {
         return model
     }
 
-    static func emptyPreview() -> HomeViewModel {
+    static func emptyPreview(name: String = "Alex") -> HomeViewModel {
         let model = HomeViewModel(dataService: nil, cache: UserScopedCacheStore(), realtimeService: nil, router: AppRouter())
+        model.snapshot.userProfile = HomeUserProfile(displayName: name, stepGoalDaily: nil, waterGoalLiters: nil, sleepGoalHours: nil)
         model.isInitialLoading = false
         return model
     }

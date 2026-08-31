@@ -99,7 +99,7 @@ struct HomeDashboardView: View {
             Text("\(model.greeting), \(model.userName)")
                 .font(ExecuteTypography.display(31))
                 .foregroundStyle(ExecuteColor.charcoal)
-                .lineLimit(2)
+                .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
             HStack(spacing: ExecuteSpacing.xs) {
@@ -251,13 +251,13 @@ private struct HomeCompletionCelebration: View {
 }
 
 #Preview("Home · Populated") {
-    HomeDashboardView(model: .preview())
+    HomeDashboardView(model: .preview(name: "Sam Lee"))
 }
 
 #Preview("Home · Partial data") {
-    HomeDashboardView(model: .partialPreview())
+    HomeDashboardView(model: .partialPreview(name: "Master Winner"))
 }
 
 #Preview("Home · Fresh user") {
-    HomeDashboardView(model: .emptyPreview())
+    HomeDashboardView(model: .emptyPreview(name: "Alexander Christopher Thompson"))
 }
