@@ -17,10 +17,10 @@ private struct AppShellContentView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if router.isBottomBarVisible {
                     ExecuteTabBar(selectedTab: router.selectedTab) { router.select($0) }
-                        .padding(.horizontal, ExecuteSpacing.md)
-                        .padding(.top, ExecuteSpacing.xs)
-                        .padding(.bottom, ExecuteSpacing.xs)
-                        .background(ExecuteColor.parchment.opacity(0.9))
+                        .padding(.horizontal, 14)
+                        .padding(.top, 6)
+                        .padding(.bottom, 5)
+                        .background(ExecuteColor.parchment.opacity(0.98))
                 }
             }
             .fullScreenCover(
@@ -68,28 +68,40 @@ struct ExecuteTabBar: View {
         HStack(spacing: 0) {
             ForEach(AppTab.allCases) { tab in
                 Button { select(tab) } label: {
-                    VStack(spacing: 3) {
+                    VStack(spacing: 2) {
                         Image(systemName: tab.symbolName)
-                            .font(.system(size: tab == .track ? 18 : 16, weight: .semibold))
-                            .frame(width: 38, height: 34)
-                            .background(tab == .track ? ExecuteColor.chartreuse : .clear)
-                            .clipShape(Circle())
-                        Text(tab.title).font(ExecuteTypography.caption(9))
+                            .font(.system(size: tab == .track ? 16 : 15, weight: .semibold))
+                            .frame(width: tab == .track ? 34 : 30, height: tab == .track ? 34 : 30)
+                            .background {
+                                if tab == .track {
+                                    Circle().fill(ExecuteColor.chartreuse.opacity(0.82))
+                                } else if tab == selectedTab {
+                                    Circle().fill(ExecuteColor.chartreuse.opacity(0.075))
+                                }
+                            }
+                        Text(tab.title)
+                            .font(ExecuteTypography.caption(8))
                     }
-                    .foregroundStyle(tab == selectedTab || tab == .track ? ExecuteColor.chartreuseDark : ExecuteColor.mist)
+                    .foregroundStyle(
+                        tab == .track ? ExecuteColor.charcoal :
+                            tab == selectedTab ? ExecuteColor.chartreuseDark : ExecuteColor.olive
+                    )
                     .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(ExecutePressStyle())
                 .accessibilityLabel(tab.title)
             }
         }
-        .padding(.horizontal, ExecuteSpacing.xs)
-        .padding(.vertical, ExecuteSpacing.xs)
-        .background(.ultraThinMaterial)
-        .background(ExecuteColor.parchmentLight.opacity(0.96))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(ExecuteColor.chartreuse.opacity(0.12)))
-        .shadow(color: ExecuteColor.charcoal.opacity(0.15), radius: 16, y: 4)
+        .padding(.horizontal, ExecuteSpacing.xxs)
+        .padding(.vertical, 5)
+        .background(ExecuteColor.parchmentLight.opacity(0.98))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(ExecuteColor.warmBorder.opacity(0.74), lineWidth: 0.75)
+        }
+        .shadow(color: ExecuteColor.charcoal.opacity(0.08), radius: 12, y: 2)
     }
 }
 

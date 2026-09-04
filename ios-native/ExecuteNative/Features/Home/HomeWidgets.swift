@@ -10,9 +10,10 @@ private enum HomeSurfaceLevel {
 
     var background: Color {
         switch self {
-        case .plan: ExecuteColor.chartreuse.opacity(0.13)
-        case .elevated, .utility: ExecuteColor.parchmentLight
-        case .quiet: ExecuteColor.parchmentLight.opacity(0.76)
+        case .plan: ExecuteHomeStyle.planWash
+        case .elevated: ExecuteColor.parchmentLight
+        case .utility: ExecuteColor.parchmentLight.opacity(0.93)
+        case .quiet: ExecuteColor.parchmentLight.opacity(0.72)
         case .positive: ExecuteHomeStyle.positiveWash
         }
     }
@@ -28,20 +29,20 @@ private enum HomeSurfaceLevel {
 
     var border: Color {
         switch self {
-        case .plan: ExecuteColor.chartreuse.opacity(0.44)
-        case .elevated: ExecuteColor.warmBorder.opacity(0.55)
-        case .utility: ExecuteColor.warmBorder.opacity(0.42)
-        case .quiet: ExecuteColor.warmBorder.opacity(0.28)
+        case .plan: ExecuteHomeStyle.accentBorder
+        case .elevated: ExecuteColor.warmBorder.opacity(0.68)
+        case .utility: ExecuteColor.warmBorder.opacity(0.46)
+        case .quiet: ExecuteColor.warmBorder.opacity(0.24)
         case .positive: ExecuteHomeStyle.accentBorder
         }
     }
 
     var shadow: (color: Color, radius: CGFloat, y: CGFloat) {
         switch self {
-        case .plan: (ExecuteColor.chartreuse.opacity(0.09), 10, 3)
+        case .plan: (ExecuteColor.charcoal.opacity(0.04), 6, 1)
         case .elevated: ExecuteHomeStyle.heroShadow
-        case .utility, .quiet: ExecuteHomeStyle.utilityShadow
-        case .positive: (ExecuteColor.chartreuse.opacity(0.08), 8, 2)
+        case .utility, .positive: ExecuteHomeStyle.utilityShadow
+        case .quiet: (ExecuteColor.charcoal.opacity(0.018), 2, 1)
         }
     }
 }
@@ -68,58 +69,68 @@ struct HomePlanBanner: View {
             if let plan = snapshot.activePlan {
                 let isRest = HomeCalculations.isRestDay(snapshot.overviewDay)
                 let priority = snapshot.overviewDay?.priority ?? snapshot.overviewDay?.dayFocus ?? plan.resolvedPlanSummary?.primaryGoal
-                VStack(alignment: .leading, spacing: ExecuteSpacing.xs) {
+                VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: ExecuteSpacing.xs) {
-                        Image(systemName: "sparkles").font(.system(size: 12, weight: .bold))
-                        Text("TODAY'S PERFORMANCE PLAN").font(ExecuteTypography.caption(10).weight(.bold))
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("TODAY'S PERFORMANCE PLAN")
+                            .font(ExecuteTypography.caption(9).weight(.semibold))
+                            .tracking(0.55)
                         Spacer()
                         if let label = isRest ? "Recovery day" : snapshot.overviewDay?.dayType == "training" || snapshot.overviewDay?.trainingType != nil ? "Training day" : nil {
                             Text(label)
-                                .font(ExecuteTypography.caption(10).weight(.semibold))
+                                .font(ExecuteTypography.caption(9).weight(.medium))
+                                .foregroundStyle(ExecuteColor.olive)
                                 .padding(.horizontal, ExecuteSpacing.xs)
-                                .padding(.vertical, 3)
-                                .background(isRest ? ExecuteColor.parchmentCard : ExecuteColor.chartreuse.opacity(0.2))
+                                .padding(.vertical, 4)
+                                .background(ExecuteColor.parchmentLight.opacity(0.86))
+                                .overlay {
+                                    Capsule().stroke(ExecuteColor.warmBorder.opacity(0.7), lineWidth: 0.75)
+                                }
                                 .clipShape(Capsule())
                         }
                     }
                     .foregroundStyle(ExecuteColor.chartreuseDark)
                     if let priority, !priority.isEmpty {
                         Text(priority)
-                            .font(ExecuteTypography.display(21))
+                            .font(ExecuteTypography.title(18))
                             .foregroundStyle(ExecuteColor.charcoal)
-                            .lineSpacing(1)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(ExecuteSpacing.md)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 13)
                 .homeSurface(.plan)
             } else if isLoading {
-                VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
-                    Capsule().fill(ExecuteColor.chartreuseDark.opacity(0.22)).frame(width: 104, height: 10)
-                    RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).fill(ExecuteColor.chartreuse.opacity(0.18)).frame(height: 40)
+                VStack(alignment: .leading, spacing: 10) {
+                    Capsule().fill(ExecuteColor.chartreuseDark.opacity(0.16)).frame(width: 104, height: 8)
+                    RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).fill(ExecuteColor.warmBorder.opacity(0.56)).frame(height: 32)
                 }
-                .padding(ExecuteSpacing.md)
+                .padding(14)
                 .homeSurface(.plan)
                 .redacted(reason: .placeholder)
             } else {
-                VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
+                VStack(alignment: .leading, spacing: 10) {
                     Label("GET STARTED", systemImage: "sparkles")
-                        .font(ExecuteTypography.caption(10).weight(.bold))
+                        .font(ExecuteTypography.caption(9).weight(.semibold))
+                        .tracking(0.55)
                         .foregroundStyle(ExecuteColor.chartreuseDark)
                     Button(action: openPlan) {
                         HStack {
-                            Text("Build my Performance Plan").font(ExecuteTypography.label(15).weight(.bold))
+                            Text("Build my Performance Plan").font(ExecuteTypography.label(14).weight(.semibold))
                             Spacer()
-                            Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold))
+                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
                         }
                         .foregroundStyle(ExecuteColor.charcoal)
-                        .padding(.horizontal, ExecuteSpacing.md)
-                        .frame(height: 48)
-                        .background(ExecuteColor.chartreuse)
+                        .padding(.horizontal, 14)
+                        .frame(height: 44)
+                        .background(ExecuteColor.chartreuse.opacity(0.84))
                         .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
                     }
                     .buttonStyle(ExecutePressStyle())
                 }
-                .padding(ExecuteSpacing.md)
+                .padding(14)
                 .homeSurface(.plan)
             }
         }
@@ -136,60 +147,60 @@ struct HomeCalorieBalanceCard: View {
     private var remaining: Double? { budget.map { $0 - consumed } }
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: ExecuteSpacing.sm) {
-                HStack(spacing: ExecuteSpacing.xxs) {
-                    Image(systemName: "flame.fill").font(.system(size: 13)).foregroundStyle(ExecuteColor.chartreuseDark)
-                    Text("Calories").font(ExecuteTypography.label(13).weight(.bold))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: ExecuteSpacing.sm) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("CALORIE BALANCE", systemImage: "flame.fill")
+                        .font(ExecuteTypography.caption(9).weight(.semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(ExecuteColor.olive)
                     if let remaining {
-                        Text("· \(Int(abs(remaining))) \(remaining < 0 ? "over" : "left")")
-                            .font(ExecuteTypography.caption(11).weight(.semibold))
-                            .foregroundStyle(remaining < 0 ? ExecuteColor.destructive : ExecuteColor.mist)
+                        Text("\(Int(abs(remaining))) kcal \(remaining < 0 ? "over" : "left")")
+                            .font(ExecuteTypography.title(18))
+                            .foregroundStyle(remaining < 0 ? ExecuteColor.destructive : ExecuteColor.charcoal)
                     }
-                    Spacer()
-                    Button(action: openLogFood) {
-                        Label("Log", systemImage: "plus")
-                            .font(ExecuteTypography.caption(11).weight(.bold))
-                            .padding(.horizontal, ExecuteSpacing.xs)
-                            .frame(height: 28)
-                            .background(ExecuteColor.chartreuse)
-                            .clipShape(Capsule())
-                            .foregroundStyle(ExecuteColor.charcoal)
-                    }
-                    .buttonStyle(ExecutePressStyle())
                 }
-
-                if burned > 0, let budget {
-                    Label("+\(Int(burned)) kcal exercise bonus · budget \(Int(budget)) kcal", systemImage: "bolt.fill")
+                Spacer()
+                Button(action: openLogFood) {
+                    Label("Log", systemImage: "plus")
                         .font(ExecuteTypography.caption(10).weight(.semibold))
-                        .foregroundStyle(ExecuteColor.chartreuseDark)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, ExecuteSpacing.xs)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
                         .background(ExecuteHomeStyle.accentWash)
+                        .foregroundStyle(ExecuteColor.chartreuseDark)
+                        .clipShape(Capsule())
                         .overlay {
-                            RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous)
-                                .stroke(ExecuteHomeStyle.accentBorder)
+                            Capsule().stroke(ExecuteHomeStyle.accentBorder, lineWidth: 0.75)
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
                 }
-
-                HStack(spacing: ExecuteSpacing.lg) {
-                    HomeMetricRing(
-                        value: consumed,
-                        total: budget,
-                        title: "eaten",
-                        tint: (remaining ?? 0) < 0 ? ExecuteColor.destructive : ExecuteColor.chartreuse,
-                        showsCompactValue: true
-                    )
-                    Rectangle().fill(ExecuteColor.warmBorder).frame(width: 1, height: 40)
-                    HomeMetricRing(value: burned, total: 1_000, title: "burned", tint: ExecuteColor.destructive, showsCompactValue: true)
-                }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(ExecutePressStyle())
             }
-            .padding(.horizontal, ExecuteSpacing.md)
-            .padding(.vertical, ExecuteSpacing.sm)
+
+            if burned > 0, let budget {
+                Label("+\(Int(burned)) kcal exercise bonus · \(Int(budget)) kcal budget", systemImage: "bolt.fill")
+                    .font(ExecuteTypography.caption(9).weight(.medium))
+                    .foregroundStyle(ExecuteColor.olive)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, ExecuteSpacing.xs)
+                    .padding(.vertical, 6)
+                    .background(ExecuteColor.parchmentCard.opacity(0.72))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
+            HStack(spacing: 20) {
+                HomeMetricRing(
+                    value: consumed,
+                    total: budget,
+                    title: "eaten",
+                    tint: (remaining ?? 0) < 0 ? ExecuteColor.destructive : ExecuteColor.chartreuseDark,
+                    showsCompactValue: true
+                )
+                Rectangle().fill(ExecuteColor.warmBorder.opacity(0.8)).frame(width: 1, height: 36)
+                HomeMetricRing(value: burned, total: 1_000, title: "burned", tint: ExecuteColor.destructive, showsCompactValue: true)
+            }
+            .frame(maxWidth: .infinity)
         }
+        .padding(14)
         .homeSurface(.elevated)
     }
 }
@@ -213,35 +224,31 @@ struct HomeReadinessCard: View {
     let caption: String?
     let openRecovery: () -> Void
 
-    private var surface: HomeSurfaceLevel {
-        guard let score = readiness?.readinessScore, score >= 80 else { return .utility }
-        return .positive
-    }
-
     var body: some View {
         Button(action: openRecovery) {
-            VStack {
-                VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
-                    HStack {
-                        Text("READINESS").font(ExecuteTypography.caption(10).weight(.bold)).foregroundStyle(ExecuteColor.mist)
-                        Spacer()
-                        if let caption {
-                            Text(caption).font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.chartreuseDark)
-                        }
-                    }
-                    if let score = readiness?.readinessScore {
-                        HStack(alignment: .lastTextBaseline, spacing: ExecuteSpacing.xs) {
-                            Text("\(Int(score.rounded()))").font(ExecuteTypography.display(30)).foregroundStyle(ExecuteColor.chartreuseDark)
-                            Text("/100").font(ExecuteTypography.caption(12)).foregroundStyle(ExecuteColor.mist)
-                        }
-                        HomeProgressBar(progress: score / 100, tint: ExecuteColor.chartreuse, height: 8)
-                    } else {
-                        Text("Tap to check in →").font(ExecuteTypography.caption(12).weight(.semibold)).foregroundStyle(ExecuteColor.chartreuseDark)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("READINESS")
+                        .font(ExecuteTypography.caption(9).weight(.semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(ExecuteColor.olive)
+                    Spacer()
+                    if let caption {
+                        Text(caption).font(ExecuteTypography.caption(9).weight(.medium)).foregroundStyle(ExecuteColor.chartreuseDark)
                     }
                 }
-                .padding(ExecuteSpacing.md)
+                if let score = readiness?.readinessScore {
+                    HStack(alignment: .lastTextBaseline, spacing: ExecuteSpacing.xs) {
+                        Text("\(Int(score.rounded()))").font(ExecuteTypography.title(27)).foregroundStyle(ExecuteColor.charcoal)
+                        Text("/100").font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.olive)
+                    }
+                    HomeProgressBar(progress: score / 100, tint: ExecuteColor.chartreuseDark, height: 6)
+                } else {
+                    Text("Tap to check in →").font(ExecuteTypography.caption(11).weight(.medium)).foregroundStyle(ExecuteColor.chartreuseDark)
+                }
             }
-            .homeSurface(surface)
+            .padding(14)
+            .homeSurface(.utility)
         }
         .buttonStyle(ExecutePressStyle())
     }
@@ -276,32 +283,35 @@ struct HomeQuickLinks: View {
     let openMyWeek: () -> Void
 
     var body: some View {
-        VStack(spacing: ExecuteSpacing.xs) {
+        VStack(spacing: ExecuteHomeStyle.relatedGap) {
             Button(action: openWorkout) {
                 HStack(spacing: ExecuteSpacing.sm) {
                     Image(systemName: isRestDay ? "leaf.fill" : "dumbbell.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 40, height: 40)
-                        .background(isRestDay ? ExecuteColor.chartreuse.opacity(0.14) : ExecuteColor.chartreuseLight.opacity(0.36))
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(ExecuteColor.chartreuseDark)
+                        .frame(width: 36, height: 36)
+                        .background(ExecuteHomeStyle.accentWash)
                         .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 2) {
                         Text(workoutTitle)
-                            .font(ExecuteTypography.label(16).weight(.bold))
+                            .font(ExecuteTypography.label(15).weight(.semibold))
                             .lineLimit(2)
-                        Text(workoutDetail).font(ExecuteTypography.caption(11)).opacity(0.62)
+                        Text(workoutDetail)
+                            .font(ExecuteTypography.caption(10))
+                            .foregroundStyle(ExecuteColor.olive)
                     }
                     Spacer()
-                    Image(systemName: "play.fill").font(.system(size: 13, weight: .semibold)).opacity(0.6)
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ExecuteColor.charcoal)
+                        .frame(width: 32, height: 32)
+                        .background(ExecuteColor.chartreuse.opacity(0.82))
+                        .clipShape(Circle())
                 }
-                .padding(.horizontal, ExecuteSpacing.md)
-                .frame(minHeight: 82)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 72)
                 .foregroundStyle(ExecuteColor.charcoal)
-                .background(isRestDay ? ExecuteColor.parchmentLight : ExecuteColor.chartreuse)
-                .clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.heroRadius, style: .continuous))
-                .overlay {
-                    if isRestDay { RoundedRectangle(cornerRadius: ExecuteHomeStyle.heroRadius, style: .continuous).stroke(ExecuteColor.warmBorder) }
-                }
-                .shadow(color: isRestDay ? ExecuteColor.charcoal.opacity(0.07) : ExecuteColor.chartreuse.opacity(0.38), radius: isRestDay ? 6 : 18, y: 3)
+                .homeSurface(.elevated)
             }
             .buttonStyle(HomeHapticPressStyle())
             .redacted(reason: isLoading ? .placeholder : [])
@@ -341,48 +351,49 @@ struct HomeDailyChecklistCard: View {
     let customize: () -> Void
 
     var body: some View {
-        VStack {
-            VStack(spacing: ExecuteSpacing.sm) {
-                HStack {
-                    Text("TODAY'S ACTIONS").font(ExecuteTypography.caption(10).weight(.bold)).foregroundStyle(ExecuteColor.mist)
-                    Spacer()
-                    Button(action: openWeek) {
-                        Label("Full week", systemImage: "chevron.right")
-                            .labelStyle(.titleAndIcon)
-                            .font(ExecuteTypography.caption(10))
-                            .foregroundStyle(ExecuteColor.mist)
-                    }
-                }
-                Divider().overlay(ExecuteColor.parchmentCard)
-                if isLoading {
-                    HStack(spacing: ExecuteSpacing.xs) {
-                        ProgressView().tint(ExecuteColor.chartreuseDark)
-                        Text("Building your daily checklist…").font(ExecuteTypography.body(14)).foregroundStyle(ExecuteColor.mist)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, ExecuteSpacing.md)
-                } else {
-                    HomeProgressBar(progress: progress, tint: ExecuteColor.chartreuse, height: 6)
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        Button { toggle(item) } label: { HomeChecklistRow(item: item) }
-                            .buttonStyle(ExecutePressStyle())
-                        if index < items.count - 1 {
-                            Divider().overlay(ExecuteColor.warmBorder.opacity(0.65))
-                        }
-                    }
-                    Button(action: customize) {
-                        Label("Customize Checklist", systemImage: "slider.horizontal.3")
-                            .font(ExecuteTypography.caption(12).weight(.semibold))
-                            .foregroundStyle(ExecuteColor.mist)
-                            .frame(maxWidth: .infinity, minHeight: 40)
-                            .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous).stroke(ExecuteColor.warmBorder))
-                    }
-                    .buttonStyle(ExecutePressStyle())
+        VStack(spacing: ExecuteSpacing.sm) {
+            HStack {
+                Text("TODAY'S ACTIONS")
+                    .font(ExecuteTypography.caption(9).weight(.semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(ExecuteColor.olive)
+                Spacer()
+                Button(action: openWeek) {
+                    Label("Full week", systemImage: "chevron.right")
+                        .labelStyle(.titleAndIcon)
+                        .font(ExecuteTypography.caption(10))
+                        .foregroundStyle(ExecuteColor.mist)
                 }
             }
-            .padding(ExecuteSpacing.md)
-            .homeSurface(.utility)
+            Divider().overlay(ExecuteColor.parchmentCard)
+            if isLoading {
+                HStack(spacing: ExecuteSpacing.xs) {
+                    ProgressView().tint(ExecuteColor.chartreuseDark)
+                    Text("Building your daily checklist…").font(ExecuteTypography.body(14)).foregroundStyle(ExecuteColor.mist)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, ExecuteSpacing.md)
+            } else {
+                HomeProgressBar(progress: progress, tint: ExecuteColor.chartreuseDark, height: 5)
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    Button { toggle(item) } label: { HomeChecklistRow(item: item) }
+                        .buttonStyle(ExecutePressStyle())
+                    if index < items.count - 1 {
+                        Divider().overlay(ExecuteColor.warmBorder.opacity(0.65))
+                    }
+                }
+                Button(action: customize) {
+                    Label("Customize Checklist", systemImage: "slider.horizontal.3")
+                        .font(ExecuteTypography.caption(11).weight(.medium))
+                        .foregroundStyle(ExecuteColor.olive)
+                        .frame(maxWidth: .infinity, minHeight: 36)
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(ExecuteColor.warmBorder.opacity(0.8)))
+                }
+                .buttonStyle(ExecutePressStyle())
+            }
         }
+        .padding(ExecuteSpacing.md)
+        .homeSurface(.utility)
     }
 
     private var progress: Double {
@@ -403,8 +414,8 @@ struct HomeProgressSnapshot: View {
                 VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
                     HStack {
                         Label("Progress", systemImage: "chart.line.uptrend.xyaxis")
-                            .font(ExecuteTypography.caption(12).weight(.bold))
-                            .foregroundStyle(ExecuteColor.mist)
+                            .font(ExecuteTypography.caption(10).weight(.semibold))
+                            .foregroundStyle(ExecuteColor.olive)
                         Spacer()
                         Button(action: openProgress) {
                             Label("View Progress", systemImage: "chevron.right")
@@ -413,8 +424,8 @@ struct HomeProgressSnapshot: View {
                         }
                     }
                     Text("\(onTrack) of \(goals.count) goal\(goals.count == 1 ? "" : "s") on track")
-                        .font(ExecuteTypography.label(15).weight(.semibold))
-                    HomeProgressBar(progress: progress, tint: ExecuteColor.chartreuse, height: 6)
+                        .font(ExecuteTypography.label(14).weight(.semibold))
+                    HomeProgressBar(progress: progress, tint: ExecuteColor.chartreuseDark, height: 5)
                     Text("\(Int((progress * 100).rounded()))% overall progress")
                         .font(ExecuteTypography.caption(10)).foregroundStyle(ExecuteColor.mist)
                 }
@@ -433,15 +444,15 @@ private struct HomeMetricRing: View {
     let showsCompactValue: Bool
 
     var body: some View {
-        VStack(spacing: ExecuteSpacing.xs) {
-            HomeRing(progress: total.map { value / $0 } ?? 0, tint: tint, lineWidth: 7) {
-                Text(displayValue).font(ExecuteTypography.title(15).weight(.bold)).foregroundStyle(tint)
-                Text(title).font(ExecuteTypography.caption(8)).foregroundStyle(ExecuteColor.mist)
+        VStack(spacing: 6) {
+            HomeRing(progress: total.map { value / $0 } ?? 0, tint: tint, lineWidth: 5.5, size: 64) {
+                Text(displayValue).font(ExecuteTypography.label(14).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
+                Text(title).font(ExecuteTypography.caption(8)).foregroundStyle(ExecuteColor.olive)
             }
             if let total {
-                Text("\(Int(min(max(value / total, 0), 1) * 100))% of total").font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.mist)
+                Text("\(Int(min(max(value / total, 0), 1) * 100))% of total").font(ExecuteTypography.caption(9).weight(.medium)).foregroundStyle(ExecuteColor.olive)
             } else {
-                Text("Log activity").font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.mist)
+                Text("Log activity").font(ExecuteTypography.caption(9).weight(.medium)).foregroundStyle(ExecuteColor.olive)
             }
         }
     }
@@ -462,19 +473,19 @@ private struct HomeMacroRing: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: ExecuteSpacing.xs) {
-                HomeRing(progress: target.map { consumed / $0 } ?? 0, tint: isOver ? ExecuteColor.destructive : tint, lineWidth: 5, size: 58) {
-                    Text("\(Int(consumed.rounded()))").font(ExecuteTypography.caption(11).weight(.bold)).foregroundStyle(ringTint)
-                    Text("g").font(ExecuteTypography.caption(8)).foregroundStyle(ExecuteColor.mist)
+            VStack(spacing: 6) {
+                HomeRing(progress: target.map { consumed / $0 } ?? 0, tint: ringTint, lineWidth: 4.5, size: 52) {
+                    Text("\(Int(consumed.rounded()))").font(ExecuteTypography.caption(11).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
+                    Text("g").font(ExecuteTypography.caption(8)).foregroundStyle(ExecuteColor.olive)
                 }
-                Text(title).font(ExecuteTypography.caption(10).weight(.bold)).foregroundStyle(ringTint)
+                Text(title).font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
                 Text(target.map { isOver ? "+\(Int((consumed - $0).rounded()))g" : "/ \(Int($0.rounded()))g" } ?? "Set target")
                     .font(ExecuteTypography.caption(9))
-                    .foregroundStyle(isOver ? ExecuteColor.destructive : tint.opacity(0.9))
+                    .foregroundStyle(isOver ? ExecuteColor.destructive : ExecuteColor.olive)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, ExecuteSpacing.sm)
-            .homeSurface(.utility)
+            .padding(.vertical, 10)
+            .homeSurface(.quiet)
         }
         .buttonStyle(ExecutePressStyle())
     }
@@ -500,7 +511,7 @@ private struct HomeRing<Content: View>: View {
 
     var body: some View {
         ZStack {
-            Circle().stroke(ExecuteColor.warmBorder.opacity(0.75), lineWidth: lineWidth)
+            Circle().stroke(ExecuteColor.warmBorder.opacity(0.92), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: min(max(progress, 0), 1))
                 .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
@@ -525,14 +536,14 @@ private struct HomeVitalTile: View {
         VStack(spacing: 5) {
             Image(systemName: vital.symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(progress >= 0.8 ? ExecuteColor.chartreuseDark : ExecuteColor.mist)
             Text(displayValue)
-                .font(ExecuteTypography.caption(11).weight(.bold))
+                .font(ExecuteTypography.caption(11).weight(.semibold))
                 .foregroundStyle(ExecuteColor.charcoal)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             Text(vital.title).font(ExecuteTypography.caption(9)).foregroundStyle(ExecuteColor.mist)
-            if goal != nil { HomeProgressBar(progress: progress, tint: progress >= 1 ? ExecuteColor.chartreuse : ExecuteColor.chartreuseLight, height: 2) }
+            if goal != nil { HomeProgressBar(progress: progress, tint: ExecuteColor.chartreuseDark.opacity(progress >= 1 ? 1 : 0.58), height: 2) }
         }
-        .frame(maxWidth: .infinity, minHeight: 78)
+        .frame(maxWidth: .infinity, minHeight: 72)
         .padding(.horizontal, 4)
         .homeSurface(progress >= 1 ? .positive : .quiet)
     }
@@ -583,7 +594,7 @@ private struct HomeChecklistRow: View {
     var body: some View {
         HStack(spacing: ExecuteSpacing.sm) {
             Image(systemName: item.completed ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 23, weight: .semibold))
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(item.completed ? ExecuteColor.chartreuseDark : ExecuteColor.warmBorder)
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title).font(ExecuteTypography.body(14).weight(.medium)).foregroundStyle(item.completed ? ExecuteColor.mist : ExecuteColor.charcoal).strikethrough(item.completed, color: ExecuteColor.mist)
@@ -592,10 +603,10 @@ private struct HomeChecklistRow: View {
             Spacer(minLength: 4)
             Circle().fill(dotColor).frame(width: 6, height: 6)
         }
-        .padding(.vertical, ExecuteSpacing.xs)
+        .padding(.vertical, 7)
         .padding(.horizontal, ExecuteSpacing.xxs)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(item.completed ? ExecuteColor.chartreuse.opacity(0.06) : .clear)
+        .background(item.completed ? ExecuteColor.chartreuse.opacity(0.035) : .clear)
         .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
     }
 
@@ -618,18 +629,18 @@ private struct HomeQuickLink: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: ExecuteSpacing.xs) {
+            VStack(spacing: 6) {
                 Image(systemName: symbol)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(ExecuteColor.chartreuseDark)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 30, height: 30)
                     .background(ExecuteHomeStyle.accentWash)
                     .clipShape(Circle())
-                Text(title).font(ExecuteTypography.label(11).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
+                Text(title).font(ExecuteTypography.label(10).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
                 Text(subtitle).font(ExecuteTypography.caption(9)).foregroundStyle(ExecuteColor.mist).lineLimit(1)
             }
-            .frame(maxWidth: .infinity, minHeight: 80)
-            .homeSurface(.utility)
+            .frame(maxWidth: .infinity, minHeight: 72)
+            .homeSurface(.quiet)
         }
         .buttonStyle(ExecutePressStyle())
     }
@@ -642,7 +653,7 @@ struct HomeProgressBar: View {
 
     var body: some View {
         GeometryReader { proxy in
-            Capsule().fill(ExecuteColor.warmBorder)
+            Capsule().fill(ExecuteColor.warmBorder.opacity(0.82))
             Capsule().fill(tint)
                 .frame(width: proxy.size.width * min(max(progress, 0), 1))
                 .animation(.easeOut(duration: 0.8), value: progress)

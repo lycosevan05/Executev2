@@ -23,17 +23,19 @@ enum ExecuteShadow {
 }
 
 enum ExecuteHomeStyle {
-    static let screenInset: CGFloat = 18
-    static let sectionGap: CGFloat = 16
-    static let relatedGap: CGFloat = 10
-    static let heroRadius: CGFloat = 26
-    static let cardRadius: CGFloat = 22
-    static let utilityRadius: CGFloat = 18
-    static let heroShadow = (color: ExecuteColor.charcoal.opacity(0.10), radius: CGFloat(16), y: CGFloat(5))
-    static let utilityShadow = (color: ExecuteColor.charcoal.opacity(0.055), radius: CGFloat(7), y: CGFloat(2))
-    static let accentWash = ExecuteColor.chartreuse.opacity(0.12)
-    static let positiveWash = ExecuteColor.chartreuse.opacity(0.075)
-    static let accentBorder = ExecuteColor.chartreuseDark.opacity(0.24)
+    static let screenInset: CGFloat = 16
+    static let sectionGap: CGFloat = 12
+    static let relatedGap: CGFloat = 8
+    static let bottomContentInset: CGFloat = 56
+    static let heroRadius: CGFloat = 18
+    static let cardRadius: CGFloat = 16
+    static let utilityRadius: CGFloat = 14
+    static let heroShadow = (color: ExecuteColor.charcoal.opacity(0.065), radius: CGFloat(10), y: CGFloat(3))
+    static let utilityShadow = (color: ExecuteColor.charcoal.opacity(0.035), radius: CGFloat(4), y: CGFloat(1))
+    static let planWash = ExecuteColor.chartreuse.opacity(0.055)
+    static let accentWash = ExecuteColor.chartreuse.opacity(0.075)
+    static let positiveWash = ExecuteColor.chartreuse.opacity(0.045)
+    static let accentBorder = ExecuteColor.chartreuseDark.opacity(0.14)
 }
 
 enum ExecuteMotion {

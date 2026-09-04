@@ -8,6 +8,14 @@ struct HomeView: View {
     }
 }
 
+private struct HomeScrollOffsetPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 private struct HomeScreen: View {
     @ObservedObject private var appState: AppState
     @StateObject private var model: HomeViewModel
@@ -41,10 +49,20 @@ struct HomeDashboardView: View {
     @State private var isCustomizationPresented = false
     @State private var isChecklistCustomizationPresented = false
     @State private var selectedVital: HomeVital?
+    @State private var isHeaderScrolled = false
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: ExecuteHomeStyle.sectionGap) {
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(
+                            key: HomeScrollOffsetPreferenceKey.self,
+                            value: proxy.frame(in: .named("homeScroll")).minY
+                        )
+                }
+                .frame(height: 0)
+
                 if let error = model.error, model.snapshot.activePlan == nil, model.snapshot.dailyLog == nil, model.snapshot.userProfile == nil {
                     HomeLoadError(error: error) { Task { await model.refresh() } }
                         .padding(.top, ExecuteSpacing.xl)
@@ -59,8 +77,16 @@ struct HomeDashboardView: View {
                 }
             }
             .padding(.horizontal, ExecuteHomeStyle.screenInset)
-            .padding(.top, ExecuteSpacing.sm)
-            .padding(.bottom, ExecuteSpacing.xl)
+            .padding(.top, ExecuteSpacing.xs)
+            .padding(.bottom, ExecuteHomeStyle.bottomContentInset)
+        }
+        .coordinateSpace(name: "homeScroll")
+        .onPreferenceChange(HomeScrollOffsetPreferenceKey.self) { offset in
+            let scrolled = offset < -1
+            guard scrolled != isHeaderScrolled else { return }
+            withAnimation(ExecuteMotion.quick) {
+                isHeaderScrolled = scrolled
+            }
         }
         .scrollIndicators(.hidden)
         .background(ExecuteColor.parchment)
@@ -95,23 +121,35 @@ struct HomeDashboardView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: ExecuteSpacing.sm) {
-            Text("\(model.greeting), \(model.userName)")
-                .font(ExecuteTypography.display(31))
-                .foregroundStyle(ExecuteColor.charcoal)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
-            HStack(spacing: ExecuteSpacing.xs) {
-                HomeHeaderButton(symbol: "chart.line.uptrend.xyaxis", label: "Progress", isAccented: true, action: model.openProgress)
+        HStack(alignment: .center, spacing: ExecuteSpacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.greeting.uppercased())
+                    .font(ExecuteTypography.caption(9).weight(.semibold))
+                    .tracking(0.7)
+                    .foregroundStyle(ExecuteColor.olive)
+                Text(model.userName)
+                    .font(ExecuteTypography.title(21))
+                    .foregroundStyle(ExecuteColor.charcoal)
+                    .lineSpacing(1)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .layoutPriority(1)
+            HStack(spacing: 6) {
+                HomeHeaderButton(symbol: "chart.line.uptrend.xyaxis", label: "Progress", action: model.openProgress)
                 HomeHeaderButton(symbol: "slider.horizontal.3", label: "Customize Home", isActive: isCustomizationPresented) { isCustomizationPresented = true }
                 HomeHeaderButton(symbol: "person", label: "Profile", action: model.openProfile)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, ExecuteSpacing.md)
-        .background(ExecuteColor.parchmentLight.opacity(0.95))
-        .overlay(alignment: .bottom) { Rectangle().fill(ExecuteColor.warmBorder).frame(height: 1) }
+        .padding(.horizontal, ExecuteHomeStyle.screenInset)
+        .padding(.vertical, 10)
+        .background(ExecuteColor.parchmentLight.opacity(0.97))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(ExecuteColor.warmBorder.opacity(0.8))
+                .frame(height: 1)
+                .opacity(isHeaderScrolled ? 0 : 1)
+        }
     }
 
     @ViewBuilder
@@ -168,19 +206,23 @@ private struct HomeHeaderButton: View {
     let symbol: String
     let label: String
     var isActive = false
-    var isAccented = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 17, weight: .semibold))
-                .frame(width: 54, height: 54)
-                .background(isActive ? ExecuteColor.chartreuse : isAccented ? ExecuteHomeStyle.accentWash : ExecuteColor.parchmentLight)
-                .foregroundStyle(isActive ? ExecuteColor.charcoal : isAccented ? ExecuteColor.chartreuseDark : ExecuteColor.olive)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .background(isActive ? ExecuteColor.chartreuse.opacity(0.82) : ExecuteColor.parchmentCard.opacity(0.72))
+                .foregroundStyle(isActive ? ExecuteColor.charcoal : ExecuteColor.olive)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(isActive ? ExecuteColor.chartreuse : isAccented ? ExecuteHomeStyle.accentBorder : ExecuteColor.warmBorder))
-                .shadow(color: ExecuteColor.charcoal.opacity(0.06), radius: 4, y: 1)
+                .overlay {
+                    Circle().stroke(
+                        isActive ? ExecuteColor.chartreuseDark.opacity(0.18) : ExecuteColor.warmBorder.opacity(0.72),
+                        lineWidth: 0.75
+                    )
+                }
+                .shadow(color: ExecuteColor.charcoal.opacity(0.035), radius: 3, y: 1)
         }
         .buttonStyle(ExecutePressStyle())
         .accessibilityLabel(label)
