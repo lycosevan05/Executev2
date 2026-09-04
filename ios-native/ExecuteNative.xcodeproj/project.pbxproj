@@ -92,7 +92,7 @@
 		A92B0906738C5FF28CB0ADA4 /* ExecuteNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecuteNativeApp.swift; sourceTree = "<group>"; };
 		AA851B22239363903CA153C0 /* HomeWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgets.swift; sourceTree = "<group>"; };
 		AB3080B9E9C4815740681B95 /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Regular.ttf"; sourceTree = "<group>"; };
-		BB9C0E626B8D77B300AE13F4 /* ExecuteNative.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ExecuteNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB9C0E626B8D77B300AE13F4 /* ExecuteNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExecuteNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C11EFD7478D2625E8E186EF2 /* UserScopedCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserScopedCacheStore.swift; sourceTree = "<group>"; };
 		DA57A33EF34467162754C1C8 /* Inter-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-SemiBold.ttf"; sourceTree = "<group>"; };
 		E1203330B79D6F86279CD8F3 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
@@ -488,6 +488,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 58GZDC8UKY;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ExecuteNative/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -667,6 +668,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 58GZDC8UKY;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ExecuteNative/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;

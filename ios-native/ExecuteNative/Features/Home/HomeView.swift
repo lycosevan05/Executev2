@@ -135,15 +135,22 @@ struct HomeDashboardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .layoutPriority(1)
+            Spacer(minLength: ExecuteSpacing.xs)
             HStack(spacing: 6) {
-                HomeHeaderButton(symbol: "chart.line.uptrend.xyaxis", label: "Progress", action: model.openProgress)
+                HomeHeaderButton(symbol: "chart.line.uptrend.xyaxis", label: "Progress", isAccented: true, action: model.openProgress)
                 HomeHeaderButton(symbol: "slider.horizontal.3", label: "Customize Home", isActive: isCustomizationPresented) { isCustomizationPresented = true }
                 HomeHeaderButton(symbol: "person", label: "Profile", action: model.openProfile)
             }
         }
         .padding(.horizontal, ExecuteHomeStyle.screenInset)
-        .padding(.vertical, 10)
-        .background(ExecuteColor.parchmentLight.opacity(0.97))
+        .padding(.top, ExecuteSpacing.xs)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            ExecuteColor.parchmentLight
+                .opacity(0.985)
+                .ignoresSafeArea(edges: .top)
+        }
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(ExecuteColor.warmBorder.opacity(0.8))
@@ -206,6 +213,7 @@ private struct HomeHeaderButton: View {
     let symbol: String
     let label: String
     var isActive = false
+    var isAccented = false
     let action: () -> Void
 
     var body: some View {
@@ -213,12 +221,19 @@ private struct HomeHeaderButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .semibold))
                 .frame(width: 44, height: 44)
-                .background(isActive ? ExecuteColor.chartreuse.opacity(0.82) : ExecuteColor.parchmentCard.opacity(0.72))
-                .foregroundStyle(isActive ? ExecuteColor.charcoal : ExecuteColor.olive)
+                .background(
+                    isActive ? ExecuteColor.chartreuse.opacity(0.86) :
+                        isAccented ? ExecuteHomeStyle.accentWash : ExecuteColor.parchmentCard.opacity(0.72)
+                )
+                .foregroundStyle(
+                    isActive ? ExecuteColor.charcoal :
+                        isAccented ? ExecuteColor.chartreuseDark : ExecuteColor.olive
+                )
                 .clipShape(Circle())
                 .overlay {
                     Circle().stroke(
-                        isActive ? ExecuteColor.chartreuseDark.opacity(0.18) : ExecuteColor.warmBorder.opacity(0.72),
+                        isActive ? ExecuteHomeStyle.actionBorder :
+                            isAccented ? ExecuteHomeStyle.accentBorder : ExecuteColor.warmBorder.opacity(0.72),
                         lineWidth: 0.75
                     )
                 }

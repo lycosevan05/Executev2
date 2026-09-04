@@ -3,6 +3,7 @@ import UIKit
 
 private enum HomeSurfaceLevel {
     case plan
+    case action
     case elevated
     case utility
     case quiet
@@ -11,6 +12,7 @@ private enum HomeSurfaceLevel {
     var background: Color {
         switch self {
         case .plan: ExecuteHomeStyle.planWash
+        case .action: ExecuteHomeStyle.actionWash
         case .elevated: ExecuteColor.parchmentLight
         case .utility: ExecuteColor.parchmentLight.opacity(0.93)
         case .quiet: ExecuteColor.parchmentLight.opacity(0.72)
@@ -20,7 +22,7 @@ private enum HomeSurfaceLevel {
 
     var radius: CGFloat {
         switch self {
-        case .plan: ExecuteHomeStyle.heroRadius
+        case .plan, .action: ExecuteHomeStyle.heroRadius
         case .elevated: ExecuteHomeStyle.cardRadius
         case .utility, .quiet: ExecuteHomeStyle.utilityRadius
         case .positive: ExecuteHomeStyle.utilityRadius
@@ -30,6 +32,7 @@ private enum HomeSurfaceLevel {
     var border: Color {
         switch self {
         case .plan: ExecuteHomeStyle.accentBorder
+        case .action: ExecuteHomeStyle.actionBorder
         case .elevated: ExecuteColor.warmBorder.opacity(0.68)
         case .utility: ExecuteColor.warmBorder.opacity(0.46)
         case .quiet: ExecuteColor.warmBorder.opacity(0.24)
@@ -40,6 +43,7 @@ private enum HomeSurfaceLevel {
     var shadow: (color: Color, radius: CGFloat, y: CGFloat) {
         switch self {
         case .plan: (ExecuteColor.charcoal.opacity(0.04), 6, 1)
+        case .action: (ExecuteColor.charcoal.opacity(0.08), 10, 3)
         case .elevated: ExecuteHomeStyle.heroShadow
         case .utility, .positive: ExecuteHomeStyle.utilityShadow
         case .quiet: (ExecuteColor.charcoal.opacity(0.018), 2, 1)
@@ -288,9 +292,9 @@ struct HomeQuickLinks: View {
                 HStack(spacing: ExecuteSpacing.sm) {
                     Image(systemName: isRestDay ? "leaf.fill" : "dumbbell.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(ExecuteColor.chartreuseDark)
+                        .foregroundStyle(ExecuteColor.charcoal)
                         .frame(width: 36, height: 36)
-                        .background(ExecuteHomeStyle.accentWash)
+                        .background(ExecuteColor.parchmentLight.opacity(0.58))
                         .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 2) {
                         Text(workoutTitle)
@@ -298,20 +302,20 @@ struct HomeQuickLinks: View {
                             .lineLimit(2)
                         Text(workoutDetail)
                             .font(ExecuteTypography.caption(10))
-                            .foregroundStyle(ExecuteColor.olive)
+                            .foregroundStyle(ExecuteColor.charcoal.opacity(0.62))
                     }
                     Spacer()
                     Image(systemName: "play.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(ExecuteColor.charcoal)
+                        .foregroundStyle(ExecuteColor.chartreuse)
                         .frame(width: 32, height: 32)
-                        .background(ExecuteColor.chartreuse.opacity(0.82))
+                        .background(ExecuteColor.charcoal)
                         .clipShape(Circle())
                 }
                 .padding(.horizontal, 14)
                 .frame(minHeight: 72)
                 .foregroundStyle(ExecuteColor.charcoal)
-                .homeSurface(.elevated)
+                .homeSurface(.action)
             }
             .buttonStyle(HomeHapticPressStyle())
             .redacted(reason: isLoading ? .placeholder : [])
@@ -511,7 +515,7 @@ private struct HomeRing<Content: View>: View {
 
     var body: some View {
         ZStack {
-            Circle().stroke(ExecuteColor.warmBorder.opacity(0.92), lineWidth: lineWidth)
+            Circle().stroke(tint.opacity(0.16), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: min(max(progress, 0), 1))
                 .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))

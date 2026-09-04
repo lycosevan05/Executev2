@@ -19,7 +19,18 @@ private struct StartupRootView: View {
             case .needsConfiguration(let error):
                 ConfigurationRequiredView(error: error)
             case .signedOut:
+#if DEBUG
+                HomeDashboardView(model: .preview(name: "Evan"))
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        ExecuteTabBar(selectedTab: .home) { _ in }
+                            .padding(.horizontal, 14)
+                            .padding(.top, 6)
+                            .padding(.bottom, 5)
+                            .background(ExecuteColor.parchment.opacity(0.98))
+                    }
+#else
                 AuthenticationView()
+#endif
             case .signedIn:
                 AppShellView()
             case .failed(let error):
