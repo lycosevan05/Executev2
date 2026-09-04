@@ -10,9 +10,11 @@
 		00C1CA52B1519CF664D97CE9 /* MockAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130C56739539C3606A2AB883 /* MockAuthService.swift */; };
 		05BE7D4F82A1DBD1F4AD2BCC /* AuthenticationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A60F8FF3D9A5482C38D70B4 /* AuthenticationView.swift */; };
 		0DC524645649FDBC536A04D3 /* Inter-Black.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4F03909BE4F868E80928116B /* Inter-Black.ttf */; };
+		0FFA1D6A03A9CFB4DC07E83C /* TrackViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4182B2544CD74C40B79639D /* TrackViewModel.swift */; };
 		164FA7B3E6B90DD4D73DC1EE /* ExecuteColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19685455ADA731B6B15C455F /* ExecuteColor.swift */; };
 		1EC911A1C43AB411B0EEB2C8 /* HomeWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA851B22239363903CA153C0 /* HomeWidgets.swift */; };
 		29994091E86649DB014EAE7F /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA3E9CE48B014F06A52D7A5 /* AppRoute.swift */; };
+		29BF107CFA1F93EAE3463CC4 /* TrackModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D9C4D6921022A9D0D54D3B /* TrackModels.swift */; };
 		325BDA0D21034BDD712F4EAD /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = AB3080B9E9C4815740681B95 /* Inter-Regular.ttf */; };
 		34DD6AFEB5A7CB12BE9CD30B /* AppError.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDE19026836585F142B1F968 /* AppError.swift */; };
 		3861D9699A6BEBD5708A069F /* HomeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4898504D72805AC3199C7803 /* HomeModels.swift */; };
@@ -24,6 +26,7 @@
 		4EA02EA02CF792C3E2113DA7 /* Inter-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2A59F3B086D3485D60C69DE6 /* Inter-Bold.ttf */; };
 		56B14DE1F16867DC4C6375D4 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = 15F6F97421330AEB501479E4 /* RevenueCat */; };
 		5A5161C7F2C1E3B8C6436303 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F5E76FBDDAA19F40D793C13 /* AppConfiguration.swift */; };
+		64197BCB035C7C466B9E8675 /* TrackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC2171484021C0EB55F67E1 /* TrackView.swift */; };
 		679DFEE1F10288B701434311 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2221B359588BC554E4FB1B58 /* RootView.swift */; };
 		68CD7745C4D6D3378B71E71A /* Inter-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 29448B0F94DFC92FBB0D8894 /* Inter-Light.ttf */; };
 		6F03E8C2D37190E56093C3A0 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17207BBC6015E0CC6A3E9F6F /* AIService.swift */; };
@@ -87,11 +90,14 @@
 		9A3624492CC0ED3D35C400F1 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		9A59C524FE6894E87AA00C09 /* ExecuteComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecuteComponents.swift; sourceTree = "<group>"; };
 		9CC4B8E976FAC9EBC90C488F /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		9EC2171484021C0EB55F67E1 /* TrackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackView.swift; sourceTree = "<group>"; };
 		A318512948BBB8B2878D0DBD /* JSONBCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONBCompatibilityTests.swift; sourceTree = "<group>"; };
+		A4182B2544CD74C40B79639D /* TrackViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackViewModel.swift; sourceTree = "<group>"; };
 		A5BBA482D564AB560A2B2927 /* SupabaseAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseAuthService.swift; sourceTree = "<group>"; };
 		A92B0906738C5FF28CB0ADA4 /* ExecuteNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecuteNativeApp.swift; sourceTree = "<group>"; };
 		AA851B22239363903CA153C0 /* HomeWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgets.swift; sourceTree = "<group>"; };
 		AB3080B9E9C4815740681B95 /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Regular.ttf"; sourceTree = "<group>"; };
+		B3D9C4D6921022A9D0D54D3B /* TrackModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackModels.swift; sourceTree = "<group>"; };
 		BB9C0E626B8D77B300AE13F4 /* ExecuteNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExecuteNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C11EFD7478D2625E8E186EF2 /* UserScopedCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserScopedCacheStore.swift; sourceTree = "<group>"; };
 		DA57A33EF34467162754C1C8 /* Inter-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-SemiBold.ttf"; sourceTree = "<group>"; };
@@ -114,6 +120,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		2495A67770E83A6EFE9A603C /* Track */ = {
+			isa = PBXGroup;
+			children = (
+				B3D9C4D6921022A9D0D54D3B /* TrackModels.swift */,
+				9EC2171484021C0EB55F67E1 /* TrackView.swift */,
+				A4182B2544CD74C40B79639D /* TrackViewModel.swift */,
+			);
+			path = Track;
+			sourceTree = "<group>";
+		};
 		34424C650976727C5D0807C9 = {
 			isa = PBXGroup;
 			children = (
@@ -198,6 +214,7 @@
 				3D31A340934C4E52F1B65DC9 /* Authentication */,
 				F98A283C73DE688D43F8B964 /* Home */,
 				F41E624B3DED75C81AD11FC5 /* Shell */,
+				2495A67770E83A6EFE9A603C /* Track */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -466,6 +483,9 @@
 				8F75865E4C9F2453A99A5AA6 /* SupabaseDataService.swift in Sources */,
 				DF7D321FB02CC306E1AA41A8 /* SupabaseRealtimeService.swift in Sources */,
 				CF3A66F63D81837A64E4B36E /* SupabaseStorageService.swift in Sources */,
+				29BF107CFA1F93EAE3463CC4 /* TrackModels.swift in Sources */,
+				64197BCB035C7C466B9E8675 /* TrackView.swift in Sources */,
+				0FFA1D6A03A9CFB4DC07E83C /* TrackViewModel.swift in Sources */,
 				C7C0E98E3B7E7CA689255560 /* UserScopedCacheStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -488,7 +508,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 58GZDC8UKY;
+				DEVELOPMENT_TEAM = 8Y298D8N52;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ExecuteNative/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -668,7 +688,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 58GZDC8UKY;
+				DEVELOPMENT_TEAM = 8Y298D8N52;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ExecuteNative/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;

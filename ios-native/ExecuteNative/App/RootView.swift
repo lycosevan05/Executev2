@@ -1,10 +1,34 @@
 import SwiftUI
 
+enum AppPreviewDestination: Equatable {
+    case home
+    case track
+}
+
+enum AppLaunchOptions {
+    static let homePreviewArgument = "-execute-home-preview"
+    static let trackPreviewArgument = "-execute-track-preview"
+
+    static func previewDestination(arguments: [String] = ProcessInfo.processInfo.arguments) -> AppPreviewDestination? {
+#if DEBUG
+        if arguments.contains(trackPreviewArgument) { return .track }
+        if arguments.contains(homePreviewArgument) { return .home }
+        return nil
+#else
+        nil
+#endif
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
     var body: some View {
-        StartupRootView(appState: environment.appState)
+        if let destination = AppLaunchOptions.previewDestination() {
+            FeaturePreviewRootView(destination: destination)
+        } else {
+            StartupRootView(appState: environment.appState)
+        }
     }
 }
 
@@ -19,18 +43,7 @@ private struct StartupRootView: View {
             case .needsConfiguration(let error):
                 ConfigurationRequiredView(error: error)
             case .signedOut:
-#if DEBUG
-                HomeDashboardView(model: .preview(name: "Evan"))
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        ExecuteTabBar(selectedTab: .home) { _ in }
-                            .padding(.horizontal, 14)
-                            .padding(.top, 6)
-                            .padding(.bottom, 5)
-                            .background(ExecuteColor.parchment.opacity(0.98))
-                    }
-#else
                 AuthenticationView()
-#endif
             case .signedIn:
                 AppShellView()
             case .failed(let error):
@@ -41,6 +54,28 @@ private struct StartupRootView: View {
             }
         }
         .task { await appState.start() }
+    }
+}
+
+private struct FeaturePreviewRootView: View {
+    let destination: AppPreviewDestination
+
+    var body: some View {
+        NavigationStack {
+            switch destination {
+            case .home:
+                HomeDashboardView(model: .preview(name: "Evan"))
+            case .track:
+                TrackDashboardView(model: .preview())
+            }
+        }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                ExecuteTabBar(selectedTab: destination == .home ? .home : .track) { _ in }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 6)
+                    .padding(.bottom, 5)
+                    .background(ExecuteColor.parchment.opacity(0.98))
+            }
     }
 }
 

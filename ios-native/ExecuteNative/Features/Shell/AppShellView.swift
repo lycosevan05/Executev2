@@ -49,13 +49,23 @@ private struct AppShellContentView: View {
             Group {
                 if tab == .home {
                     HomeView()
+                } else if tab == .track {
+                    TrackView()
                 } else {
                     TabPlaceholderView(tab: tab)
                 }
             }
-            .navigationDestination(for: AppRoute.self) { route in
-                RoutePlaceholderView(route: route)
-            }
+            .navigationDestination(for: AppRoute.self, destination: destination)
+        }
+    }
+
+    @ViewBuilder
+    private func destination(for route: AppRoute) -> some View {
+        switch route {
+        case .trackingHistory:
+            TrackHistoryView()
+        default:
+            RoutePlaceholderView(route: route)
         }
     }
 }

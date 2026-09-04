@@ -1,6 +1,63 @@
 import XCTest
 @testable import ExecuteNative
 
+final class LaunchOptionsTests: XCTestCase {
+    func testFeaturePreviewsRequireExplicitLaunchArguments() {
+        XCTAssertNil(AppLaunchOptions.previewDestination(arguments: []))
+        XCTAssertEqual(
+            AppLaunchOptions.previewDestination(arguments: [AppLaunchOptions.homePreviewArgument]),
+            .home
+        )
+        XCTAssertEqual(
+            AppLaunchOptions.previewDestination(arguments: [AppLaunchOptions.trackPreviewArgument]),
+            .track
+        )
+    }
+}
+
+final class TrackLogicTests: XCTestCase {
+    func testAdditiveMetricsAccumulateOnTheExistingDailyLog() throws {
+        var existing = TrackDailyLog.empty(date: "2026-09-03")
+        existing.steps = 4_200
+
+        let mutation = try XCTUnwrap(
+            TrackLogMutation.applying(.number(800), for: .steps, to: existing, date: "2026-09-03")
+        )
+
+        XCTAssertEqual(mutation.log.steps, 5_000)
+        XCTAssertEqual(mutation.patch, .object(["steps": .number(5_000)]))
+    }
+
+    func testReplacementMetricsReplaceRatherThanAccumulate() throws {
+        var existing = TrackDailyLog.empty(date: "2026-09-03")
+        existing.caloriesBurned = 250
+
+        let mutation = try XCTUnwrap(
+            TrackLogMutation.applying(.number(400), for: .caloriesBurned, to: existing, date: "2026-09-03")
+        )
+
+        XCTAssertEqual(mutation.log.caloriesBurned, 400)
+        XCTAssertEqual(mutation.patch, .object(["calories_burned": .number(400)]))
+    }
+
+    func testHabitMutationTrimsAndDeduplicatesValues() throws {
+        let mutation = try XCTUnwrap(
+            TrackLogMutation.applying(
+                .habits([" Meditation ", "Meditation", "", "Stretch 10min"]),
+                for: .habits,
+                to: nil,
+                date: "2026-09-03"
+            )
+        )
+
+        XCTAssertEqual(mutation.log.habitsCompleted, ["Meditation", "Stretch 10min"])
+    }
+
+    func testOutOfRangeMetricIsRejected() {
+        XCTAssertNil(TrackLogMutation.applying(.number(6), for: .mood, to: nil, date: "2026-09-03"))
+    }
+}
+
 final class JSONBCompatibilityTests: XCTestCase {
     func testRepresentativePayloadIgnoresUnknownJSONBFieldsAndPreservesRawData() throws {
         let json = """
