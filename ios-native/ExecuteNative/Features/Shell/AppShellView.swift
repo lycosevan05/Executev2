@@ -53,6 +53,10 @@ private struct AppShellContentView: View {
                     TrackView()
                 } else if tab == .nutrition {
                     NutritionView()
+                } else if tab == .workouts {
+                    TrainView()
+                } else if tab == .plan {
+                    PlanView()
                 } else {
                     TabPlaceholderView(tab: tab)
                 }
