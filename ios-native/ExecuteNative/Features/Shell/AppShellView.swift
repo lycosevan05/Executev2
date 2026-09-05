@@ -114,12 +114,12 @@ struct ExecuteTabBar: View {
         .padding(.horizontal, ExecuteSpacing.xxs)
         .padding(.vertical, 5)
         .background(ExecuteColor.parchmentLight.opacity(0.98))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.heroRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(ExecuteColor.warmBorder.opacity(0.74), lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: ExecuteHomeStyle.heroRadius, style: .continuous)
+                .stroke(ExecuteColor.warmBorder.opacity(0.58), lineWidth: 0.75)
         }
-        .shadow(color: ExecuteColor.charcoal.opacity(0.08), radius: 12, y: 2)
+        .shadow(color: ExecuteColor.charcoal.opacity(0.085), radius: 16, y: 5)
     }
 }
 

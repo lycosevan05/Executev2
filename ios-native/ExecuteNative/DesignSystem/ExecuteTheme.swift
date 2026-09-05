@@ -11,15 +11,17 @@ enum ExecuteSpacing {
 }
 
 enum ExecuteRadius {
-    static let small: CGFloat = 10
-    static let card: CGFloat = 16
+    // Large radii make primary surfaces feel composed and tactile instead of boxed in.
+    static let small: CGFloat = 12
+    static let card: CGFloat = 22
+    static let compact: CGFloat = 16
     static let pill: CGFloat = 999
 }
 
 enum ExecuteShadow {
-    static let card = (color: ExecuteColor.charcoal.opacity(0.09), radius: CGFloat(10), y: CGFloat(2))
-    static let raised = (color: ExecuteColor.charcoal.opacity(0.12), radius: CGFloat(20), y: CGFloat(4))
-    static let lime = (color: ExecuteColor.chartreuse.opacity(0.38), radius: CGFloat(18), y: CGFloat(4))
+    static let card = (color: ExecuteColor.charcoal.opacity(0.085), radius: CGFloat(16), y: CGFloat(5))
+    static let raised = (color: ExecuteColor.charcoal.opacity(0.12), radius: CGFloat(26), y: CGFloat(8))
+    static let lime = (color: ExecuteColor.chartreuse.opacity(0.32), radius: CGFloat(20), y: CGFloat(5))
 }
 
 enum ExecuteHomeStyle {
@@ -27,11 +29,11 @@ enum ExecuteHomeStyle {
     static let sectionGap: CGFloat = 12
     static let relatedGap: CGFloat = 8
     static let bottomContentInset: CGFloat = 56
-    static let heroRadius: CGFloat = 18
-    static let cardRadius: CGFloat = 16
-    static let utilityRadius: CGFloat = 14
-    static let heroShadow = (color: ExecuteColor.charcoal.opacity(0.065), radius: CGFloat(10), y: CGFloat(3))
-    static let utilityShadow = (color: ExecuteColor.charcoal.opacity(0.035), radius: CGFloat(4), y: CGFloat(1))
+    static let heroRadius: CGFloat = 28
+    static let cardRadius: CGFloat = 22
+    static let utilityRadius: CGFloat = 16
+    static let heroShadow = (color: ExecuteColor.charcoal.opacity(0.075), radius: CGFloat(16), y: CGFloat(5))
+    static let utilityShadow = (color: ExecuteColor.charcoal.opacity(0.045), radius: CGFloat(8), y: CGFloat(2))
     static let planWash = ExecuteColor.chartreuse.opacity(0.09)
     static let actionWash = ExecuteColor.chartreuse.opacity(0.72)
     static let accentWash = ExecuteColor.chartreuse.opacity(0.11)

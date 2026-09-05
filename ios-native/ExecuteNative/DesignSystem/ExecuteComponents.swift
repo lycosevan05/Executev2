@@ -79,7 +79,7 @@ struct ExecuteCard<Content: View>: View {
         content
             .background(ExecuteColor.parchmentLight)
             .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous).stroke(ExecuteColor.warmBorder.opacity(0.8)))
+            .overlay(RoundedRectangle(cornerRadius: ExecuteRadius.card, style: .continuous).stroke(ExecuteColor.warmBorder.opacity(0.58), lineWidth: 0.8))
             .shadow(color: ExecuteShadow.card.color, radius: ExecuteShadow.card.radius, y: ExecuteShadow.card.y)
     }
 }
