@@ -51,6 +51,8 @@ private struct AppShellContentView: View {
                     HomeView()
                 } else if tab == .track {
                     TrackView()
+                } else if tab == .nutrition {
+                    NutritionView()
                 } else {
                     TabPlaceholderView(tab: tab)
                 }
@@ -64,6 +66,8 @@ private struct AppShellContentView: View {
         switch route {
         case .trackingHistory:
             TrackHistoryView()
+        case .logFood(let date):
+            FoodLogView(initialDate: date)
         default:
             RoutePlaceholderView(route: route)
         }

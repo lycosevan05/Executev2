@@ -95,16 +95,18 @@ final class SupabaseDataService: EntityDataServicing {
     }
 }
 
+@MainActor
 protocol EdgeFunctionInvoking {
-    func invoke<Request: Encodable, Response: Decodable>(_ name: String, request: Request, response: Response.Type) async throws -> Response
+    func invoke<Request: Encodable & Sendable, Response: Decodable & Sendable>(_ name: String, request: Request, response: Response.Type) async throws -> Response
 }
 
+@MainActor
 final class SupabaseEdgeFunctionService: EdgeFunctionInvoking {
     private let client: SupabaseClient
 
     init(client: SupabaseClient) { self.client = client }
 
-    func invoke<Request: Encodable, Response: Decodable>(_ name: String, request: Request, response: Response.Type) async throws -> Response {
+    func invoke<Request: Encodable & Sendable, Response: Decodable & Sendable>(_ name: String, request: Request, response: Response.Type) async throws -> Response {
         let result: Response = try await client.functions.invoke(name, options: .init(body: request), decoder: .execute)
         return result
     }

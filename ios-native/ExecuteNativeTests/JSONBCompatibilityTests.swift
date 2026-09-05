@@ -12,6 +12,111 @@ final class LaunchOptionsTests: XCTestCase {
             AppLaunchOptions.previewDestination(arguments: [AppLaunchOptions.trackPreviewArgument]),
             .track
         )
+        XCTAssertEqual(
+            AppLaunchOptions.previewDestination(arguments: [AppLaunchOptions.nutritionPreviewArgument]),
+            .nutrition
+        )
+    }
+}
+
+final class NutritionLogicTests: XCTestCase {
+    func testManualEntryTrimsNameAndMapsBackendFields() throws {
+        let draft = NutritionEntryDraft(
+            name: "  Chicken rice bowl  ",
+            mealType: .lunch,
+            calories: 680,
+            protein: 52,
+            carbs: 76,
+            fats: 18,
+            method: .manual
+        )
+
+        let payload = try XCTUnwrap(
+            NutritionEntryFactory.payload(from: draft, date: "2026-09-04", time: "12:42 PM")
+        )
+
+        XCTAssertEqual(payload.notes, "Chicken rice bowl")
+        XCTAssertEqual(payload.mealType, "lunch")
+        XCTAssertEqual(payload.totalCalories, 680)
+        XCTAssertEqual(payload.totalProteinG, 52)
+        XCTAssertEqual(payload.logMethod, "manual")
+    }
+
+    func testEmptyOrNutritionlessEntryIsRejected() {
+        XCTAssertNil(NutritionEntryFactory.payload(from: .empty, date: "2026-09-04"))
+
+        var draft = NutritionEntryDraft.empty
+        draft.name = "Black coffee"
+        XCTAssertNil(NutritionEntryFactory.payload(from: draft, date: "2026-09-04"))
+    }
+
+    func testFoodTotalsAndTickedMealsReconcileByFieldMaximum() throws {
+        let date = "2026-09-04"
+        let foodPayload = try XCTUnwrap(NutritionEntryFactory.payload(
+            from: NutritionEntryDraft(
+                name: "Breakfast",
+                mealType: .breakfast,
+                calories: 500,
+                protein: 40,
+                carbs: 65,
+                fats: 12,
+                method: .manual
+            ),
+            date: date
+        ))
+        let logs = [NutritionFoodLogRecord(id: UUID(), createdDate: nil, log: foodPayload)]
+        let meal = NutritionMeal(
+            mealType: "lunch",
+            type: nil,
+            name: "Planned lunch",
+            calories: 620,
+            protein: 35,
+            carbs: 55,
+            fats: 20,
+            fat: nil
+        )
+        let mealJSON = try JSONDecoder.execute.decode(
+            JSONValue.self,
+            from: JSONEncoder().encode(["lunch": meal])
+        )
+        let plan = NutritionMealPlan(
+            date: date,
+            sourcePlanID: nil,
+            generationBatchID: nil,
+            meals: mealJSON,
+            totalCalories: nil,
+            totalProteinG: nil,
+            totalCarbsG: nil,
+            totalFatsG: nil
+        )
+
+        let food = NutritionCalculations.foodTotals(logs)
+        let ticked = NutritionCalculations.tickedTotals(mealPlan: plan, completed: ["lunch"])
+        let reconciled = NutritionCalculations.reconcile(food, ticked)
+
+        XCTAssertEqual(reconciled.calories, 620)
+        XCTAssertEqual(reconciled.protein, 40)
+        XCTAssertEqual(reconciled.carbs, 65)
+        XCTAssertEqual(reconciled.fats, 20)
+    }
+
+    func testAIResultSplitsFoodsIntoIndependentDrafts() {
+        let estimate = NutritionAIEstimate(
+            foods: [
+                NutritionFoodItem(name: "Eggs", portion: "2", calories: 150, protein: 12, carbs: 1, fats: 10),
+                NutritionFoodItem(name: "Toast", portion: "1 slice", calories: 110, protein: 4, carbs: 20, fats: 2)
+            ],
+            totalCalories: 260,
+            totalProtein: 16,
+            totalCarbs: 21,
+            totalFats: 12
+        )
+
+        let drafts = estimate.drafts(mealType: .breakfast)
+
+        XCTAssertEqual(drafts.count, 2)
+        XCTAssertEqual(drafts.map(\.name), ["Eggs", "Toast"])
+        XCTAssertTrue(drafts.allSatisfy { $0.method == .ai && $0.mealType == .breakfast })
     }
 }
 

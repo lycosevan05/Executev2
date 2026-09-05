@@ -30,8 +30,9 @@ struct LLMTextResponse: Decodable, Sendable {
     var resolvedText: String? { outputText ?? text }
 }
 
+@MainActor
 protocol AIResponding {
-    func structuredResponse<Response: Decodable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response
+    func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response
     func textResponse(_ request: LLMRequest) async throws -> String
 }
 
@@ -40,7 +41,7 @@ final class SupabaseAIService: AIResponding {
 
     init(functions: EdgeFunctionInvoking) { self.functions = functions }
 
-    func structuredResponse<Response: Decodable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
+    func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
         do {
             return try await functions.invoke("invoke-llm", request: request, response: Response.self)
         } catch {
@@ -104,7 +105,7 @@ enum AIResponseNormalizer {
 }
 
 final class MockAIService: AIResponding {
-    func structuredResponse<Response: Decodable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
+    func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
         throw AppError(title: "Preview AI", message: "A preview has no configured AI response.")
     }
     func textResponse(_ request: LLMRequest) async throws -> String { "Preview response" }

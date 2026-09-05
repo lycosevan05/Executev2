@@ -15,6 +15,16 @@ The native target is iOS 16.0. This enables Swift Charts for the existing insigh
 
 `Local.xcconfig` is ignored. It may contain public mobile client keys, never Supabase service-role, OpenAI, Stripe secret, webhook secret, or private backend keys.
 
+### Debug feature previews
+
+Debug builds follow the normal authentication flow by default. For local UI work without a session, add one of these arguments to the scheme's **Arguments Passed On Launch**:
+
+- `-execute-home-preview` opens the Home dashboard with fixture data.
+- `-execute-track-preview` opens the Track dashboard with fixture data.
+- `-execute-nutrition-preview` opens the Nutrition dashboard with fixture data.
+
+These arguments are compiled out of Release behavior and must not be used as an authentication substitute.
+
 ## Core rules
 
 - `BackendRow` retains the database envelope and raw `data jsonb` payload. `EntityRecord<Payload>` supplies a typed view without discarding unknown JSON properties.
@@ -25,9 +35,17 @@ The native target is iOS 16.0. This enables Swift Charts for the existing insigh
 - RevenueCat uses the existing email as `appUserID` so its webhook continues to map subscriptions to `user_subscriptions`. It does not write that table from iOS.
 - `invoke-llm` remains the only AI boundary. The native client never has an OpenAI API key.
 
-## Deferred integrations
+## Native migration status
 
-The foundation includes typed auth, generic entity CRUD, `patch_record`, Edge Function invocation, cache consistency, AI response normalization, typed navigation, and RevenueCat entitlement state. Feature-specific realtime channel wiring, storage upload call sites, StoreKit purchase UI, and all product screens are deferred to their respective parity phases. The existing Capacitor behavior remains the reference contract.
+The foundation includes typed auth, generic entity CRUD, `patch_record`, Edge Function invocation, cache consistency, AI response normalization, typed navigation, and RevenueCat entitlement state.
+
+- Home is implemented as a native dashboard.
+- Track is implemented as a native daily-vitals flow, including optimistic Supabase writes, realtime refresh, user-scoped caching, configurable metrics, and 30-day history.
+- Nutrition and Log Food are implemented for date-based summaries, manual entries, secure AI text estimates, deletion, optimistic Supabase writes, realtime refresh, and delete-safe reconciliation with completed planned meals.
+- Train and Plan remain placeholders for their respective parity phases.
+- Nutrition camera/barcode capture, full meal-plan editing, storage upload call sites, and StoreKit purchase UI are still deferred.
+
+The existing Capacitor behavior remains the reference contract while each vertical slice is migrated.
 
 ## RevenueCat development setup
 
