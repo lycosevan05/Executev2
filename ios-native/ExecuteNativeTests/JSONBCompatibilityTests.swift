@@ -293,6 +293,16 @@ final class HomeLogicTests: XCTestCase {
         XCTAssertEqual(merged.fatsConsumedG, 40)
     }
 
+    func testDailyLogDecodesWorkoutCompletionWrittenByNativeSession() throws {
+        let value = try JSONDecoder.execute.decode(
+            HomeDailyLog.self,
+            from: Data("{\"date\":\"2026-09-24\",\"workout_done\":true,\"workout_duration_min\":42}".utf8)
+        )
+
+        XCTAssertEqual(value.workoutDone, true)
+        XCTAssertEqual(value.workoutDurationMinutes, 42)
+    }
+
     func testDecreasingGoalProgressUsesStartValue() {
         let goal = HomeGoal(status: "active", currentValue: 90, targetValue: 70, startValue: 110, targetDirection: "decrease")
         XCTAssertEqual(HomeCalculations.goalProgress(goal), 0.5, accuracy: 0.0001)
@@ -308,6 +318,64 @@ final class HomeLogicTests: XCTestCase {
         model.moveWidgets(from: IndexSet(integer: model.widgetOrder.count - 1), to: 0)
 
         XCTAssertEqual(model.visibleWidgets.first, .calorieBalance)
+    }
+}
+
+final class WorkoutSessionLogicTests: XCTestCase {
+    func testRepTargetsHandleRangesTimeAndAMRAP() {
+        XCTAssertEqual(
+            WorkoutSessionLogic.repTarget(from: .string("6-8")),
+            WorkoutRepTarget(label: "6–8 reps", midpoint: 7, isTime: false, isAMRAP: false)
+        )
+        XCTAssertEqual(
+            WorkoutSessionLogic.repTarget(from: .string("45 sec hold")),
+            WorkoutRepTarget(label: "45 sec hold", midpoint: nil, isTime: true, isAMRAP: false)
+        )
+        XCTAssertTrue(WorkoutSessionLogic.repTarget(from: .string("AMRAP")).isAMRAP)
+    }
+
+    func testRestParserUsesUpperRangeAndSafeDefault() {
+        XCTAssertEqual(WorkoutSessionLogic.restSeconds(from: "2-3 min"), 180)
+        XCTAssertEqual(WorkoutSessionLogic.restSeconds(from: "60-90 sec"), 90)
+        XCTAssertEqual(WorkoutSessionLogic.restSeconds(from: nil), 90)
+    }
+
+    func testDurationAndCaloriesAreBoundedByCompletedWork() {
+        let start = Date(timeIntervalSince1970: 0)
+        let now = Date(timeIntervalSince1970: 60 * 60)
+        let duration = WorkoutSessionLogic.durationMinutes(
+            startedAt: start,
+            now: now,
+            completedSets: 10,
+            engagedPlannedSets: 12
+        )
+
+        XCTAssertEqual(duration, 45)
+        XCTAssertEqual(
+            WorkoutSessionLogic.estimatedCalories(
+                weightKg: 75,
+                completedSets: 10,
+                engagedPlannedSets: 12,
+                durationMinutes: duration,
+                exertionLevel: "Hard"
+            ),
+            345
+        )
+    }
+
+    func testExerciseLogsPreserveCapacitorFieldNames() throws {
+        let log = WorkoutSessionExerciseLog(
+            exIdx: 2,
+            name: "Back Squat",
+            completedSetIndices: [0, 1, 2],
+            weight: 100,
+            reps: 6
+        )
+        let json = try WorkoutSessionLogic.jsonValue(from: log)
+
+        XCTAssertEqual(json["exIdx"]?.doubleValue, 2)
+        XCTAssertEqual(json["completedSetIndices"], .array([.number(0), .number(1), .number(2)]))
+        XCTAssertEqual(json["weight"]?.doubleValue, 100)
     }
 }
 

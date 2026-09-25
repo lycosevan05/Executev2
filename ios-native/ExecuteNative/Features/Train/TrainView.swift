@@ -378,3 +378,801 @@ private struct TrainInlineError: View {
     let retry: () -> Void
     var body: some View { HStack(spacing: ExecuteSpacing.sm) { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(ExecuteColor.destructive); Text(error.message).font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.charcoal).lineLimit(2); Spacer(); Button("Retry", action: retry).font(ExecuteTypography.caption(11).weight(.bold)).foregroundStyle(ExecuteColor.chartreuseDark) }.padding(ExecuteSpacing.sm).background(ExecuteColor.destructive.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.cardRadius, style: .continuous)) }
 }
+
+struct WorkoutSessionView: View {
+    let route: WorkoutSessionRoute
+    @EnvironmentObject private var environment: AppEnvironment
+
+    var body: some View {
+        WorkoutSessionScreen(route: route, environment: environment)
+    }
+}
+
+private struct WorkoutSessionScreen: View {
+    @ObservedObject private var appState: AppState
+    @StateObject private var model: WorkoutSessionViewModel
+
+    init(route: WorkoutSessionRoute, environment: AppEnvironment) {
+        _appState = ObservedObject(wrappedValue: environment.appState)
+        _model = StateObject(wrappedValue: WorkoutSessionViewModel(
+            route: route,
+            dataService: environment.dataService,
+            router: environment.router
+        ))
+    }
+
+    var body: some View {
+        Group {
+            switch model.stage {
+            case .loading:
+                WorkoutSessionLoadingView()
+            case .session:
+                WorkoutSessionActiveView(model: model)
+            case .checkIn:
+                WorkoutSessionCheckInView(model: model)
+            case .summary:
+                WorkoutSessionSummaryView(model: model)
+            }
+        }
+        .background(WorkoutSessionPalette.background.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .task(id: signedInUser?.id) {
+            if let signedInUser { await model.start(for: signedInUser) }
+        }
+    }
+
+    private var signedInUser: ExecuteUser? {
+        guard case .signedIn(let user) = appState.launchState else { return nil }
+        return user
+    }
+}
+
+private enum WorkoutSessionPalette {
+    static let background = Color(red: 15 / 255, green: 16 / 255, blue: 16 / 255)
+    static let surface = Color.white.opacity(0.045)
+    static let raisedSurface = Color.white.opacity(0.07)
+    static let border = Color.white.opacity(0.085)
+    static let primaryText = Color.white.opacity(0.96)
+    static let secondaryText = Color.white.opacity(0.56)
+    static let mutedText = Color.white.opacity(0.34)
+}
+
+private struct WorkoutSessionLoadingView: View {
+    var body: some View {
+        VStack(spacing: ExecuteSpacing.md) {
+            ProgressView().tint(ExecuteColor.chartreuse)
+            Text("Preparing your workout")
+                .font(ExecuteTypography.label(14))
+                .foregroundStyle(WorkoutSessionPalette.secondaryText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct WorkoutSessionActiveView: View {
+    @ObservedObject var model: WorkoutSessionViewModel
+    @State private var isExitDialogPresented = false
+    @State private var isCustomExercisePresented = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            progressBar
+
+            if let exercise = model.currentExercise {
+                exerciseNavigator
+                ScrollView {
+                    VStack(spacing: ExecuteSpacing.md) {
+                        if let error = model.error { sessionError(error) }
+                        WorkoutExerciseEditor(model: model, exercise: exercise)
+                            .id(model.currentExerciseIndex)
+                        sessionActions
+                        notesEditor
+                        Button { isCustomExercisePresented = true } label: {
+                            Label("Add custom exercise", systemImage: "plus.circle")
+                                .font(ExecuteTypography.label(13).weight(.semibold))
+                                .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(WorkoutSessionPalette.surface)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(ExecutePressStyle())
+
+                        Button(action: model.presentCheckIn) {
+                            Label("Finish workout", systemImage: "flag.fill")
+                                .font(ExecuteTypography.label(15).weight(.bold))
+                                .foregroundStyle(ExecuteColor.charcoal)
+                                .frame(maxWidth: .infinity, minHeight: 52)
+                                .background(ExecuteColor.chartreuse)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(ExecutePressStyle())
+                    }
+                    .padding(.horizontal, ExecuteSpacing.md)
+                    .padding(.top, ExecuteSpacing.sm)
+                    .padding(.bottom, ExecuteSpacing.xl)
+                }
+                .scrollIndicators(.hidden)
+                .scrollDismissesKeyboard(.interactively)
+            } else {
+                WorkoutSessionEmptyView(model: model)
+            }
+        }
+        .confirmationDialog("Leave this workout?", isPresented: $isExitDialogPresented, titleVisibility: .visible) {
+            Button("Save and exit") { Task { await model.saveAndClose() } }
+            Button("Discard session", role: .destructive) { Task { await model.discardAndClose() } }
+            Button("Keep training", role: .cancel) {}
+        } message: {
+            Text("Your progress can be saved so you can resume later, or the in-progress log can be discarded.")
+        }
+        .sheet(isPresented: $isCustomExercisePresented) {
+            WorkoutCustomExerciseSheet { name, sets, reps, muscles, notes in
+                model.addCustomExercise(name: name, sets: sets, reps: reps, muscles: muscles, notes: notes)
+                isCustomExercisePresented = false
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: ExecuteSpacing.sm) {
+            Button { isExitDialogPresented = true } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                    .frame(width: 42, height: 42)
+                    .background(WorkoutSessionPalette.raisedSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(ExecutePressStyle())
+            .accessibilityLabel("Close workout")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("WORKOUT IN PROGRESS")
+                    .font(ExecuteTypography.caption(9).weight(.bold))
+                    .foregroundStyle(ExecuteColor.chartreuse)
+                Text(model.workoutName)
+                    .font(ExecuteTypography.title(16))
+                    .foregroundStyle(WorkoutSessionPalette.primaryText)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: ExecuteSpacing.xs)
+            if model.isSaving {
+                ProgressView().tint(ExecuteColor.chartreuse).controlSize(.small)
+            } else {
+                Image(systemName: "checkmark.icloud")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(WorkoutSessionPalette.mutedText)
+                    .accessibilityLabel("Progress saved")
+            }
+        }
+        .padding(.horizontal, ExecuteSpacing.md)
+        .padding(.vertical, ExecuteSpacing.xs)
+        .background(WorkoutSessionPalette.background)
+    }
+
+    private var progressBar: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                WorkoutSessionPalette.border
+                ExecuteColor.chartreuse
+                    .frame(width: proxy.size.width * model.progress)
+                    .animation(ExecuteMotion.standard, value: model.progress)
+            }
+        }
+        .frame(height: 3)
+        .accessibilityValue("\(Int(model.progress * 100)) percent complete")
+    }
+
+    private var exerciseNavigator: some View {
+        HStack {
+            sessionNavigationButton(symbol: "chevron.left", enabled: model.currentExerciseIndex > 0) {
+                model.goToExercise(model.currentExerciseIndex - 1)
+            }
+            Spacer()
+            VStack(spacing: 3) {
+                Text(model.exercisePositionLabel)
+                    .font(ExecuteTypography.label(12).weight(.semibold))
+                    .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                Text("\(model.completedSetCount) of \(model.totalSetCount) sets")
+                    .font(ExecuteTypography.caption(10))
+                    .foregroundStyle(WorkoutSessionPalette.mutedText)
+            }
+            Spacer()
+            sessionNavigationButton(symbol: "chevron.right", enabled: model.currentExerciseIndex < model.exercises.count - 1) {
+                model.goToExercise(model.currentExerciseIndex + 1)
+            }
+        }
+        .padding(.horizontal, ExecuteSpacing.md)
+        .padding(.vertical, ExecuteSpacing.sm)
+    }
+
+    private func sessionNavigationButton(symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(enabled ? WorkoutSessionPalette.secondaryText : WorkoutSessionPalette.mutedText)
+                .frame(width: 38, height: 38)
+                .background(WorkoutSessionPalette.raisedSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(ExecutePressStyle())
+        .disabled(!enabled)
+    }
+
+    private var sessionActions: some View {
+        HStack(spacing: ExecuteSpacing.sm) {
+            Button(action: model.skipCurrentExercise) {
+                Label("Skip", systemImage: "forward.end")
+                    .font(ExecuteTypography.label(13).weight(.semibold))
+                    .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(WorkoutSessionPalette.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(ExecutePressStyle())
+
+            if model.currentExerciseIndex < model.exercises.count - 1 {
+                Button { model.goToExercise(model.currentExerciseIndex + 1) } label: {
+                    Label("Next", systemImage: "chevron.right")
+                        .font(ExecuteTypography.label(13).weight(.bold))
+                        .foregroundStyle(ExecuteColor.chartreuse)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(ExecuteColor.chartreuse.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(ExecutePressStyle())
+            }
+        }
+    }
+
+    private var notesEditor: some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.xs) {
+            Text("SESSION NOTES")
+                .font(ExecuteTypography.caption(9).weight(.bold))
+                .foregroundStyle(WorkoutSessionPalette.mutedText)
+            TextEditor(text: Binding(get: { model.notes }, set: model.updateNotes))
+                .font(ExecuteTypography.body(13))
+                .foregroundStyle(WorkoutSessionPalette.primaryText)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 72)
+                .padding(ExecuteSpacing.xs)
+                .background(WorkoutSessionPalette.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private func sessionError(_ error: AppError) -> some View {
+        HStack(spacing: ExecuteSpacing.xs) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(error.message).lineLimit(2)
+        }
+        .font(ExecuteTypography.caption(11))
+        .foregroundStyle(Color(red: 0.94, green: 0.54, blue: 0.38))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(ExecuteSpacing.sm)
+        .background(ExecuteColor.destructive.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct WorkoutExerciseEditor: View {
+    @ObservedObject var model: WorkoutSessionViewModel
+    let exercise: TrainWorkoutExercise
+
+    private var repTarget: WorkoutRepTarget { WorkoutSessionLogic.repTarget(from: exercise.reps) }
+    private var completedForExercise: Int {
+        (0..<exercise.setCount).filter { model.completedSets.contains("\(model.currentExerciseIndex)-\($0)") }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.md) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(exercise.name ?? "Exercise")
+                    .font(ExecuteTypography.title(23))
+                    .foregroundStyle(WorkoutSessionPalette.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let muscles = exercise.muscles, !muscles.isEmpty {
+                    Text(muscles)
+                        .font(ExecuteTypography.body(13))
+                        .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                }
+                if let cue = exercise.notes, !cue.isEmpty {
+                    Text(cue)
+                        .font(ExecuteTypography.caption(11))
+                        .foregroundStyle(WorkoutSessionPalette.mutedText)
+                        .padding(.top, 3)
+                }
+            }
+
+            HStack(spacing: ExecuteSpacing.xs) {
+                WorkoutSessionMetric(value: exercise.setCount > 0 ? "\(exercise.setCount)" : "-", label: "SETS", accent: true)
+                WorkoutSessionMetric(value: repTarget.label ?? exercise.repsLabel, label: "REPS", accent: true)
+                WorkoutSessionMetric(value: exercise.rest ?? "-", label: "REST", accent: false)
+            }
+
+            WorkoutRestTimer(defaultSeconds: WorkoutSessionLogic.restSeconds(from: exercise.rest))
+
+            WorkoutValueAdjuster(
+                title: "REPS COMPLETED",
+                value: "\(model.reps[model.currentExerciseIndex] ?? max(exercise.defaultRepCount, 1))",
+                decrement: { model.adjustReps(by: -1) },
+                increment: { model.adjustReps(by: 1) }
+            )
+
+            WorkoutValueAdjuster(
+                title: "WEIGHT (\(model.weightUnit.uppercased()))",
+                value: formattedWeight(model.weights[model.currentExerciseIndex] ?? 0),
+                decrement: { model.adjustWeight(by: -model.weightStep) },
+                increment: { model.adjustWeight(by: model.weightStep) }
+            )
+
+            VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
+                Text("\(completedForExercise)/\(exercise.setCount) SETS COMPLETE")
+                    .font(ExecuteTypography.caption(9).weight(.bold))
+                    .foregroundStyle(WorkoutSessionPalette.mutedText)
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 58), spacing: ExecuteSpacing.xs)], spacing: ExecuteSpacing.xs) {
+                    ForEach(0..<exercise.setCount, id: \.self) { index in
+                        let completed = model.completedSets.contains("\(model.currentExerciseIndex)-\(index)")
+                        Button { model.toggleSet(index) } label: {
+                            Group {
+                                if completed { Image(systemName: "checkmark").font(.system(size: 15, weight: .bold)) }
+                                else { Text("S\(index + 1)").font(ExecuteTypography.label(12).weight(.bold)) }
+                            }
+                            .foregroundStyle(completed ? ExecuteColor.chartreuse : WorkoutSessionPalette.secondaryText)
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                            .background(completed ? ExecuteColor.chartreuse.opacity(0.12) : WorkoutSessionPalette.raisedSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(completed ? ExecuteColor.chartreuse.opacity(0.42) : WorkoutSessionPalette.border, lineWidth: 1)
+                            }
+                        }
+                        .buttonStyle(ExecutePressStyle())
+                        .accessibilityLabel("Set \(index + 1), \(completed ? "complete" : "not complete")")
+                    }
+                }
+            }
+        }
+        .padding(ExecuteSpacing.md)
+        .background(WorkoutSessionPalette.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(WorkoutSessionPalette.border, lineWidth: 1)
+        }
+    }
+
+    private func formattedWeight(_ value: Double) -> String {
+        value == 0 ? "0" : value.rounded() == value ? "\(Int(value))" : String(format: "%.1f", value)
+    }
+}
+
+private struct WorkoutSessionMetric: View {
+    let value: String
+    let label: String
+    let accent: Bool
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(value)
+                .font(ExecuteTypography.label(13).weight(.bold))
+                .foregroundStyle(accent ? ExecuteColor.chartreuse : WorkoutSessionPalette.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            Text(label)
+                .font(ExecuteTypography.caption(8).weight(.bold))
+                .foregroundStyle(WorkoutSessionPalette.mutedText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 58)
+        .background(accent ? ExecuteColor.chartreuse.opacity(0.07) : WorkoutSessionPalette.raisedSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+}
+
+private struct WorkoutValueAdjuster: View {
+    let title: String
+    let value: String
+    let decrement: () -> Void
+    let increment: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.xs) {
+            Text(title)
+                .font(ExecuteTypography.caption(9).weight(.bold))
+                .foregroundStyle(WorkoutSessionPalette.mutedText)
+            HStack(spacing: ExecuteSpacing.xs) {
+                adjustButton(symbol: "minus", action: decrement)
+                Text(value)
+                    .font(ExecuteTypography.title(18))
+                    .foregroundStyle(WorkoutSessionPalette.primaryText)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(WorkoutSessionPalette.background.opacity(0.45))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                adjustButton(symbol: "plus", action: increment)
+            }
+        }
+    }
+
+    private func adjustButton(symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                .frame(width: 44, height: 44)
+                .background(WorkoutSessionPalette.raisedSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(ExecutePressStyle())
+    }
+}
+
+private struct WorkoutRestTimer: View {
+    @State private var target: Int
+    @State private var remaining: Int
+    @State private var isRunning = false
+
+    init(defaultSeconds: Int) {
+        _target = State(initialValue: defaultSeconds)
+        _remaining = State(initialValue: defaultSeconds)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.xs) {
+            HStack {
+                Text("REST TIMER")
+                    .font(ExecuteTypography.caption(9).weight(.bold))
+                    .foregroundStyle(WorkoutSessionPalette.mutedText)
+                Spacer()
+                Button("Reset") { isRunning = false; remaining = target }
+                    .font(ExecuteTypography.caption(9).weight(.semibold))
+                    .foregroundStyle(WorkoutSessionPalette.secondaryText)
+            }
+            HStack(spacing: ExecuteSpacing.xs) {
+                timerAdjustButton(symbol: "minus", delta: -15)
+                Button {
+                    if remaining <= 0 { remaining = target }
+                    isRunning.toggle()
+                } label: {
+                    HStack(spacing: ExecuteSpacing.xs) {
+                        Image(systemName: isRunning ? "pause.fill" : "play.fill")
+                            .font(.system(size: 13, weight: .bold))
+                        Text(timeLabel)
+                            .font(ExecuteTypography.title(22))
+                            .monospacedDigit()
+                    }
+                    .foregroundStyle(remaining <= 0 ? WorkoutSessionPalette.secondaryText : ExecuteColor.chartreuse)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(ExecuteColor.chartreuse.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(ExecutePressStyle())
+                timerAdjustButton(symbol: "plus", delta: 15)
+            }
+        }
+        .task(id: isRunning) {
+            while isRunning && remaining > 0 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, isRunning else { return }
+                remaining -= 1
+            }
+            if remaining <= 0 { isRunning = false }
+        }
+    }
+
+    private var timeLabel: String { String(format: "%02d:%02d", remaining / 60, remaining % 60) }
+
+    private func timerAdjustButton(symbol: String, delta: Int) -> some View {
+        Button {
+            isRunning = false
+            target = max(15, target + delta)
+            remaining = target
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                .frame(width: 44, height: 44)
+                .background(WorkoutSessionPalette.raisedSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(ExecutePressStyle())
+    }
+}
+
+private struct WorkoutSessionCheckInView: View {
+    @ObservedObject var model: WorkoutSessionViewModel
+    @State private var checkIn = WorkoutSessionCheckIn()
+
+    private let exertion = ["Easy", "Moderate", "Hard", "Very hard", "Max effort"]
+    private let feelings = ["Energized", "Good", "Tired", "Drained", "Sore", "Pain or discomfort"]
+    private let pain = ["No", "Yes, minor", "Yes, concerning"]
+    private let performance = ["Better than expected", "As expected", "Worse than expected"]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button(action: model.returnToSession) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                        .frame(width: 42, height: 42)
+                        .background(WorkoutSessionPalette.raisedSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(ExecutePressStyle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("POST-WORKOUT CHECK-IN")
+                        .font(ExecuteTypography.caption(9).weight(.bold))
+                        .foregroundStyle(ExecuteColor.chartreuse)
+                    Text("Finish strong")
+                        .font(ExecuteTypography.title(18))
+                        .foregroundStyle(WorkoutSessionPalette.primaryText)
+                }
+                Spacer()
+            }
+            .padding(ExecuteSpacing.md)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: ExecuteSpacing.lg) {
+                    if let error = model.error {
+                        Text(error.message)
+                            .font(ExecuteTypography.caption(11))
+                            .foregroundStyle(Color(red: 0.94, green: 0.54, blue: 0.38))
+                    }
+                    optionSection(title: "How hard did that feel?", options: exertion, selection: $checkIn.exertionLevel)
+
+                    VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
+                        checkInTitle("Rate your exertion", detail: "RPE \(checkIn.rpe) / 10")
+                        HStack(spacing: 5) {
+                            ForEach(1...10, id: \.self) { value in
+                                Button { checkIn.rpe = value } label: {
+                                    Text("\(value)")
+                                        .font(ExecuteTypography.caption(10).weight(.bold))
+                                        .foregroundStyle(checkIn.rpe == value ? ExecuteColor.charcoal : WorkoutSessionPalette.secondaryText)
+                                        .frame(maxWidth: .infinity, minHeight: 38)
+                                        .background(checkIn.rpe == value ? ExecuteColor.chartreuse : WorkoutSessionPalette.raisedSurface)
+                                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                }
+                                .buttonStyle(ExecutePressStyle())
+                            }
+                        }
+                    }
+
+                    optionSection(title: "How do you feel now?", options: feelings, selection: $checkIn.feeling)
+                    optionSection(title: "Any pain or discomfort?", options: pain, selection: $checkIn.pain)
+                    if !checkIn.pain.isEmpty && checkIn.pain != "No" {
+                        TextField("Where and what kind of discomfort?", text: $checkIn.painNotes, axis: .vertical)
+                            .font(ExecuteTypography.body(13))
+                            .foregroundStyle(WorkoutSessionPalette.primaryText)
+                            .padding(ExecuteSpacing.sm)
+                            .background(WorkoutSessionPalette.surface)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    optionSection(title: "How was your performance?", options: performance, selection: $checkIn.performance)
+
+                    Button { Task { await model.complete(using: checkIn) } } label: {
+                        HStack(spacing: ExecuteSpacing.xs) {
+                            if model.isCompleting { ProgressView().tint(ExecuteColor.charcoal) }
+                            Text(model.isCompleting ? "Saving workout" : "Complete workout")
+                            Image(systemName: "checkmark")
+                        }
+                        .font(ExecuteTypography.label(15).weight(.bold))
+                        .foregroundStyle(ExecuteColor.charcoal)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(ExecuteColor.chartreuse)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(ExecutePressStyle())
+                    .disabled(!checkIn.isComplete || model.isCompleting)
+                    .opacity(checkIn.isComplete ? 1 : 0.35)
+                }
+                .padding(.horizontal, ExecuteSpacing.md)
+                .padding(.bottom, ExecuteSpacing.xl)
+            }
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.interactively)
+        }
+    }
+
+    private func optionSection(title: String, options: [String], selection: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
+            checkInTitle(title, detail: nil)
+            ForEach(options, id: \.self) { option in
+                Button { selection.wrappedValue = option } label: {
+                    HStack {
+                        Text(option)
+                        Spacer()
+                        if selection.wrappedValue == option { Image(systemName: "checkmark.circle.fill") }
+                    }
+                    .font(ExecuteTypography.label(13).weight(.semibold))
+                    .foregroundStyle(selection.wrappedValue == option ? ExecuteColor.chartreuse : WorkoutSessionPalette.secondaryText)
+                    .padding(.horizontal, ExecuteSpacing.sm)
+                    .frame(maxWidth: .infinity, minHeight: 46)
+                    .background(selection.wrappedValue == option ? ExecuteColor.chartreuse.opacity(0.09) : WorkoutSessionPalette.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(selection.wrappedValue == option ? ExecuteColor.chartreuse.opacity(0.35) : WorkoutSessionPalette.border, lineWidth: 1)
+                    }
+                }
+                .buttonStyle(ExecutePressStyle())
+            }
+        }
+    }
+
+    private func checkInTitle(_ title: String, detail: String?) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(ExecuteTypography.title(18))
+                .foregroundStyle(WorkoutSessionPalette.primaryText)
+            Spacer()
+            if let detail {
+                Text(detail)
+                    .font(ExecuteTypography.caption(10).weight(.semibold))
+                    .foregroundStyle(WorkoutSessionPalette.secondaryText)
+            }
+        }
+    }
+}
+
+private struct WorkoutSessionSummaryView: View {
+    @ObservedObject var model: WorkoutSessionViewModel
+
+    var body: some View {
+        VStack(spacing: ExecuteSpacing.lg) {
+            Spacer()
+            Image(systemName: "checkmark")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(ExecuteColor.charcoal)
+                .frame(width: 68, height: 68)
+                .background(ExecuteColor.chartreuse)
+                .clipShape(Circle())
+            VStack(spacing: ExecuteSpacing.xs) {
+                Text("Workout complete")
+                    .font(ExecuteTypography.title(26))
+                    .foregroundStyle(WorkoutSessionPalette.primaryText)
+                Text(model.summary?.workoutName ?? model.workoutName)
+                    .font(ExecuteTypography.body(14))
+                    .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+
+            if let summary = model.summary {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: ExecuteSpacing.sm) {
+                    summaryMetric(value: "\(summary.durationMinutes)", label: "MINUTES")
+                    summaryMetric(value: "\(summary.setsCompleted)", label: "SETS")
+                    summaryMetric(value: "\(summary.exercisesCompleted)", label: "EXERCISES")
+                    summaryMetric(value: "\(summary.estimatedCalories)", label: "CALORIES")
+                }
+                .padding(.horizontal, ExecuteSpacing.xl)
+            }
+            Spacer()
+            Button(action: model.finishSummary) {
+                Text("Back to Train")
+                    .font(ExecuteTypography.label(15).weight(.bold))
+                    .foregroundStyle(ExecuteColor.charcoal)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .background(ExecuteColor.chartreuse)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(ExecutePressStyle())
+            .padding(.horizontal, ExecuteSpacing.md)
+            .padding(.bottom, ExecuteSpacing.md)
+        }
+    }
+
+    private func summaryMetric(value: String, label: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value)
+                .font(ExecuteTypography.title(23))
+                .foregroundStyle(WorkoutSessionPalette.primaryText)
+            Text(label)
+                .font(ExecuteTypography.caption(9).weight(.bold))
+                .foregroundStyle(WorkoutSessionPalette.mutedText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 78)
+        .background(WorkoutSessionPalette.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private struct WorkoutSessionEmptyView: View {
+    @ObservedObject var model: WorkoutSessionViewModel
+
+    var body: some View {
+        VStack(spacing: ExecuteSpacing.md) {
+            Spacer()
+            Image(systemName: model.error == nil ? "dumbbell" : "exclamationmark.triangle")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(ExecuteColor.chartreuse)
+            Text(model.error?.title ?? "Workout not ready")
+                .font(ExecuteTypography.title(21))
+                .foregroundStyle(WorkoutSessionPalette.primaryText)
+            Text(model.error?.message ?? "This workout does not contain exercises yet. Refresh your plan from the Train tab.")
+                .font(ExecuteTypography.body(13))
+                .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, ExecuteSpacing.xl)
+            if model.error != nil {
+                Button("Try again") { Task { await model.retry() } }
+                    .font(ExecuteTypography.label(13).weight(.bold))
+                    .foregroundStyle(ExecuteColor.chartreuse)
+            }
+            Spacer()
+            Button { Task { await model.saveAndClose() } } label: {
+                Text("Back to Train")
+                    .font(ExecuteTypography.label(14).weight(.bold))
+                    .foregroundStyle(ExecuteColor.charcoal)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(ExecuteColor.chartreuse)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(ExecutePressStyle())
+            .padding(ExecuteSpacing.md)
+        }
+    }
+}
+
+private struct WorkoutCustomExerciseSheet: View {
+    let add: (String, Int, Int, String, String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var sets = 3
+    @State private var reps = 10
+    @State private var muscles = ""
+    @State private var notes = ""
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: ExecuteSpacing.md) {
+                    field("EXERCISE NAME") { TextField("Exercise name", text: $name) }
+                    HStack(spacing: ExecuteSpacing.sm) {
+                        stepperField(title: "SETS", value: $sets, range: 1...20)
+                        stepperField(title: "REPS", value: $reps, range: 1...100)
+                    }
+                    field("MUSCLES") { TextField("Muscles targeted", text: $muscles) }
+                    field("COACHING NOTES") { TextField("Cues or adjustments", text: $notes, axis: .vertical) }
+                }
+                .padding(ExecuteSpacing.md)
+            }
+            .background(WorkoutSessionPalette.background.ignoresSafeArea())
+            .navigationTitle("Add Exercise")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { add(name, sets, reps, muscles, notes) }
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.xs) {
+            Text(title).font(ExecuteTypography.caption(9).weight(.bold)).foregroundStyle(WorkoutSessionPalette.mutedText)
+            content()
+                .font(ExecuteTypography.body(14))
+                .foregroundStyle(WorkoutSessionPalette.primaryText)
+                .padding(ExecuteSpacing.sm)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(WorkoutSessionPalette.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private func stepperField(title: String, value: Binding<Int>, range: ClosedRange<Int>) -> some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.xs) {
+            Text(title).font(ExecuteTypography.caption(9).weight(.bold)).foregroundStyle(WorkoutSessionPalette.mutedText)
+            Stepper(value: value, in: range) { Text("\(value.wrappedValue)").font(ExecuteTypography.title(17)).foregroundStyle(WorkoutSessionPalette.primaryText) }
+                .padding(ExecuteSpacing.sm)
+                .background(WorkoutSessionPalette.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .frame(maxWidth: .infinity)
+    }
+}

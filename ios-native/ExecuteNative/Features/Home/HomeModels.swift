@@ -163,6 +163,7 @@ struct HomeDailyLog: Codable, Sendable {
     var mood: Double?
     var energy: Double?
     var workoutDurationMinutes: Double?
+    var workoutDone: Bool? = nil
     var weightKg: Double?
     var plannedWorkoutID: String?
     var plannedMealPlanID: String?
@@ -181,6 +182,7 @@ struct HomeDailyLog: Codable, Sendable {
         case sleepHours = "sleep_hours"
         case steps, mood, energy
         case workoutDurationMinutes = "workout_duration_min"
+        case workoutDone = "workout_done"
         case weightKg = "weight_kg"
         case plannedWorkoutID = "planned_workout_id"
         case plannedMealPlanID = "planned_meal_plan_id"

@@ -29,7 +29,9 @@ private struct AppShellContentView: View {
                     set: { if !$0 { router.dismissFullScreenRoute() } }
                 )
             ) {
-                WorkoutSessionPlaceholder(onDismiss: router.dismissFullScreenRoute)
+                if case .workoutSession(let route) = router.fullScreenRoute {
+                    WorkoutSessionView(route: route)
+                }
             }
     }
 
@@ -171,25 +173,5 @@ struct RoutePlaceholderView: View {
             symbol: "arrow.triangle.branch"
         )
         .executeScreen()
-    }
-}
-
-struct WorkoutSessionPlaceholder: View {
-    let onDismiss: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            ExecuteEmptyState(
-                title: "Workout Session",
-                message: "This full-screen destination deliberately hides the tab bar, matching the future session flow.",
-                symbol: "dumbbell"
-            )
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    ExecuteIconButton(symbol: "xmark", label: "Close", action: onDismiss)
-                }
-            }
-            .executeScreen()
-        }
     }
 }

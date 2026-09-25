@@ -194,7 +194,8 @@ final class HomeViewModel: ObservableObject {
         return generated.map { item in
             var result = item
             let persisted = saved[item.id]
-            result.completed = planCompleted.contains(item.id) || persisted?.completed == true
+            let completedByWorkout = item.type == "workout" && snapshot.dailyLog?.workoutDone == true
+            result.completed = completedByWorkout || planCompleted.contains(item.id) || persisted?.completed == true
             result.completedAt = result.completed ? persisted?.completedAt ?? HomeDate.timestamp : nil
             return result
         }
