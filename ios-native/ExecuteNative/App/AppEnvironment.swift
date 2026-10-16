@@ -12,6 +12,7 @@ final class AppEnvironment: ObservableObject {
     let configuration: AppConfiguration?
     let configurationError: AppError?
     let authService: AuthServicing
+    let accountService: AccountServicing
     let cache: UserScopedCacheStore
     let router: AppRouter
     let subscriptionService: SubscriptionServicing
@@ -25,6 +26,7 @@ final class AppEnvironment: ObservableObject {
         configuration: AppConfiguration?,
         configurationError: AppError?,
         authService: AuthServicing,
+        accountService: AccountServicing,
         cache: UserScopedCacheStore,
         router: AppRouter,
         subscriptionService: SubscriptionServicing,
@@ -36,6 +38,7 @@ final class AppEnvironment: ObservableObject {
         self.configuration = configuration
         self.configurationError = configurationError
         self.authService = authService
+        self.accountService = accountService
         self.cache = cache
         self.router = router
         self.subscriptionService = subscriptionService
@@ -45,6 +48,7 @@ final class AppEnvironment: ObservableObject {
         self.aiService = aiService
         self.appState = AppState(
             authService: authService,
+            accountService: accountService,
             cache: cache,
             router: router,
             subscriptionService: subscriptionService,
@@ -65,18 +69,20 @@ final class AppEnvironment: ObservableObject {
             environmentStartupLogger.debug("[Startup] Supabase initialized")
 #endif
             let authService = SupabaseAuthService(client: client, configuration: configuration)
+            let functions = SupabaseEdgeFunctionService(client: client)
             let subscriptionService = RevenueCatSubscriptionService(configuration: configuration)
             return AppEnvironment(
                 configuration: configuration,
                 configurationError: nil,
                 authService: authService,
+                accountService: SupabaseAccountService(functions: functions),
                 cache: cache,
                 router: router,
                 subscriptionService: subscriptionService,
                 dataService: SupabaseDataService(client: client),
                 realtimeService: SupabaseRealtimeService(client: client),
                 storageService: SupabaseStorageService(client: client, defaultBucket: configuration.uploadBucket),
-                aiService: SupabaseAIService(functions: SupabaseEdgeFunctionService(client: client))
+                aiService: SupabaseAIService(functions: functions)
             )
         } catch {
             let appError = AppError.from(error, title: "Configuration needed")
@@ -84,6 +90,7 @@ final class AppEnvironment: ObservableObject {
                 configuration: nil,
                 configurationError: appError,
                 authService: UnavailableAuthService(error: appError),
+                accountService: UnavailableAccountService(error: appError),
                 cache: cache,
                 router: router,
                 subscriptionService: MockSubscriptionService()
@@ -96,6 +103,7 @@ final class AppEnvironment: ObservableObject {
             configuration: nil,
             configurationError: nil,
             authService: authService,
+            accountService: MockAccountService(),
             cache: UserScopedCacheStore(),
             router: AppRouter(),
             subscriptionService: MockSubscriptionService(),

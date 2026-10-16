@@ -74,6 +74,12 @@ private struct AppShellContentView: View {
             TrackHistoryView()
         case .logFood(let date):
             FoodLogView(initialDate: date)
+        case .profile(let section):
+            ProfileView(initialSection: section)
+        case .privacy:
+            LegalDocumentView(document: .privacy)
+        case .terms:
+            LegalDocumentView(document: .terms)
         default:
             RoutePlaceholderView(route: route)
         }

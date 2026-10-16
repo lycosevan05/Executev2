@@ -125,6 +125,7 @@ final class HomeViewModel: ObservableObject {
         for subscription in current {
             await subscription.cancel()
         }
+        hasStarted = false
     }
 
     var greeting: String {

@@ -107,4 +107,12 @@ final class AppRouter: ObservableObject {
     var isBottomBarVisible: Bool {
         fullScreenRoute == nil && !blockingOverlayIsVisible
     }
+
+    func reset() {
+        selectedTab = .home
+        paths.removeAll()
+        fullScreenRoute = nil
+        blockingOverlayIsVisible = false
+        scrollAnchors.removeAll()
+    }
 }

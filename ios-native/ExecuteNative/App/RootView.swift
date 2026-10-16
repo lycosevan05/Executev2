@@ -4,15 +4,18 @@ enum AppPreviewDestination: Equatable {
     case home
     case track
     case nutrition
+    case profile
 }
 
 enum AppLaunchOptions {
     static let homePreviewArgument = "-execute-home-preview"
     static let trackPreviewArgument = "-execute-track-preview"
     static let nutritionPreviewArgument = "-execute-nutrition-preview"
+    static let profilePreviewArgument = "-execute-profile-preview"
 
     static func previewDestination(arguments: [String] = ProcessInfo.processInfo.arguments) -> AppPreviewDestination? {
 #if DEBUG
+        if arguments.contains(profilePreviewArgument) { return .profile }
         if arguments.contains(nutritionPreviewArgument) { return .nutrition }
         if arguments.contains(trackPreviewArgument) { return .track }
         if arguments.contains(homePreviewArgument) { return .home }
@@ -72,6 +75,16 @@ private struct FeaturePreviewRootView: View {
                 TrackDashboardView(model: .preview())
             case .nutrition:
                 NutritionDashboardView(model: .preview(), presentation: .tab, isPremium: true)
+            case .profile:
+                ProfileDashboardView(
+                    model: .preview(),
+                    premiumState: PremiumState(
+                        isPremium: true,
+                        entitlementIdentifier: "premium",
+                        expirationDate: Date().addingTimeInterval(60 * 60 * 24 * 30)
+                    ),
+                    initialSection: nil
+                )
             }
         }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -88,6 +101,7 @@ private struct FeaturePreviewRootView: View {
         case .home: .home
         case .track: .track
         case .nutrition: .nutrition
+        case .profile: .home
         }
     }
 }

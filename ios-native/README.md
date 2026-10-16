@@ -22,6 +22,7 @@ Debug builds follow the normal authentication flow by default. For local UI work
 - `-execute-home-preview` opens the Home dashboard with fixture data.
 - `-execute-track-preview` opens the Track dashboard with fixture data.
 - `-execute-nutrition-preview` opens the Nutrition dashboard with fixture data.
+- `-execute-profile-preview` opens Profile and Settings with fixture data.
 
 These arguments are compiled out of Release behavior and must not be used as an authentication substitute.
 
@@ -42,7 +43,8 @@ The foundation includes typed auth, generic entity CRUD, `patch_record`, Edge Fu
 - Home is implemented as a native dashboard.
 - Track is implemented as a native daily-vitals flow, including optimistic Supabase writes, realtime refresh, user-scoped caching, configurable metrics, and 30-day history.
 - Nutrition and Log Food are implemented for date-based summaries, manual entries, secure AI text estimates, deletion, optimistic Supabase writes, realtime refresh, and delete-safe reconciliation with completed planned meals.
-- Train and Plan remain placeholders for their respective parity phases.
+- Train and Plan have native read-only dashboards backed by existing plan and workout data.
+- Profile and Settings include display-name and unit preferences, subscription status, legal content, sign out, and permanent account deletion.
 - Nutrition camera/barcode capture, full meal-plan editing, storage upload call sites, and StoreKit purchase UI are still deferred.
 
 The existing Capacitor behavior remains the reference contract while each vertical slice is migrated.

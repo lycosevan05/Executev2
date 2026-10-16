@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A10000000000000000000001 /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* AccountService.swift */; };
+		B10000000000000000000001 /* LegalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* LegalView.swift */; };
+		C10000000000000000000001 /* ProfileModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* ProfileModels.swift */; };
+		C10000000000000000000003 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000004 /* ProfileView.swift */; };
+		C10000000000000000000005 /* ProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000006 /* ProfileViewModel.swift */; };
 		00C1CA52B1519CF664D97CE9 /* MockAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130C56739539C3606A2AB883 /* MockAuthService.swift */; };
 		05BE7D4F82A1DBD1F4AD2BCC /* AuthenticationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A60F8FF3D9A5482C38D70B4 /* AuthenticationView.swift */; };
 		05E3A51A83400528F667DE8A /* TrainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B97A6B6BE7F84C8E9A46E2EE /* TrainView.swift */; };
@@ -69,6 +74,11 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A10000000000000000000002 /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountService.swift; sourceTree = "<group>"; };
+		B10000000000000000000002 /* LegalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegalView.swift; sourceTree = "<group>"; };
+		C10000000000000000000002 /* ProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileModels.swift; sourceTree = "<group>"; };
+		C10000000000000000000004 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		C10000000000000000000006 /* ProfileViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileViewModel.swift; sourceTree = "<group>"; };
 		00888326E780CECC2AEEDB78 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		02D29B0445CD3B4731FDFEB6 /* Inter-ExtraBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-ExtraBold.ttf"; sourceTree = "<group>"; };
 		039CF1FCA1D3BAE519EBB11D /* ExecuteTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecuteTheme.swift; sourceTree = "<group>"; };
@@ -136,6 +146,32 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A10000000000000000000003 /* Account */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000002 /* AccountService.swift */,
+			);
+			path = Account;
+			sourceTree = "<group>";
+		};
+		B10000000000000000000003 /* Legal */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000002 /* LegalView.swift */,
+			);
+			path = Legal;
+			sourceTree = "<group>";
+		};
+		C10000000000000000000007 /* Profile */ = {
+			isa = PBXGroup;
+			children = (
+				C10000000000000000000002 /* ProfileModels.swift */,
+				C10000000000000000000004 /* ProfileView.swift */,
+				C10000000000000000000006 /* ProfileViewModel.swift */,
+			);
+			path = Profile;
+			sourceTree = "<group>";
+		};
 		2495A67770E83A6EFE9A603C /* Track */ = {
 			isa = PBXGroup;
 			children = (
@@ -239,8 +275,10 @@
 			children = (
 				3D31A340934C4E52F1B65DC9 /* Authentication */,
 				F98A283C73DE688D43F8B964 /* Home */,
+				B10000000000000000000003 /* Legal */,
 				FE5C0B5A20D0E591B7561FF5 /* Nutrition */,
 				FC53E3CF59391CD09C073652 /* Plan */,
+				C10000000000000000000007 /* Profile */,
 				F41E624B3DED75C81AD11FC5 /* Shell */,
 				2495A67770E83A6EFE9A603C /* Track */,
 				35C0FD48ED7BCE7CD80105B1 /* Train */,
@@ -297,6 +335,7 @@
 		BC05C4497545A68302247835 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				A10000000000000000000003 /* Account */,
 				ADB7DE36CB5966A13A3885EF /* AI */,
 				EB9E974BC9B7877353495049 /* Authentication */,
 				A6335F81DA16C1B47EA39D5C /* Configuration */,
@@ -504,6 +543,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000001 /* AccountService.swift in Sources */,
 				6F03E8C2D37190E56093C3A0 /* AIService.swift in Sources */,
 				5A5161C7F2C1E3B8C6436303 /* AppConfiguration.swift in Sources */,
 				B530F406D8E38196BA8F794E /* AppEnvironment.swift in Sources */,
@@ -524,12 +564,16 @@
 				447ED71BADC6039FB31E1A6B /* HomeViewModel.swift in Sources */,
 				1EC911A1C43AB411B0EEB2C8 /* HomeWidgets.swift in Sources */,
 				E48965127B80764338A3E4DA /* JSONValue.swift in Sources */,
+				B10000000000000000000001 /* LegalView.swift in Sources */,
 				00C1CA52B1519CF664D97CE9 /* MockAuthService.swift in Sources */,
 				D3B53D88233B250FA1963563 /* NutritionModels.swift in Sources */,
 				9DF757D899E32B28B11C4445 /* NutritionView.swift in Sources */,
 				744088A61AE3AF94A879D623 /* NutritionViewModel.swift in Sources */,
 				7F6BA815C4AD47E4D70769C0 /* PlanView.swift in Sources */,
 				7BAE005FA23C3F4C06AAC384 /* PlanViewModel.swift in Sources */,
+				C10000000000000000000001 /* ProfileModels.swift in Sources */,
+				C10000000000000000000003 /* ProfileView.swift in Sources */,
+				C10000000000000000000005 /* ProfileViewModel.swift in Sources */,
 				679DFEE1F10288B701434311 /* RootView.swift in Sources */,
 				39F657CBA347173F518738D2 /* SubscriptionService.swift in Sources */,
 				DF0BF49B8164C33130EFC36B /* SupabaseAuthService.swift in Sources */,

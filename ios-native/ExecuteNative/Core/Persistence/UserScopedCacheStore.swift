@@ -42,6 +42,10 @@ actor UserScopedCacheStore {
         self.defaults = defaults
     }
 
+    init(suiteName: String) {
+        self.defaults = UserDefaults(suiteName: suiteName) ?? .standard
+    }
+
     func activate(userID: UUID) {
         guard activeUserID != userID else { return }
         memory.removeAll()
@@ -53,6 +57,18 @@ actor UserScopedCacheStore {
         memory.removeAll()
         optimisticSnapshots.removeAll()
         activeUserID = nil
+    }
+
+    func purgeActiveUser() {
+        guard let activeUserID else {
+            deactivate()
+            return
+        }
+        let prefix = "execute.cache.\(activeUserID.uuidString)."
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+            defaults.removeObject(forKey: key)
+        }
+        deactivate()
     }
 
     func read<Value: Decodable & Sendable>(_ key: CacheKey, as type: Value.Type) -> CacheRead<Value> {

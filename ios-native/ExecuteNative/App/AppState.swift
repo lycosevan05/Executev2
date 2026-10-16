@@ -20,6 +20,7 @@ final class AppState: ObservableObject {
     @Published private(set) var premiumState = PremiumState.free
 
     private let authService: AuthServicing
+    private let accountService: AccountServicing
     private let cache: UserScopedCacheStore
     let router: AppRouter
     private let subscriptionService: SubscriptionServicing
@@ -30,6 +31,7 @@ final class AppState: ObservableObject {
 
     init(
         authService: AuthServicing,
+        accountService: AccountServicing = MockAccountService(),
         cache: UserScopedCacheStore,
         router: AppRouter,
         subscriptionService: SubscriptionServicing,
@@ -37,6 +39,7 @@ final class AppState: ObservableObject {
         sessionRestoreTimeoutNanoseconds: UInt64 = 10_000_000_000
     ) {
         self.authService = authService
+        self.accountService = accountService
         self.cache = cache
         self.router = router
         self.subscriptionService = subscriptionService
@@ -116,11 +119,21 @@ final class AppState: ObservableObject {
             try await authService.signOut()
             await cache.deactivate()
             premiumState = .free
-            router.select(.home)
+            router.reset()
             launchState = .signedOut
         } catch {
             launchState = .failed(AppError.from(error, title: "Could not sign out"))
         }
+    }
+
+    func deleteAccount() async throws {
+        subscriptionRefreshTask?.cancel()
+        try await accountService.deleteAccount()
+        try? await authService.signOut()
+        await cache.purgeActiveUser()
+        premiumState = .free
+        router.reset()
+        launchState = .signedOut
     }
 
     func handleScenePhase(_ phase: ScenePhase) async {

@@ -16,6 +16,10 @@ final class LaunchOptionsTests: XCTestCase {
             AppLaunchOptions.previewDestination(arguments: [AppLaunchOptions.nutritionPreviewArgument]),
             .nutrition
         )
+        XCTAssertEqual(
+            AppLaunchOptions.previewDestination(arguments: [AppLaunchOptions.profilePreviewArgument]),
+            .profile
+        )
     }
 }
 
@@ -236,6 +240,29 @@ final class NavigationTests: XCTestCase {
         XCTAssertTrue(router.pathBinding(for: .home).wrappedValue.isEmpty)
         XCTAssertEqual(router.pathBinding(for: .track).wrappedValue, [.trackingHistory])
     }
+
+    func testResetClearsEveryNavigationSurface() {
+        let router = AppRouter()
+        router.select(.nutrition)
+        router.pathBinding(for: .nutrition).wrappedValue = [.privacy]
+        router.navigate(to: .workoutSession(WorkoutSessionRoute(
+            workoutID: nil,
+            logID: nil,
+            startedAt: nil,
+            sourcePlanID: nil,
+            generationBatchID: nil,
+            weeklyPlanID: nil,
+            isResuming: false
+        )))
+        router.setBlockingOverlayVisible(true)
+
+        router.reset()
+
+        XCTAssertEqual(router.selectedTab, .home)
+        XCTAssertTrue(router.pathBinding(for: .nutrition).wrappedValue.isEmpty)
+        XCTAssertNil(router.fullScreenRoute)
+        XCTAssertTrue(router.isBottomBarVisible)
+    }
 }
 
 @MainActor
@@ -379,6 +406,25 @@ final class WorkoutSessionLogicTests: XCTestCase {
     }
 }
 
+final class ProfileMutationTests: XCTestCase {
+    func testDisplayNameIsTrimmedAndWhitespaceIsCollapsed() {
+        XCTAssertEqual(ProfileMutation.normalizedDisplayName("  Evan   Steel  "), "Evan Steel")
+        XCTAssertEqual(
+            ProfileMutation.displayNamePatch("  Evan   Steel  "),
+            .object(["display_name": .string("Evan Steel")])
+        )
+    }
+
+    func testInvalidDisplayNamesAreRejected() {
+        XCTAssertNil(ProfileMutation.normalizedDisplayName("E"))
+        XCTAssertNil(ProfileMutation.normalizedDisplayName(String(repeating: "a", count: 61)))
+    }
+
+    func testUnitPatchUsesExistingBackendField() {
+        XCTAssertEqual(ProfileMutation.unitsPatch(.metric), .object(["units": .string("metric")]))
+    }
+}
+
 @MainActor
 final class StartupStateTests: XCTestCase {
     func testNoSessionTransitionsToSignedOut() async {
@@ -432,15 +478,62 @@ final class StartupStateTests: XCTestCase {
         XCTAssertEqual(state.launchState, .needsConfiguration(configurationError))
     }
 
+    func testSuccessfulAccountDeletionPurgesCacheAndSignsOut() async throws {
+        let user = ExecuteUser(id: UUID(), email: "delete@example.com", displayName: "Delete Me")
+        let authService = MockAuthService(restoredUser: user)
+        let accountService = MockAccountService()
+        let suiteName = "AccountDeletionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let cache = UserScopedCacheStore(suiteName: suiteName)
+        let state = makeState(authService: authService, accountService: accountService, cache: cache)
+
+        await state.start()
+        try await cache.write("private", for: CacheKey("test", "private"))
+        try await state.deleteAccount()
+
+        XCTAssertEqual(accountService.deletionCount, 1)
+        XCTAssertEqual(state.launchState, .signedOut)
+        XCTAssertNil(authService.restoredUser)
+
+        await cache.activate(userID: user.id)
+        let cached: CacheRead<String> = await cache.read(CacheKey("test", "private"), as: String.self)
+        guard case .missing = cached else { return XCTFail("Deleted account cache should be removed") }
+    }
+
+    func testFailedAccountDeletionKeepsAuthenticatedSession() async {
+        let user = ExecuteUser(id: UUID(), email: "member@example.com", displayName: "Member")
+        let deletionError = AppError(title: "Deletion failed", message: "Try again")
+        let authService = MockAuthService(restoredUser: user)
+        let state = makeState(
+            authService: authService,
+            accountService: MockAccountService(deletionError: deletionError)
+        )
+
+        await state.start()
+        do {
+            try await state.deleteAccount()
+            XCTFail("Expected deletion to fail")
+        } catch {
+            XCTAssertEqual(error as? AppError, deletionError)
+        }
+
+        XCTAssertEqual(state.launchState, .signedIn(user))
+        XCTAssertEqual(authService.restoredUser, user)
+    }
+
     private func makeState(
         authService: AuthServicing,
+        accountService: AccountServicing = MockAccountService(),
+        cache: UserScopedCacheStore = UserScopedCacheStore(),
         subscriptionService: SubscriptionServicing = MockSubscriptionService(),
         configurationError: AppError? = nil,
         timeoutNanoseconds: UInt64 = 100_000_000
     ) -> AppState {
         AppState(
             authService: authService,
-            cache: UserScopedCacheStore(),
+            accountService: accountService,
+            cache: cache,
             router: AppRouter(),
             subscriptionService: subscriptionService,
             configurationError: configurationError,

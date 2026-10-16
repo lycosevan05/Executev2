@@ -39,6 +39,28 @@ async function cancelStripeSubscriptions(service: ReturnType<typeof createServic
   }
 }
 
+async function deleteUserUploads(service: ReturnType<typeof createServiceClient>, userId: string) {
+  const bucket = Deno.env.get('SUPABASE_UPLOAD_BUCKET') || 'uploads';
+  let deleted = 0;
+
+  while (true) {
+    const { data, error } = await service.storage.from(bucket).list(userId, { limit: 100, offset: 0 });
+    if (error) {
+      if (/bucket not found/i.test(error.message || '')) return { bucket, deleted };
+      throw new Error(`Could not list uploaded files: ${error.message}`);
+    }
+
+    const paths = (data || [])
+      .filter((entry) => entry.name && entry.name !== '.emptyFolderPlaceholder')
+      .map((entry) => `${userId}/${entry.name}`);
+    if (paths.length === 0) return { bucket, deleted };
+
+    const { error: removeError } = await service.storage.from(bucket).remove(paths);
+    if (removeError) throw new Error(`Could not delete uploaded files: ${removeError.message}`);
+    deleted += paths.length;
+  }
+}
+
 Deno.serve(async (req) => {
   const cors = handleCors(req);
   if (cors) return cors;
@@ -51,6 +73,9 @@ Deno.serve(async (req) => {
     if (user.email) {
       await cancelStripeSubscriptions(service, user.email);
     }
+
+    const uploads = await deleteUserUploads(service, user.id);
+    results.storage = `deleted ${uploads.deleted} from ${uploads.bucket}`;
 
     for (const table of ENTITY_TABLES) {
       const byOwner = await service
@@ -75,6 +100,17 @@ Deno.serve(async (req) => {
 
       results[table] = `deleted ${(byOwner.count || 0) + (byEmail.count || 0)}`;
     }
+
+    const failedTables = Object.entries(results)
+      .filter(([, value]) => value.startsWith('error:'))
+      .map(([table, value]) => `${table}: ${value.slice(7)}`);
+    if (failedTables.length > 0) {
+      throw new Error(`Account data could not be fully deleted (${failedTables.join('; ')}).`);
+    }
+
+    const { error: authError } = await service.auth.admin.deleteUser(user.id);
+    if (authError) throw new Error(`Account data was deleted, but authentication removal failed: ${authError.message}`);
+    results.authentication = 'deleted';
 
     return json({ success: true, results });
   } catch (error) {

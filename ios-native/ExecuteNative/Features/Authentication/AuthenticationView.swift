@@ -8,6 +8,7 @@ struct AuthenticationView: View {
     @State private var otpWasSent = false
     @State private var isWorking = false
     @State private var error: AppError?
+    @State private var legalDocument: LegalDocument?
     @StateObject private var oauth = OAuthCoordinator()
 
     var body: some View {
@@ -47,11 +48,30 @@ struct AuthenticationView: View {
                 if let error {
                     Text(error.message).font(ExecuteTypography.body(13)).foregroundStyle(ExecuteColor.destructive)
                 }
+                HStack(spacing: ExecuteSpacing.sm) {
+                    Button("Privacy Policy") { legalDocument = .privacy }
+                    Text("•").foregroundStyle(ExecuteColor.warmBorder)
+                    Button("Terms of Use") { legalDocument = .terms }
+                }
+                .font(ExecuteTypography.caption(11).weight(.semibold))
+                .foregroundStyle(ExecuteColor.olive)
+                .frame(maxWidth: .infinity)
                 Spacer(minLength: ExecuteSpacing.xxl)
             }
             .padding(ExecuteSpacing.lg)
         }
         .executeScreen()
+        .sheet(item: $legalDocument) { document in
+            NavigationStack {
+                LegalDocumentView(document: document)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { legalDocument = nil }
+                                .foregroundStyle(ExecuteColor.chartreuseDark)
+                        }
+                    }
+            }
+        }
     }
 
     private func sendCode() {
