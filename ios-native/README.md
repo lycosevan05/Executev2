@@ -89,7 +89,7 @@ RevenueCat imported both products, attached both to **Execute Performance Premiu
 
 The temporary signed artifact's public product IDs were updated to match this configuration and it passed strict/deep signature verification again. Reinstallation initially failed because CoreDevice could no longer locate/initialize the device. At that stage, the installed artifact had stale product IDs. This installation blocker is superseded by the verified follow-up below.
 
-**Device follow-up — 2026-10-21:** CoreDevice reports the iPhone connected. The old temporary artifact was missing required files, so a fresh Debug device build used the ordinary `ExecuteNative` scheme and DerivedData outside synced Documents. `xcodebuild` reported **BUILD SUCCEEDED**; strict/deep code-signature verification passed with team `58GZDC8UKY`. The built app's exact native-dev bundle, both product IDs, public SDK key, entitlement and offering matched ignored `Local.xcconfig`; the scheme has no StoreKit fixture or mock launch arguments. Installation on the connected iPhone **succeeded**. No purchase or restore was attempted. Xcode 26.4 / iOS 26.4 simulator remains installed; Code=3 remained unresolved at installation; the isolated retest below subsequently reproduced it. The user subsequently approved the gateway repair; its delivery/authentication checks passed as recorded above.
+**Device follow-up — 2026-10-21:** CoreDevice reports the iPhone connected. The old temporary artifact was missing required files, so a fresh Debug device build used the ordinary `ExecuteNative` scheme and DerivedData outside synced Documents. `xcodebuild` reported **BUILD SUCCEEDED**; strict/deep code-signature verification passed with team `58GZDC8UKY`. The built app's exact native-dev bundle, both product IDs, public SDK key, entitlement and offering matched ignored `Local.xcconfig`; the scheme has no StoreKit fixture or mock launch arguments. Installation on the connected iPhone **succeeded**. No purchase or restore was attempted. At that stage Xcode 26.4 / iOS 26.4 simulator remained installed; Code=3 remained unresolved at installation; the isolated retest below subsequently reproduced it. The user subsequently approved the gateway repair; its delivery/authentication checks passed as recorded above.
 
 1. **Apple app registration is complete.** Reuse the verified records above; do not register a duplicate or switch the native bundle to the existing Execute app.
 2. **Check that app's products.** In Monetization → Subscriptions, confirm a subscription group containing monthly and annual auto-renewing subscriptions, their identifiers, durations, prices, localizations, and availability. Native-dev IDs are `execute_native_dev_premium_month` and `execute_native_dev_premium_annual`; both overrides are set in ignored `Local.xcconfig`. Keep fixture and original-app IDs separate. The Apple account's paid-app agreement and required business details must be current. [Apple's configuration guide](https://developer.apple.com/help/app-store-connect/configure-in-app-purchase-settings/overview-for-configuring-in-app-purchases/) covers product setup.
@@ -224,6 +224,45 @@ Evidence: setup workspace `work/native-validation/resume-20261031/transfer.json`
 
 ## Billing validation
 
+### Current StoreKit environment — 2026-11-01
+
+**Code 3 remains unresolved.** Verified side-by-side Xcode **26.6 (17F113)**,
+iOS SDK **23F81a**, and simulator **iOS 26.5 (23F77)** still failed the isolated
+cancellation test: **0 passed, 1 failed**, exit 65. Saving configuration, clearing
+overrides/transactions and setting a session option emitted Code 3; the product
+was nil. The full four-test suite was deliberately not run with broken controls.
+
+The official **iOS 26.1 (23B86)** runtime is now installed and signature-verified
+as an older-runtime candidate. Its attempt stopped at destination setup (exit 70,
+no StoreKit test reached): Xcode reports the required iOS 26.5 platform absent
+after the failed 26.5 runtime was removed. Explicit simulator-SDK selection did
+not restore destination eligibility. First boot also caused severe host disk/swap
+pressure and was stopped. This is an untested candidate, not a StoreKit failure
+or pass on 26.1.
+
+Both Xcode apps and all 12 original simulator data directories remain. The
+approved old 26.4 runtime and verified installer archive were removed; old 26.4
+devices are unavailable until that runtime is reinstalled. The global Xcode
+selection still points to `/Applications/Xcode.app` (26.4); the new app is
+`/Applications/Xcode-26.6.app`. Only iOS 26.1 is currently installed as a runtime,
+and the tested schemes currently have no eligible simulator destination.
+
+**Storage follow-up — 2026-11-01:** approved cache cleanup plus removal of unused
+BlueStacks emulator data and Claude desktop/VM bundles recovered approximately
+**33 GiB**, leaving about **44 GiB free** (48 GB decimal). The earlier space request
+is met; both Xcodes, all12 original simulator data directories and test evidence
+are retained. The active Codex updater cache and small Claude settings/session
+files were preserved. No new StoreKit result is established by cleanup.
+
+Before the next probe, save open work and restart the Mac, then restore the iOS
+26.5 platform package required by Xcode26.6. Verify26.1 destination eligibility
+and run bounded cancellation first; run all
+four local tests only after session controls work without Code 3. Existing cases
+cover metadata, purchase/sync, pending-without-access and cancellation; approval
+and rejection transitions remain separate. See the [exact repair evidence and
+resume procedure](../docs/native-parity-audit.md#storekit-toolchain-and-runtime-repair--2026-11-01).
+Ordinary-scheme physical Apple Sandbox and RevenueCat acceptance remain separate.
+
 Run the ordinary unit/UI tests on an available simulator:
 
 ```sh
@@ -250,7 +289,7 @@ A targeted IDE run on 2026-10-16 at 10:52 passed `testMonthlyAndAnnualProductsEx
 
 **Physical-device comparison prepared — 2026-10-21:** The user reconnected the iPhone and enabled Mirroring. To remove uncertainty about the installed app, the fresh ordinary-scheme signed artifact was verified again with host signing trust (`codesign --verify --deep --strict` passed), installed over only `com.executelabs.execute.native-dev`, and launched by exact bundle ID. Both installed apps display **Execute**, so their Home-screen labels do not distinguish native-dev from the original app. The original `com.executelabs.execute` was untouched. Built public product IDs, offering and entitlement remain correct. Xcode reports the physical iPhone on **iOS 26.6.1 (23G83)**, separate from the iOS 26.4 simulator. Mirroring shows normal Execute email sign-in; authenticated billing/purchase comparison is pending. Xcode’s Devices window provides a full-resolution Take Screenshot control, but no review image has yet been captured or uploaded. Credential-free refresh evidence is in the setup chat workspace at `work/native-validation/device-refresh-20261021.json`.
 
-The `ExecuteNative-StoreKit` scheme is also available in Xcode for local Run/Test debugging. The installed iOS 26.4 runtime failed to save StoreKit test configuration (`SKInternalErrorDomain Code=3`) through both CLI and Xcode IDE. The IDE could display the fixture purchase sheet, but test-session overrides failed and the pending-purchase test stalled; the run was canceled. Use a working Xcode/runtime pair before calling this suite passed. The ordinary scheme has no StoreKit fixture attached and is the scheme to use for Apple's real sandbox.
+The `ExecuteNative-StoreKit` scheme is also available in Xcode for local Run/Test debugging. The former iOS 26.4 runtime failed to save StoreKit test configuration (`SKInternalErrorDomain Code=3`) through both CLI and Xcode IDE. The IDE could display the fixture purchase sheet, but test-session overrides failed and the pending-purchase test stalled; the run was canceled. Use a working Xcode/runtime pair before calling this suite passed. The ordinary scheme has no StoreKit fixture attached and is the scheme to use for Apple's real sandbox.
 
 See [the parity audit](../docs/native-parity-audit.md) for exact build/test evidence, backend deployment verification, and the remaining device/sandbox acceptance checklist. A passing mocked UI test or a displayed local fixture sheet is not a sandbox transaction pass.
 

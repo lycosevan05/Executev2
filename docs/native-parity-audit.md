@@ -22,7 +22,7 @@ This ledger tracks the SwiftUI app against the existing Capacitor app. The Capac
 | Progress and insights | Missing | Typed routes only | Build charts, trends, goal linkage, date ranges, empty states, and sharing/export if retained |
 | Goals | Missing | Typed route only | Build create/edit/archive goals and progress entries |
 | Profile and settings | Implemented, needs device QA | Native display-name editing, unit preferences, notification settings handoff, subscription status, sign-out, and guarded permanent account deletion | Validate profile writes, notification handoff, sign-out, deletion, and cache/session cleanup against production on a physical iPhone |
-| Billing | Implemented; purchase/renewal, A → B transfer, empty restore, reinstall and cancellation/expiry verified; webhook v8 deployed | Native paywall, localized prices, purchase/restore/manage, session-isolated gates and server reconciliation | Real refund/reversal and billing-grace acceptance, pending/interrupted purchases, mixed-provider cases and independent StoreKit Code=3 remain open |
+| Billing | Implemented; purchase/renewal, A → B transfer, empty restore, reinstall and cancellation/expiry verified; webhook v8 deployed | Native paywall, localized prices, purchase/restore/manage, session-isolated gates and server reconciliation | Real refund/reversal and billing-grace acceptance, pending/interrupted purchases and mixed-provider cases remain open; StoreKit Code=3 persists on Xcode26.6/iOS26.5, and the 26.1 fallback is blocked by platform setup and host resources |
 | Onboarding | Missing | Typed route only | Port the required native questionnaire and first-plan handoff |
 | Legal | Implemented, needs review | Native Privacy Policy and Terms screens available before and after authentication | Complete legal review and confirm production support/contact links before App Store submission |
 
@@ -490,3 +490,77 @@ rollback details are in the function README and private rollout manifest.
 This is source/authentication/transport smoke plus local regression coverage;
 real Apple refund/reversal acceptance remains unverified. No historical replay
 or manual subscription edit was used.
+
+### StoreKit toolchain and runtime repair — 2026-11-01
+
+**No local StoreKit repair is established.** The official Apple-silicon Xcode
+26.6 archive was verified as Apple-signed; the extracted app passed deep signature
+verification and Gatekeeper acceptance. Xcode **26.6 (17F113)** was installed at
+`/Applications/Xcode-26.6.app`, alongside unchanged Xcode26.4. Required first-launch
+components completed; global `xcode-select` remains the original Xcode. With the
+user's scoped approval, removed only the old iOS26.4 runtime (23E244, 8.49GB) and
+verified installer archive (2.16GB), preserving all12 original simulator records
+and data directories, both Xcodes, source and existing test evidence.
+
+| Candidate | Actual outcome |
+| --- | --- |
+| Xcode26.6 + old iOS26.4 destination | Exit70, missing iOS26.5 platform; no StoreKit test reached. |
+| Xcode26.6, SDK23F81a + iOS26.5/23F77 | Actual cancellation test failed in3.048s: 0 passed/1 failed, exit65. Configuration save, override/transaction cleanup and option setting logged Code3; Product was nil at test line65. No full-suite run. |
+| Xcode26.6 + iOS26.1/23B86 | Runtime installed and signature Verified, but test stopped at destination setup (exit70). Xcode reports iOS26.5 platform missing after failed-candidate runtime removal. No StoreKit test reached. |
+
+After preserving the 26.5 xcresult/log, only the task-created failed26.5 probe
+and runtime were removed to make room for the older candidate. Both Xcodes still
+list their SDKs, but neither scheme has an eligible simulator destination:
+original Xcode reports missing26.4; new Xcode reports missing26.5, including when
+`-sdk iphonesimulator` is explicit. No private SDK/runtime mappings were changed.
+The 26.1 fresh device progressed through migration to Waiting on System App for
+more than five minutes. During this attempt free disk fell to **0.33GiB** and swap
+allocation reached **16,896MiB** (11,569.88MiB used). The new simulator was shut down;
+disk space recovered to about **9.85GiB**. This host-resource failure does not prove
+any StoreKit result on26.1. It is retained installed, with its probe data intact.
+The original26.4 datasets are retained but unavailable without their runtime.
+
+**Resume:** free approximately15GiB additional storage without deleting source,
+simulator histories or evidence; restart the Mac to clear current host pressure;
+restore Xcode26.6's required iOS26.5 platform. Recheck signatures, runtime builds,
+free space and26.1 destination eligibility. Use a fresh dedicated destination and
+per-command `DEVELOPER_DIR`, leaving global selection unchanged. Run only
+`testCancellationDoesNotCreateAnEntitlement` with a30-second execution allowance;
+inspect configuration/reset/option logs. Run all four StoreKitBillingTests only
+after that control works without Code3. Their pending test checks pending/no
+entitlement, not later approval/rejection. Ordinary ExecuteNative with StoreKit
+Configuration None remains the real Apple Sandbox scheme.
+
+Full evidence on the setup Mac: `/private/tmp/ExecuteNativeStoreKitRepair/`,
+including `control-Xcode26.6-iOS26.5.{log,xcresult,json}` and
+`control-Xcode26.6-iOS26.1.{log,xcresult,json}`. Compact records and logs are also
+saved privately under `work/native-validation/storekit-repair-20261101/` in the
+setup workspace. Test source, fixture and both scheme hashes still match pushed
+commit c895b0e. No application/test source, physical app, provider configuration,
+credentials or backend deployment changed in this investigation. The
+[Apple forum report](https://developer.apple.com/forums/thread/826971) motivated
+these candidates; only the observed results above are accepted on this Mac.
+
+### StoreKit storage headroom recovered — 2026-11-01
+
+With explicit user approval, cleared the reviewed browser/media/download and
+Xcode Build/Index/compiler caches, removed Claude desktop and its large VM bundles,
+and removed BlueStacks emulator data. Finder moved the root-owned BlueStacksMIM
+app, inactive cleanup helper/launch daemon and small remaining log folder to
+Trash; unrelated Trash contents were not emptied. Claude's small settings/session
+files and the active Codex updater's approximately1.8GiB installer cache remain.
+Chrome's initially recreated cache files were handled by one bounded follow-up
+purge without errors; the active browser can create fresh cache normally.
+
+Free space increased from11.84GiB to about44GiB (48GB decimal), a net recovery of
+approximately33GiB. The earlier request to free15GiB additional storage is met;
+an external drive is not required by this next probe's measured storage budget.
+Verified both Xcodes, all12 original simulator data directories and unchanged
+StoreKit source/fixture/scheme hashes. Existing test logs/results and source were
+preserved. No app code, provider configuration or backend deployment changed.
+
+**Next:** save open work and restart the Mac; restore the required iOS26.5 platform
+package, recheck the older26.1 runtime's destination eligibility and run bounded
+cancellation before the full suite. Code3 remains unresolved; cache cleanup adds
+no StoreKit pass. Private exact deletion/retention manifest and before/after
+measurements are in setup-workspace `work/storage-audit-20261101/`.

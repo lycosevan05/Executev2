@@ -75,9 +75,15 @@ an old Premium screenshot is insufficient proof that B is still entitled.
   reconciliation intentionally retries rather than guessing access. A later Stripe
   webhook can still overwrite shared effective status: mixed-provider acceptance
   and any shared production fix require a separately reviewed rollout.
-- Local StoreKit Code 3 remains an independent unresolved issue. Rerun only its
-  isolated scheme when investigating it; ordinary billing mocks and real Apple
-  sandbox tests do not establish a fix.
+- Local StoreKit Code 3 remains independently reproduced on Xcode26.6/iOS26.5.
+  The installed26.1 fallback has not reached a test. Approved storage cleanup has
+  recovered approximately33GiB; a Mac restart and required platform setup remain
+  before retesting. Follow the [controlled repair resume
+  procedure](native-parity-audit.md#storekit-toolchain-and-runtime-repair--2026-11-01)
+  before another probe. Run only the bounded cancellation case first, then all
+  four fixture tests if controls work. Existing pending coverage stops at no grant;
+  approval/rejection transitions still need acceptance. Ordinary billing mocks and
+  real Apple sandbox tests do not establish a local test-session fix.
 - Account deletion deployment/device acceptance, App Store submission and broader
   native migration release gates remain separate.
 
