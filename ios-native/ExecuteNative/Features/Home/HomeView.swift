@@ -35,6 +35,10 @@ private struct HomeScreen: View {
             .task(id: signedInUser?.id) {
                 if let signedInUser { await model.start(for: signedInUser) }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .recoveryDidChange)) { notification in
+                guard notification.object as? UUID == signedInUser?.id else { return }
+                Task { await model.refresh() }
+            }
             .onDisappear { Task { await model.stop() } }
     }
 

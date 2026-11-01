@@ -25,6 +25,8 @@ Debug builds follow the normal authentication flow by default. For local UI work
 - `-execute-track-preview` opens the Track dashboard with fixture data.
 - `-execute-nutrition-preview` opens the Nutrition dashboard with fixture data.
 - `-execute-profile-preview` opens Profile and Settings with fixture data.
+- `-execute-recovery-preview` opens Recovery with synthetic data and structured fixture guidance. Add `-execute-recovery-my-week` to start on Guidance or `-execute-recovery-guidance-failure` to exercise AI retry.
+- `-execute-recovery-ui-tests` follows the ordinary Home → Recovery route with mock authentication and injected Recovery services. It makes no backend or model request.
 - `-execute-billing-ui-tests` uses mock authentication and subscription services for Billing route/UI tests. Add `-execute-restore-entitled` to simulate a successful restore. Its displayed prices are fixtures, not verified App Store prices.
 
 These arguments are compiled out of Release behavior and must not be used as an authentication substitute.
@@ -48,6 +50,7 @@ The foundation includes typed auth, generic entity CRUD, `patch_record`, Edge Fu
 - Nutrition and Log Food are implemented for date-based summaries, manual entries, secure AI text estimates, deletion, optimistic Supabase writes, realtime refresh, and delete-safe reconciliation with completed planned meals.
 - Train and Plan have native read-only dashboards backed by existing plan and workout data.
 - Profile and Settings include display-name and unit preferences, subscription status, legal content, sign out, and permanent account deletion.
+- Recovery implements selected-date check-ins, preview/dynamic readiness and score explanations, active/inactive limitations, saved AI guidance with stale-input/retry handling, and canonical planned-task completion. Production RLS/device acceptance remains open; see the Recovery section in the parity audit.
 - Billing is implemented from Profile and Nutrition: localized monthly/annual offerings, purchase, restore, App Store subscription management, legal disclosures, and shared premium gates. Account switches and stale responses are isolated by session; backend subscription records are read-only.
 - Nutrition camera/barcode capture, full meal-plan editing, and storage upload call sites are still deferred.
 

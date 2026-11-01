@@ -2,7 +2,7 @@
 
 > Test email addresses in this published log are anonymized. Exact identities and device evidence remain in the private setup workspace.
 
-Last reviewed: 2026-10-31 for billing/setup evidence; other feature and device QA remains open.
+Last reviewed: 2026-10-31 for Recovery fixture implementation and billing/setup evidence; production Recovery and other device QA remain open.
 
 This ledger tracks the SwiftUI app against the existing Capacitor app. The Capacitor source remains a read-only behavioral reference until each required workflow is verified on a physical iPhone.
 
@@ -12,13 +12,13 @@ This ledger tracks the SwiftUI app against the existing Capacitor app. The Capac
 | --- | --- | --- | --- |
 | Startup and authentication | Partial | Native launch state, Supabase session restore, email OTP, Apple/Google OAuth, sign-out service | Validate callback handling, expiry, cancellation, and account recovery on device |
 | App shell | Complete | Five native tabs, independent navigation stacks, full-screen routing, safe-area tab bar | Physical-device accessibility and rotation audit |
-| Home | Partial | Native dashboard, customization, live data, cache, realtime, checklist mutations | Replace Recovery, Progress, Insights, Goals, and My Week placeholder destinations |
+| Home | Partial | Native dashboard, customization, live data, cache, realtime, checklist mutations | Replace Progress, Insights, Goals, and My Week placeholder destinations |
 | Train dashboard | Partial | Today, split, library, history, native plan data | Add plan-generation/editing parity and completed-session detail |
 | Workout session | Implemented, needs device QA | Native plan loading, resume, autosave, sets, reps, weight, rest timer, skip/custom exercise, notes, check-in, completion, daily-log synchronization, summary | Verify production RLS writes, readiness recalculation parity, background/termination recovery, and real-data edge cases |
 | Track | Partial | Native metric logging, manage metrics, food shortcut, completion state, tracking history | Verify every Capacitor metric and history action against production data |
 | Nutrition | Partial | Native date navigation, meal plan, manual and AI logging, deletion, totals | Validate AI upload/error limits, saved recipes, and all premium gates |
 | Plan | Partial | Native weekly plan, blueprint, adjustments presentation | Implement plan questionnaire/generation, editable adjustments, and regeneration flow |
-| Recovery | Missing | Typed route only | Build readiness check-in, score explanation, mobility/recovery plan, and persistence |
+| Recovery | Implemented; fixture acceptance, production QA open | Native selected-date check-in, preview/dynamic scores, limitations, structured guidance, canonical planned tasks, Home refresh | Verify production RLS/persistence and live invoke-llm using a separate disposable account; review proposed customization omission |
 | Progress and insights | Missing | Typed routes only | Build charts, trends, goal linkage, date ranges, empty states, and sharing/export if retained |
 | Goals | Missing | Typed route only | Build create/edit/archive goals and progress entries |
 | Profile and settings | Implemented, needs device QA | Native display-name editing, unit preferences, notification settings handoff, subscription status, sign-out, and guarded permanent account deletion | Validate profile writes, notification handoff, sign-out, deletion, and cache/session cleanup against production on a physical iPhone |
@@ -268,3 +268,72 @@ Evidence: setup workspace `work/native-validation/resume-20261031/transfer.json`
 3. The physical A → B restore, matching webhook/backend ownership, destination access, source gating and repeated same-owner Restore passed above. Still exercise direct account switches and slow purchase/restore completion after switching; historical stale-event replay and retained independent-purchase cases have not been accepted live. Do not write `user_subscriptions` to manufacture a pass.
 4. Deploy the hardened `deleteUserData` through the backend release process and verify deletion using a disposable account: subscription handling, tables, storage, auth identity, and native cache/session cleanup. Deleting the Execute account does not itself cancel an Apple subscription; verify the existing App Store cancellation warning and management handoff.
 5. Keep physical-device QA open for **workout resume after background/termination and completion persistence**, **profile display-name/units persistence after relaunch**, **sign-out and account-switch cleanup**, and **account deletion**. Also exercise VoiceOver, Dynamic Type, smallest iPhone, and interrupted/expired auth. None of these production-device checks were completed by the simulator/mock suite.
+
+
+## Recovery implementation and fixture evidence — 2026-10-31
+
+Implements [issue #1](https://github.com/lycosevan05/Executev2/issues/1) on `feature/native-recovery`, starting from shared checkpoint `c1fee6109690287375069c5840e80da83dae6024`. The existing Home Recovery action now reaches a SwiftUI screen. Optional route date uses the local calendar; `source=my_week` starts on Guidance without adding My Week.
+
+### Retained behavior and error handling
+
+- Five 1–10 inputs, hydration and editing, `sleep_quality` persistence, inverted soreness/stress preview, and labels at 45/65/80. Dynamic scoring retains the reference's actual **5–100** clamp, default contributions, goal precedence, JavaScript rounding and time heuristics. The injected clock/time zone makes tests deterministic. Historical dates use the saved score/preview rather than today's clock adjustment. Loading/refreshing today recomputes an existing record and refreshes Home if its score changed; a failed score write stays visible as an error.
+- Exact-date server filters and pagination select existing check-ins and canonical DailyLogs. Canonical master selection prefers questionnaire overview, then legacy initial; day selection prefers exact source-plan/batch, then source-plan, then canonical source, then newest. A failed read blocks creation. Duplicate taps are serialized; retries re-read before upserting.
+- Check-in and DailyLog writes are separately acknowledged. A partial save shows an error and retains the acknowledged check-in; retry updates it and finishes the DailyLog without creating another check-in. Unknown JSON survives shallow patches, including unknown saved-guidance/snapshot keys. The DailyLog keeps its other fields and completed task IDs.
+- Limitations preserve every reference body-area/severity value. Add, active/inactive and archive commit visible changes after acknowledgement. Archive writes `is_active=false` and retains a reversible inactive history entry. Failed changes leave acknowledged state intact and show retryable errors.
+- Guidance uses `AIResponding` / `invoke-llm` exclusively, validates the full generated schema, and persists training recommendation, mobility name/duration/benefit, nutrition, sleep/stress, motivating insight and `guidance_inputs`. Legacy optional guidance is tolerated. AI/read/write errors retain the saved check-in and previous guidance. Input or limitation changes mark guidance stale.
+- Fresh structured context includes profiles/body data, goals/timeline, training preferences/equipment, nutrition targets/diet/allergies/dislikes, active limitations, recent workout/food/daily/readiness history, canonical master/weekly projection and linked selected-date workout/meal recommendations. The prompt distinguishes plans from completed behavior and prohibits fabricated progress/diagnosis. The native path bypasses stale summary caches; successful changes expire the existing user's `user_ai_contexts` summaries.
+- Account/date/navigation generations reject delayed results before later writes or state changes. The live repository also validates its captured authenticated user/session before and after requests. Token refresh requires reloading Recovery. The only cache integration is UUID-guarded Home dashboard invalidation and a same-user refresh notification; Recovery adds no persisted health-data cache.
+- Loading, empty, permission/network/write errors and retries are visible. Native sliders, buttons and labels support accessibility; a scrollable layout and horizontal tabs accommodate large text. The small-iPhone test exposed a compressed date label and offscreen confirmations; the date label is now vertical and tab/edit/error transitions scroll to the top.
+
+### Explicit parity decisions and limits
+
+**Proposed customization omission for review:** Recovery.jsx constructs `usePageLayout` and renders a Customize button that toggles `isCustomizing`, but never applies `layout` or renders customization controls. Native Recovery omits that inert toggle and does not write Recovery `user_page_layouts`. Reviewer approval of this omission remains open; native page customization is not claimed as implemented.
+
+Legacy partial check-ins hydrate missing sliders with the same UI defaults (7/3/7/3/7) and clamp malformed out-of-range values to 1–10. This avoids the JavaScript engine's NaN result for partially missing inputs. The dynamic score algorithm is otherwise retained. Unlike the reference mount-time refresher, native loading does not create speculative check-in stubs when no check-in exists; record creation requires Save. Inactive limitations remain visible and can be reactivated, rather than disappearing until reload after archive.
+
+No schema, RLS, Edge Function deployment, billing/authentication implementation, signing team, bundle identifier or provider/product configuration was changed. Without a backend uniqueness constraint/transaction, simultaneous creates from independent devices can still race; this slice prevents duplicate local taps and re-reads after uncertain writes. Planned-task completion preserves the latest IDs read but does not add a cross-device atomic array-toggle RPC.
+
+**Production acceptance remains unverified.** No private Local.xcconfig package or disposable Recovery account was used. No active billing-transfer account was used. Fixture tests/screenshots establish native behavior only; they do not prove production RLS, live AI context limits, physical-device persistence, VoiceOver navigation or iOS 16 runtime behavior. Local StoreKit Code=3 remains unresolved and `StoreKitBillingTests` is explicitly excluded from regression runs below.
+
+### Validation
+
+Xcode 27.2 (27B52), iOS 26.5 simulator (23F77), deployment target iOS 16, ordinary `ExecuteNative` scheme, `CODE_SIGNING_ALLOWED=NO`.
+
+| Final check | Result |
+| --- | --- |
+| Debug simulator build | **BUILD SUCCEEDED**, exit 0 |
+| Release simulator build, arm64 + x86_64 | **BUILD SUCCEEDED**, exit 0 |
+| iPhone SE (3rd generation), 375 × 667 points | **100 unit + 9 UI tests passed; 0 failures**, exit 0 |
+| Recovery coverage within that run | **22 unit + 6 UI tests passed**, including a 90-case JavaScript-reference matrix |
+| Existing regression coverage within that run | **78 unit + 3 Billing UI tests passed** |
+| Local StoreKitBillingTests | **Excluded; not run. Code=3 remains unresolved.** |
+| Live RLS, live invoke-llm, disposable-account persistence and physical device | **Not verified** |
+| Whitespace and scope | `git diff --check` passed; `src/` and `ios/App/` unchanged |
+
+The final [test summary](recovery-fixtures/validation-summary.json) is exported from `/tmp/execute-recovery-accepted-tests.xcresult`. Full local logs are `/tmp/execute-recovery-accepted-tests.log`, `/tmp/execute-recovery-debug-final.log` and `/tmp/execute-recovery-release-final.log`. Earlier small-iPhone runs exposed layout/test-targeting issues and one error-title assertion; those were corrected before the final passing run. These are simulator/mock results, not StoreKit or production acceptance.
+
+Commands from `ios-native/` (selected simulator UUID `C15FED6A-9F40-4A94-9DC7-2B55A5BE773B`):
+
+```sh
+xcodebuild -project ExecuteNative.xcodeproj -scheme ExecuteNative -configuration Debug -destination 'platform=iOS Simulator,id=C15FED6A-9F40-4A94-9DC7-2B55A5BE773B' -derivedDataPath /tmp/execute-recovery-build CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project ExecuteNative.xcodeproj -scheme ExecuteNative -configuration Debug -destination 'platform=iOS Simulator,id=C15FED6A-9F40-4A94-9DC7-2B55A5BE773B' -derivedDataPath /tmp/execute-recovery-build -resultBundlePath /tmp/execute-recovery-accepted-tests.xcresult CODE_SIGNING_ALLOWED=NO -skip-testing:ExecuteNativeTests/StoreKitBillingTests test
+xcodebuild -project ExecuteNative.xcodeproj -scheme ExecuteNative -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/execute-recovery-release -clonedSourcePackagesDirPath /tmp/execute-recovery-build/SourcePackages -disableAutomaticPackageResolution CODE_SIGNING_ALLOWED=NO build
+```
+
+Regenerate the scoring expectations from the repository root with `node ios-native/scripts/generate-recovery-readiness-cases.cjs`.
+
+### Fixture screenshots
+
+All screenshots use synthetic data and injected services on the small iPhone simulator. [Capture provenance](recovery-fixtures/screenshots.json) identifies the test that produced each image.
+
+| Check-In | Guidance and planned task |
+| --- | --- |
+| ![Check-In fixture](recovery-fixtures/check-in.png) | ![Guidance fixture](recovery-fixtures/guidance.png) |
+| Limitations | Guidance failure and retry |
+| ![Limitations fixture](recovery-fixtures/limitations.png) | ![Guidance retry fixture](recovery-fixtures/guidance-retry.png) |
+
+Additional screenshots: [ordinary Home → Recovery route](recovery-fixtures/home-route.png), [Home action](recovery-fixtures/home-action.png), [largest accessibility text size](recovery-fixtures/accessibility-text.png).
+
+### Shared integration edits
+
+Outside `Features/Recovery` and focused tests: `AppEnvironment.swift` injects the repository and Debug fixtures; `RootView.swift` registers the Debug preview; `AppShellView.swift` handles the existing route; `HomeView.swift` receives same-user refresh notifications; `UserScopedCacheStore.swift` adds guarded single-key invalidation. `project.pbxproj` and `project.yml` register feature/tests and the scoring JSON resource. Existing schemes, dependency pins, signing and provider configuration are preserved. README and this audit/decision log record scope and acceptance limits.
