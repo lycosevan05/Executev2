@@ -69,6 +69,15 @@
 		FA425AD5183C9FB5C5F5F38B /* StoreKitBillingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65821EF16E26038A1077D0FC /* StoreKitBillingTests.swift */; };
 		4EC5E4506CAA121538A640D6 /* Billing.storekit in Resources */ = {isa = PBXBuildFile; fileRef = D61B264331AA8E656EFE1C72 /* Billing.storekit */; };
 		1CD1950AC352E2589FD1190A /* BillingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23BEB15CD8D521C4A8464118 /* BillingUITests.swift */; };
+		5825828AFB8C5404513C1F1A /* RecoveryFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62B69A3AB83E4E88902FCAD9 /* RecoveryFixtures.swift */; };
+		2CA0E0032C59F75C7A9384DF /* RecoveryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCCB0BA309922719C6AF745 /* RecoveryModels.swift */; };
+		9E7D0EBC269018918F5FE58F /* RecoveryReadiness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C945FC3FF0B3B50934B2D3B /* RecoveryReadiness.swift */; };
+		A0743C446EF50FD5C5A4F167 /* RecoveryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7B62B8CF953C86DB422E534 /* RecoveryRepository.swift */; };
+		658D5DEE28B79C5DEE136112 /* RecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77FDD9DA08A2D43FAB12D212 /* RecoveryView.swift */; };
+		F27120EF36A99B63E3573BBA /* RecoveryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EFB14D84B12BEA090386DBB /* RecoveryViewModel.swift */; };
+		3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F30ADD4AE865BF13490528 /* RecoveryTests.swift */; };
+		B848D3765D49A75737ED890C /* RecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FF8D5033A9FF62626236E59 /* RecoveryUITests.swift */; };
+		DEAD00000000000000000001 /* RecoveryReadinessCases.json in Resources */ = {isa = PBXBuildFile; fileRef = DEAD00000000000000000002 /* RecoveryReadinessCases.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -148,6 +157,15 @@
 		D61B264331AA8E656EFE1C72 /* Billing.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = "ExecuteNativeTests/Billing.storekit"; sourceTree = SOURCE_ROOT; };
 		23BEB15CD8D521C4A8464118 /* BillingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExecuteNativeUITests/BillingUITests.swift"; sourceTree = SOURCE_ROOT; };
 		6805638B2F02C52FBEFDC957 /* ExecuteNativeUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; explicitFileType = wrapper.cfbundle; path = ExecuteNativeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		62B69A3AB83E4E88902FCAD9 /* RecoveryFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryFixtures.swift; sourceTree = "<group>"; };
+		6CCCB0BA309922719C6AF745 /* RecoveryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryModels.swift; sourceTree = "<group>"; };
+		9C945FC3FF0B3B50934B2D3B /* RecoveryReadiness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryReadiness.swift; sourceTree = "<group>"; };
+		B7B62B8CF953C86DB422E534 /* RecoveryRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryRepository.swift; sourceTree = "<group>"; };
+		77FDD9DA08A2D43FAB12D212 /* RecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryView.swift; sourceTree = "<group>"; };
+		1EFB14D84B12BEA090386DBB /* RecoveryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryViewModel.swift; sourceTree = "<group>"; };
+		42F30ADD4AE865BF13490528 /* RecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryTests.swift; sourceTree = "<group>"; };
+		7FF8D5033A9FF62626236E59 /* RecoveryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryUITests.swift; sourceTree = "<group>"; };
+		DEAD00000000000000000002 /* RecoveryReadinessCases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = RecoveryReadinessCases.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -261,6 +279,8 @@
 		6C9E9BC0FC45FAE5146B1F2A /* ExecuteNativeTests */ = {
 			isa = PBXGroup;
 			children = (
+				42F30ADD4AE865BF13490528 /* RecoveryTests.swift */,
+				DEAD00000000000000000002 /* RecoveryReadinessCases.json */,
 				A318512948BBB8B2878D0DBD /* JSONBCompatibilityTests.swift */,
 				D61B264331AA8E656EFE1C72 /* Billing.storekit */,
 				65821EF16E26038A1077D0FC /* StoreKitBillingTests.swift */,
@@ -297,6 +317,7 @@
 		846E40694B7B37538836B632 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				536F981D91E28D5EE84F143F /* Recovery */,
 				3D31A340934C4E52F1B65DC9 /* Authentication */,
 				B20000000000000000000001 /* Billing */,
 				F98A283C73DE688D43F8B964 /* Home */,
@@ -467,7 +488,20 @@
 			path = Nutrition;
 			sourceTree = "<group>";
 		};
-		35817B7E959B516FE8440DA9 /* ExecuteNativeUITests */ = {isa = PBXGroup; children = (23BEB15CD8D521C4A8464118 /* BillingUITests.swift */,); path = ExecuteNativeUITests; sourceTree = "<group>"; };
+		35817B7E959B516FE8440DA9 /* ExecuteNativeUITests */ = {isa = PBXGroup; children = (23BEB15CD8D521C4A8464118 /* BillingUITests.swift */, 7FF8D5033A9FF62626236E59 /* RecoveryUITests.swift */,); path = ExecuteNativeUITests; sourceTree = "<group>"; };
+		536F981D91E28D5EE84F143F /* Recovery */ = {
+			isa = PBXGroup;
+			children = (
+				62B69A3AB83E4E88902FCAD9 /* RecoveryFixtures.swift */,
+				6CCCB0BA309922719C6AF745 /* RecoveryModels.swift */,
+				9C945FC3FF0B3B50934B2D3B /* RecoveryReadiness.swift */,
+				B7B62B8CF953C86DB422E534 /* RecoveryRepository.swift */,
+				77FDD9DA08A2D43FAB12D212 /* RecoveryView.swift */,
+				1EFB14D84B12BEA090386DBB /* RecoveryViewModel.swift */,
+			);
+			path = Recovery;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -576,7 +610,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		325C3032A5E194C9D148ACDB /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (4EC5E4506CAA121538A640D6 /* Billing.storekit in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		325C3032A5E194C9D148ACDB /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (4EC5E4506CAA121538A640D6 /* Billing.storekit in Resources */, DEAD00000000000000000001 /* RecoveryReadinessCases.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -584,6 +618,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */,
 				72B41B9AFF16B3ADF192368A /* JSONBCompatibilityTests.swift in Sources */,
 				FA425AD5183C9FB5C5F5F38B /* StoreKitBillingTests.swift in Sources */,
 				10BCE687A619405436A3616D /* BillingTests.swift in Sources */,
@@ -594,6 +629,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F27120EF36A99B63E3573BBA /* RecoveryViewModel.swift in Sources */,
+				658D5DEE28B79C5DEE136112 /* RecoveryView.swift in Sources */,
+				A0743C446EF50FD5C5A4F167 /* RecoveryRepository.swift in Sources */,
+				9E7D0EBC269018918F5FE58F /* RecoveryReadiness.swift in Sources */,
+				2CA0E0032C59F75C7A9384DF /* RecoveryModels.swift in Sources */,
+				5825828AFB8C5404513C1F1A /* RecoveryFixtures.swift in Sources */,
 				A10000000000000000000001 /* AccountService.swift in Sources */,
 				6F03E8C2D37190E56093C3A0 /* AIService.swift in Sources */,
 				5A5161C7F2C1E3B8C6436303 /* AppConfiguration.swift in Sources */,
@@ -645,7 +686,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		884C0F1BF3ED22F5E108E3F0 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (1CD1950AC352E2589FD1190A /* BillingUITests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		884C0F1BF3ED22F5E108E3F0 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (1CD1950AC352E2589FD1190A /* BillingUITests.swift in Sources */, B848D3765D49A75737ED890C /* RecoveryUITests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */

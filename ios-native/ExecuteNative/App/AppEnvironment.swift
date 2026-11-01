@@ -20,6 +20,10 @@ final class AppEnvironment: ObservableObject {
     let realtimeService: SupabaseRealtimeService?
     let storageService: SupabaseStorageService?
     let aiService: AIResponding?
+    private var recoveryRepositoryFactory: (() -> RecoveryRepository)?
+    func makeRecoveryRepository() -> RecoveryRepository {
+        recoveryRepositoryFactory?() ?? UnavailableRecoveryRepository()
+    }
     let appState: AppState
 
     private init(
@@ -60,6 +64,16 @@ final class AppEnvironment: ObservableObject {
 
     static func live() -> AppEnvironment {
 #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-execute-recovery-ui-tests") {
+            let user = ExecuteUser(id: UUID(), email: "recovery-fixture@example.invalid", displayName: "Fixture")
+            let environment = AppEnvironment(configuration: nil, configurationError: nil,
+                authService: MockAuthService(restoredUser: user), accountService: MockAccountService(),
+                cache: UserScopedCacheStore(), router: AppRouter(), subscriptionService: MockSubscriptionService(),
+                aiService: RecoveryFixtureAI())
+            let repository = RecoveryFixtureRepository.populated(date: RecoverySelection.date(Date(), timeZone: .current))
+            environment.recoveryRepositoryFactory = { repository }
+            return environment
+        }
         if ProcessInfo.processInfo.arguments.contains("-execute-billing-ui-tests") {
             let service = MockSubscriptionService()
             service.offeredPackages = [
@@ -89,7 +103,7 @@ final class AppEnvironment: ObservableObject {
             let authService = SupabaseAuthService(client: client, configuration: configuration)
             let functions = SupabaseEdgeFunctionService(client: client)
             let subscriptionService = RevenueCatSubscriptionService(configuration: configuration)
-            return AppEnvironment(
+            let environment = AppEnvironment(
                 configuration: configuration,
                 configurationError: nil,
                 authService: authService,
@@ -103,6 +117,8 @@ final class AppEnvironment: ObservableObject {
                 storageService: SupabaseStorageService(client: client, defaultBucket: configuration.uploadBucket),
                 aiService: SupabaseAIService(functions: functions)
             )
+            environment.recoveryRepositoryFactory = { SupabaseRecoveryRepository(client: client) }
+            return environment
         } catch {
             let appError = AppError.from(error, title: "Configuration needed")
             return AppEnvironment(
