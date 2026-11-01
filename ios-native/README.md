@@ -100,6 +100,8 @@ The temporary signed artifact's public product IDs were updated to match this co
 The next steps are the remaining sandbox acceptance cases and account-transfer reconciliation. Monthly purchase, initial annual purchase, annual crossgrade/renewal and A → B provider/backend transfer passed; remaining acceptance cases are recorded below. Both review screenshots are saved and verified. The physical monthly purchase, receipt/backend writeback and same-account restore passed on 2026-10-21 as detailed below. Equivalent subscription service levels have been aligned. The gateway repair and fresh device installation have passed. Product/entitlement/package configuration is saved. App names, Apple IDs, bundle IDs, and product IDs are enough to resolve the mapping; no private credentials need to be shared in chat. Backend deletion deployment and physical-device workflow QA remain separate release gates in the audit.
 
 
+The [remaining billing acceptance runbook](../docs/native-billing-acceptance.md) separates clean-tester empty restore, purchaser reinstall/restore, interruption cases and server release gaps. A fresh ordinary-scheme run on 2026-10-31 passed 44 billing unit tests and 3 mock UI tests; all 17 webhook fixture tests also passed. These local results do not establish new sandbox acceptance or resolve StoreKit Code 3.
+
 ### Physical monthly sandbox acceptance — 2026-10-21
 
 - On the freshly signed ordinary `ExecuteNative` build (StoreKit Configuration **None**), the physical iPhone loaded **CAD 15/month** and **CAD 100/year**. Apple explicitly identified the transaction as **Sandbox**, for testing without a charge. The user completed Apple's password authorization. Apple displayed **Your purchase was successful** and the app displayed **Premium active**.
@@ -251,3 +253,77 @@ A targeted IDE run on 2026-10-16 at 10:52 passed `testMonthlyAndAnnualProductsEx
 The `ExecuteNative-StoreKit` scheme is also available in Xcode for local Run/Test debugging. The installed iOS 26.4 runtime failed to save StoreKit test configuration (`SKInternalErrorDomain Code=3`) through both CLI and Xcode IDE. The IDE could display the fixture purchase sheet, but test-session overrides failed and the pending-purchase test stalled; the run was canceled. Use a working Xcode/runtime pair before calling this suite passed. The ordinary scheme has no StoreKit fixture attached and is the scheme to use for Apple's real sandbox.
 
 See [the parity audit](../docs/native-parity-audit.md) for exact build/test evidence, backend deployment verification, and the remaining device/sandbox acceptance checklist. A passing mocked UI test or a displayed local fixture sheet is not a sandbox transaction pass.
+
+### Fresh acceptance artifact — 2026-10-31
+
+A fresh ordinary `ExecuteNative` Debug device build from `~/Developer/Executev3`
+passed build and strict/deep signature verification, matched native-dev bundle/team
+`58GZDC8UKY` and ignored RevenueCat settings, and installed successfully over the
+existing native-dev app. No fixture or mock launch arguments were used. This was
+an in-place update, not uninstall/reinstall or new sandbox transaction acceptance.
+See the [remaining acceptance runbook](../docs/native-billing-acceptance.md).
+
+An isolated cancellation retest on 2026-10-31 still reproduced local StoreKit
+Code 3 and failed on a nil Product. A separate unused Canadian tester and clean
+Execute account C baseline were prepared; the subsequent physical passes are recorded below.
+See the dated [audit evidence](../docs/native-parity-audit.md#empty-restore-baseline-and-isolated-storekit-retest--2026-10-31).
+
+### Physical empty restore and purchase cancellation — 2026-11-01
+
+Account C with a separate unused Canadian tester passed empty Restore, Nutrition's
+Premium gate, and signed-in/free state after process relaunch. Canceling Apple's
+native-dev monthly CAD 15 testing sheet produced the cancellation message and
+usable plan controls. Both cases retained **no RevenueCat entitlement** and
+**zero backend subscription/paid rows**. No purchase was confirmed. These physical
+passes do not resolve local StoreKit Code 3 or establish uninstall/reinstall,
+offline/retry, pending approval, or cancellation/refund of an existing subscription.
+See the [dated audit](../docs/native-parity-audit.md#physical-empty-restore-and-canceled-purchase--2026-11-01).
+
+C's subsequent offline Restore/online retry also kept Premium inactive. The
+offline warning was user-reported (exact wording/timing unrecorded); online empty
+restore, responsive controls, no RevenueCat entitlement and zero subscription rows
+were directly verified. This scoped recovery pass does not establish interrupted
+purchase handling or measured offline timeouts. Purchaser reinstall subsequently passed below.
+
+### Purchaser reinstall recovery — 2026-11-01
+
+A genuine native-dev-only uninstall/reinstall passed for active purchaser B.
+B's session and Premium returned before manual Restore; Restore then confirmed
+success, Nutrition AI opened, and provider/backend ownership remained stable with
+one premium/active row. The original app remains installed. Automatic recovery
+is recorded separately from manual Restore; this does not prove keychain erasure
+or receipt-only recovery. See the dated parity audit for evidence and remaining cases.
+
+### Sandbox auto-renewal cancellation — 2026-11-01
+
+Apple cancellation, RevenueCat CANCELLATION/UNSUBSCRIBE, webhook200 and backend
+`cancel_at_period_end=true` were verified for B. Premium correctly remained active
+through `2026-11-01T07:42:08Z` (12:42 a.m. Vancouver). Revocation and refreshed
+device gates subsequently passed, as recorded below.
+
+### Current billing lifecycle follow-up — 2026-11-01
+
+The [billing acceptance runbook](../docs/native-billing-acceptance.md#lifecycle-review-and-expiry-checkpoint--2026-11-01) now separates accepted physical cases, remaining refund/billing-grace integration work and the B cancellation-expiry checkpoint, completed below. A new seven-case fixture review matched six outcomes and reproduced an unhandled `REFUND_REVERSED` event (200/skipped, no customer reconciliation). That gap was subsequently fixed and deployed as version 8 after scoped approval; the rollout details are below. StoreKit Code 3 remains unresolved.
+
+The fix passes 20 handler tests and lint, with three demonstrated baseline regression failures. Only the scoped webhook change was deployed; the native implementation and Lachlan's Recovery branch were preserved.
+
+### Cancellation-to-expiry acceptance completed — 2026-11-01
+
+The actual native-dev Sandbox EXPIRATION/UNSUBSCRIBE event `D37D18A5-DD0E-4799-93BE-05928B426BA2` returned HTTP200. B now has one free/canceled backend row with matching event and end time. Reopening Billing completed a refresh to the free paywall; Profile showed Upgrade to Premium and Nutrition AI opened the paywall. No new transaction, Restore, restart or manual row write was used. The prior open view retained active state until explicit refresh; passive immediate revocation is not established. See the [completed runbook result](../docs/native-billing-acceptance.md#completed-b-cancellation-to-expiry-result--2026-11-01). Refund/billing-grace integration and StoreKitCode3 remain open; the refund-reversal fix is deployed as version 8 below.
+
+### Refund-reversal handler follow-up — 2026-11-01
+
+The webhook event-route fix and three regressions are applied locally; all 20
+handler tests, lint and entrypoint type-check pass. The approved single-function
+rollout below deployed the fix as version 8. The change needed no native rebuild,
+migration or credentials. Live refund/reversal
+acceptance remains open. See the function rollout guide and billing runbook.
+
+### Refund-reversal deployment verified — 2026-11-01
+
+The approved single-function rollout is active as revenuecatWebhook v8. Its
+source matches the reviewed fix; missing/invalid bearer checks return401 and
+configured RevenueCat TEST returns200/skipped TEST. Gateway/authentication,
+credentials, schema, restore policy and the native build are unchanged. This
+closes the deployment step, not real Apple refund/reversal acceptance. See the
+function README and billing runbook for the exact evidence and rollback scope.

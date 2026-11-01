@@ -337,3 +337,51 @@ Deno.test("entitlement expiry, grace, trials, cancellation and lifetime use curr
   });
   equal(revenueCatProjection(canceled, a).cancel_at_period_end, true);
 });
+
+Deno.test("refund reversal reconciles current active access instead of skipping", async () => {
+  const f = fixture();
+  f.snapshots.set(a, snapshot(true));
+  const response = await createHandler(f.deps)(f.request({
+    event: {
+      id: "refund-reversed-active",
+      type: "REFUND_REVERSED",
+      app_user_id: a,
+    },
+  }));
+  equal(response.status, 200);
+  deepEqual(await response.json(), { received: true });
+  equal(f.calls.length, 1);
+  equal(f.writes(), 1);
+  equal(f.rows.get(a)?.data.plan, "premium");
+  equal(f.rows.get(a)?.data.revenuecat_last_event_type, "REFUND_REVERSED");
+});
+Deno.test("late refund reversal does not grant an expired current customer", async () => {
+  const f = fixture();
+  f.snapshots.set(a, snapshot(false));
+  const response = await createHandler(f.deps)(f.request({
+    event: {
+      id: "refund-reversed-expired",
+      type: "REFUND_REVERSED",
+      app_user_id: a,
+    },
+  }));
+  equal(response.status, 200);
+  equal(f.calls.length, 1);
+  equal(f.writes(), 1);
+  equal(f.rows.get(a)?.data.plan, "free");
+});
+Deno.test("refund reversal provider failure requests retry without writing", async () => {
+  const f = fixture();
+  f.deps.fetch =
+    (() => Promise.resolve(new Response("", { status: 503 }))) as typeof fetch;
+  const response = await createHandler(f.deps)(f.request({
+    event: {
+      id: "refund-reversed-retry",
+      type: "REFUND_REVERSED",
+      app_user_id: a,
+    },
+  }));
+  equal(response.status, 503);
+  equal(f.writes(), 0);
+  equal(f.rows.get(a)?.data.plan, "premium");
+});

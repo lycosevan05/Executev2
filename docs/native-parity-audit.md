@@ -2,7 +2,7 @@
 
 > Test email addresses in this published log are anonymized. Exact identities and device evidence remain in the private setup workspace.
 
-Last reviewed: 2026-10-31 for billing/setup evidence; other feature and device QA remains open.
+Last reviewed: 2026-11-01 for billing/setup evidence; other feature and device QA remains open.
 
 This ledger tracks the SwiftUI app against the existing Capacitor app. The Capacitor source remains a read-only behavioral reference until each required workflow is verified on a physical iPhone.
 
@@ -22,7 +22,7 @@ This ledger tracks the SwiftUI app against the existing Capacitor app. The Capac
 | Progress and insights | Missing | Typed routes only | Build charts, trends, goal linkage, date ranges, empty states, and sharing/export if retained |
 | Goals | Missing | Typed route only | Build create/edit/archive goals and progress entries |
 | Profile and settings | Implemented, needs device QA | Native display-name editing, unit preferences, notification settings handoff, subscription status, sign-out, and guarded permanent account deletion | Validate profile writes, notification handoff, sign-out, deletion, and cache/session cleanup against production on a physical iPhone |
-| Billing | Implemented; physical monthly/initial annual purchase, annual crossgrade/renewal, restore and A → B transfer verified | Native paywall, localized prices, purchase/restore/manage, session-isolated gates and server reconciliation | Remaining transaction/error cases and independent local StoreKit Code=3 remain open; see dated evidence below |
+| Billing | Implemented; purchase/renewal, A → B transfer, empty restore, reinstall and cancellation/expiry verified; webhook v8 deployed | Native paywall, localized prices, purchase/restore/manage, session-isolated gates and server reconciliation | Real refund/reversal and billing-grace acceptance, pending/interrupted purchases, mixed-provider cases and independent StoreKit Code=3 remain open |
 | Onboarding | Missing | Typed route only | Port the required native questionnaire and first-plan handoff |
 | Legal | Implemented, needs review | Native Privacy Policy and Terms screens available before and after authentication | Complete legal review and confirm production support/contact links before App Store submission |
 
@@ -263,8 +263,230 @@ Evidence: setup workspace `work/native-validation/resume-20261031/transfer.json`
 
 ### Next acceptance step for the coding agent
 
+Use the [remaining billing acceptance runbook](native-billing-acceptance.md) for the clean-account matrix, no-purchase restore and reinstall/restore sequence. The dated November 1 entries below establish empty restore, canceled purchase, scoped offline recovery and purchaser reinstall; use the lifecycle matrix for the remaining cases.
+
 1. Follow the [configuration walkthrough](../ios-native/README.md#resolve-the-native-dev-configuration): reuse verified Apple ID `6823713820` and RevenueCat app `appf70a718df8`; reuse the saved monthly/annual products and package mappings, retain the verified gateway/authentication fix and aligned level-1 Apple products, and review the unchanged restore policy. The matching public iOS key is already in ignored `Local.xcconfig`. A fresh ordinary-scheme signed build is now installed; validate its real sandbox behavior after tester sign-in.
 2. Run the four local StoreKit tests on a functioning StoreKit test runtime. Then use a signed native build with a sandbox Apple Account and StoreKit Configuration set to **None**. Verify actual localized prices, monthly and annual purchase, cancel, pending/approval, no-purchase restore, reinstall/restore, management, expiry/renewal/refund, network loss/retry, and foreground refresh.
 3. The physical A → B restore, matching webhook/backend ownership, destination access, source gating and repeated same-owner Restore passed above. Still exercise direct account switches and slow purchase/restore completion after switching; historical stale-event replay and retained independent-purchase cases have not been accepted live. Do not write `user_subscriptions` to manufacture a pass.
 4. Deploy the hardened `deleteUserData` through the backend release process and verify deletion using a disposable account: subscription handling, tables, storage, auth identity, and native cache/session cleanup. Deleting the Execute account does not itself cancel an Apple subscription; verify the existing App Store cancellation warning and management handoff.
 5. Keep physical-device QA open for **workout resume after background/termination and completion persistence**, **profile display-name/units persistence after relaunch**, **sign-out and account-switch cleanup**, and **account deletion**. Also exercise VoiceOver, Dynamic Type, smallest iPhone, and interrupted/expired auth. None of these production-device checks were completed by the simulator/mock suite.
+
+The following checkpoints are chronological; later results supersede earlier pending statuses. The billing acceptance runbook contains the current case matrix.
+
+### Billing acceptance preparation — 2026-10-31
+
+From the relocated checkout at `~/Developer/Executev3`, the ordinary `ExecuteNative`
+scheme passed **44 selected billing unit tests and 3 mock billing UI tests** on the
+iPhone 17 / iOS 26.4 simulator with Xcode 26.4 (17E192). The **17 webhook
+reconciliation fixture tests** also passed. These cover local behavior and provider
+fixtures, including stale/duplicate events, independent purchases and account
+races; they do not establish new live sandbox passes. Result bundle:
+`/private/tmp/execute-billing-acceptance-20261031/Billing.xcresult` on the setup Mac.
+
+The [acceptance runbook](native-billing-acceptance.md) defines a separate unused
+Canadian sandbox tester plus clean Execute identity for empty restore, preserving
+the purchaser tester and A/B history. No-purchase and reinstall/restore device
+acceptance remain pending. Local StoreKit Code 3 was not rerun or resolved by this
+ordinary-scheme run. No application code, shared provider configuration, restore
+policy or deployed backend was changed by this preparation.
+
+The fresh ordinary-scheme Debug iPhone build also **succeeded**, passed strict/deep
+signature verification, matched signing team `58GZDC8UKY`, the native-dev bundle
+and all five RevenueCat local settings, and **installed successfully** over the
+existing native-dev app. The ordinary scheme has no StoreKit fixture or mock launch
+arguments. This update preserves app data; it is not the pending uninstall/reinstall
+acceptance test. No purchase or Restore was performed in this preparation.
+
+### Empty-restore baseline and isolated StoreKit retest — 2026-10-31
+
+A third Canadian Sandbox tester was created by the user with a new unused alias.
+Apple's list shows no last purchase; the two existing testers and their histories
+remain intact. For a separate clean Execute account C, a SELECT-only preflight
+returned **0 auth identities, 0 subscription rows and 0 paid rows**. RevenueCat
+reported **Customer not found** for C. Exact aliases stay in private setup evidence.
+The user was asked to sign into the new sandbox tester and C on the physical
+native-dev app, stopping at Billing before Subscribe or Restore. **No-purchase
+restore is still pending**; baseline verification is not a restore pass.
+
+The isolated `ExecuteNative-StoreKit` cancellation test was rerun with a 30-second
+execution allowance on the installed Xcode 26.4 / iOS 26.4 simulator. It failed in
+1.301 seconds: saving configuration, clearing overrides/transactions and setting
+a session option logged `SKInternalErrorDomain Code=3`, followed by a nil `Product`
+at `StoreKitBillingTests.swift:65`. Result bundle:
+`/private/tmp/execute-billing-acceptance-20261031/StoreKitCancellation.xcresult`.
+No source workaround, runtime upgrade or environment-reset workaround was applied.
+
+Apple's [forum thread](https://developer.apple.com/forums/thread/826971) now includes
+a DTS statement that the issue is fixed in Xcode 26.6, plus later reports of
+continued failures with an older simulator runtime. The official
+[iOS 26.6 release notes](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-26_6-release-notes)
+list a Simulator test-environment connection fix. A newer compatible Xcode/runtime
+pair is a candidate for a controlled retest, not a verified fix on this Mac.
+The physical iPhone's newer OS does not change the installed simulator runtime.
+
+### Physical empty restore and canceled purchase — 2026-11-01
+
+**No-purchase restore passed.** On the fresh ordinary-scheme native-dev build,
+account C and the new Canadian sandbox tester started without paid access.
+Before Restore, read-only SQL found one auth identity and **zero subscription / zero
+paid rows**; RevenueCat showed no entitlement and USD 0 spent. A single Restore
+through iPhone Mirroring displayed **No active App Store subscription was found to
+restore**. The app stayed free. Opening Nutrition and tapping its Premium AI action
+returned to the paywall. Post-restore SQL remained **1 auth / 0 subscription / 0 paid**;
+RevenueCat still showed no current entitlement, no purchase or transfer entry, and
+USD 0 spent. No successful-purchase webhook is expected for this empty result;
+none was used as evidence. No subscription row was manually written.
+
+**Relaunch and session persistence passed for C.** The exact native-dev bundle was
+terminated/relaunched using CoreDevice. Profile still displayed C's exact approved
+email alias and **Upgrade to Premium**; Billing remained free. This is process
+relaunch, not uninstall/reinstall recovery.
+
+**Canceled purchase passed.** The monthly Apple sheet displayed **Execute Native
+Dev**, **Execute Premium — Monthly**, **CAD 15/month**, the new tester's exact alias,
+and **For testing purposes only. You will not be charged**. The agent closed the
+sheet with its X without confirming Subscribe. Execute displayed **Purchase
+canceled. No changes were made.** Annual selection then worked and updated the
+Subscribe label, verifying controls recovered. Fresh read-only SQL again returned
+**1 auth / 0 subscription / 0 paid**; RevenueCat retained no entitlement and USD 0
+spent with no displayed purchase/transfer entry. The case establishes cancellation
+of an unconfirmed purchase, not cancellation of an existing renewing subscription.
+
+These are physical UI observations through Mirroring, not mock/XCTest assertions.
+Private screenshots and identity evidence are in the setup workspace under
+`outputs/empty-restore-{before,result,relaunch-profile}.png`,
+`outputs/cancel-monthly-{sandbox-sheet,result}.png`, and
+`work/native-validation/billing-acceptance-20261031/status.json`.
+Offline/retry, purchaser uninstall/reinstall, pending approval, subscription
+cancellation/refund and the remaining server cases stay open. Local StoreKit
+Code 3 remains independently reproduced and unresolved. No provider setting,
+restore policy, original app, production deployment or account deletion changed.
+
+### Physical offline Restore and online recovery — 2026-11-01
+
+On C and the unchanged clean tester, the user performed Restore offline and then
+again after reconnecting. The user confirmed Premium stayed inactive on both
+attempts, and described the offline warning as being to the effect of being
+offline. **The exact offline wording and elapsed time were not captured.**
+
+After reconnecting Mirroring, the agent directly observed the completed online
+result: **No active App Store subscription was found to restore**, free Billing,
+no spinner, and usable controls. Selecting Monthly updated the Subscribe label.
+A fresh SELECT-only check returned **1 auth / 0 subscription / 0 paid** for C;
+RevenueCat still showed no current entitlements and USD 0 spent. Screenshot:
+`outputs/restore-online-retry-result.png` in the private setup workspace.
+
+This is a scoped offline-warning/no-accidental-unlock and online-recovery pass,
+combining user-reported offline behavior with directly observed online results.
+It does not establish measured offline timeouts or interrupted-purchase handling.
+Purchaser uninstall/reinstall remains pending; B's current RevenueCat entitlement
+and one premium/active backend row were preflighted before asking the user to
+switch back to B and the original purchaser tester. No new purchase is required.
+
+### Physical purchaser uninstall/reinstall recovery — 2026-11-01
+
+**Passed for B while its annual entitlement was active.** Before removal, the
+phone's Profile identified B and Billing showed Premium active. RevenueCat and a
+fresh read-only SQL query agreed: native-dev annual, one premium/active row,
+period end `2026-11-01T07:42:08Z`. The reinstall artifact passed strict/deep
+signature verification, native-dev bundle/team checks and ordinary-scheme checks.
+
+CoreDevice then successfully **uninstalled** only
+`com.executelabs.execute.native-dev`, installed the verified signed artifact and
+launched that exact bundle (all three commands exited 0). This was an actual
+uninstall/reinstall, not an in-place update. Post-install inventory independently
+confirmed both native-dev and original `com.executelabs.execute` remain installed.
+
+B's authenticated email session and Premium access **recovered automatically before
+manual Restore**. This observation does not prove all keychain credentials were
+removed or that recovery depended solely on an Apple receipt. The agent then
+tapped Restore once: **Your App Store purchase was restored** appeared and Premium
+stayed active. Nutrition's AI action opened **Log with AI** rather than the paywall;
+no food estimate was submitted. SQL retained one premium/active B row with the same
+period. RevenueCat retained the annual entitlement and no new transfer in displayed
+history. No new purchase, manual subscription write or provider change was used.
+
+Private evidence: `outputs/reinstall-b-{before-active,auto-recovered-profile,auto-premium,restored,nutrition-access}.png`
+and `/private/tmp/execute-billing-acceptance-20261031/{uninstall,reinstall,reinstall-launch}.json`.
+Existing-subscription cancellation/expiry is next; refund, pending approval,
+interrupted purchases, remaining server cases and local StoreKit Code 3 stay open.
+
+### Physical Sandbox auto-renewal cancellation — 2026-11-01
+
+**Cancellation and retention through the paid period passed.** The user canceled
+the native-dev annual subscription on the physical phone. Mirroring directly
+showed Apple's **[Sandbox] / Execute Native Dev / Execute Premium — Annual**
+sheet with **You've cancelled your subscription** and **ends on November 1**.
+The agent did not tap Renew. RevenueCat recorded `CANCELLATION`, reason
+`UNSUBSCRIBE`, event `DF1C4360-A51D-4A75-93C7-4344814B0F7E` at
+`2026-11-01T07:18` UTC. Its actual integration response was **HTTP 200**,
+`{"received":true}`. RevenueCat retained an active annual entitlement, now marked
+**expires**, through `2026-11-01T07:42:08Z` (**November 1, 12:42:08 a.m.
+America/Vancouver**). Fresh read-only SQL found exactly one B row:
+`premium/active`, the same period end, and `cancel_at_period_end=true`.
+The phone still showed Premium active before expiry, as expected.
+
+Post-expiry webhook/backend revocation and B's device gates are **pending for this
+cancellation**; an earlier expiry pass does not establish this run's result.
+Keep the same B/tester, do not renew or purchase, and recheck provider, backend and
+Profile/Nutrition after the recorded end time. Private evidence includes
+`outputs/annual-sandbox-cancelled.png`. No manual subscription write, provider
+setting change, renewal or production deployment was performed.
+
+### Billing lifecycle coverage review — 2026-11-01
+
+Seven isolated fixtures against the unchanged handler matched six cancellation, refund-snapshot, billing-grace and expiry outcomes. The seventh exposed a missing App Store `REFUND_REVERSED` handler: HTTP200/skipped, zero provider reads/writes despite an active current snapshot. This is an open implementation gap, not a live refund-reversal pass. No function deployment or provider change was made. See the [lifecycle matrix and B expiry procedure](native-billing-acceptance.md#lifecycle-review-and-expiry-checkpoint--2026-11-01). This cancellation's expiry and post-refresh gates subsequently passed as recorded below. Private reproduction: `work/native-validation/billing-acceptance-20261031/lifecycle-review.ts` in the setup workspace.
+
+The isolated refund-reversal candidate passes all 20 handler tests and lint; its three new regressions fail against the unchanged source, and `git apply --check` succeeds. It has not been applied to the active implementation or deployed.
+
+### Physical cancellation-to-expiry acceptance — 2026-11-01
+
+The annual period ended at `2026-11-01T07:42:08Z`. RevenueCat emitted native-dev
+Sandbox `EXPIRATION`, reason `UNSUBSCRIBE`, event
+`D37D18A5-DD0E-4799-93BE-05928B426BA2`. The actual integration returned **HTTP200**,
+`{"received":true}`. RevenueCat showed **Inactive · expired**. A fresh SELECT-only
+query returned exactly **one B subscription row**, `free/canceled`, with that event
+ID/type, period end unchanged, `cancel_at_period_end=false`, provider observation
+`07:42:22Z` and backend update `07:42:23.01489Z`.
+
+The physical phone was confirmed signed into B before expiry and stayed on that
+identity. Its already-open screen retained the earlier active state until Billing
+was explicitly reopened. The completed **Checking subscription** refresh then
+showed the free paywall. Profile showed **Upgrade to Premium**, and tapping
+Nutrition's **Describe your meal with AI** opened the Premium paywall. No estimate
+was submitted. No Restore, Subscribe, Renew, process restart or manual database
+write was used. This accepts post-refresh gates; passive immediate expiry while
+leaving the old view open is not established.
+
+Private evidence in the setup workspace: `outputs/cancellation-expired-revenuecat.png`,
+`outputs/cancellation-expiry-{webhook200,backend,billing-gated,profile-gated,nutrition-gated}.png`
+and the acceptance status JSON. Refund/reversal and billing-grace integration,
+pending approval, interrupted purchase, mixed-provider Stripe and local StoreKit
+Code3 remain open. The isolated refund-reversal candidate remains unapplied and
+undeployed.
+
+### Refund-reversal fix applied locally — 2026-11-01
+
+Applied the reviewed `REFUND_REVERSED` routing fix and three regressions to
+`codex/native-billing`. All 20 handler tests, lint, entrypoint type-check, formatting
+and whitespace checks passed. The three regressions fail against the unchanged
+baseline. A read-only download confirms deployed v7 (existing bundle SHA and
+verify_jwt=false): index/config/shared CORS match exactly; the only runtime change
+is the new event type. Saved rollback and exact staged source are ready.
+Production remains v7 pending scoped deployment approval; live refund/reversal
+acceptance is not established. No migration, provider/credential/restore-policy
+change, other function deployment or Recovery branch edit was made.
+
+### Refund-reversal v8 rollout verified — 2026-11-01
+
+After scoped approval, deployed only revenuecatWebhook. Management API confirms
+active v8, original gateway setting, and no changes to other functions. Downloaded
+source matches the exact reviewed stage; the sole runtime difference from v7 is
+REFUND_REVERSED routing. Missing/invalid bearer requests returned 401 on both
+endpoint forms. Configured RevenueCat TEST `6F475DD8-ED66-4EE7-9302-F995BE75EB9D`
+returned 200 with `{"received":true,"skipped":"TEST"}`. No migration, private-key,
+provider/restore-policy or native-build change occurred. Full bundle hash and
+rollback details are in the function README and private rollout manifest.
+This is source/authentication/transport smoke plus local regression coverage;
+real Apple refund/reversal acceptance remains unverified. No historical replay
+or manual subscription edit was used.

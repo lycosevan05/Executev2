@@ -30,6 +30,13 @@
 
 ---
 
+## 2026-11-01 — Reconcile refund reversals from current provider state
+**Type:** architecture · **Status:** active
+**Context:** The webhook acknowledged `REFUND_REVERSED` without refreshing customer state, so a reversal could leave backend access stale.
+**Decision:** Route refund reversals through the existing provider lookup and atomic reconciliation path, retaining authentication, gateway settings and restore policy. Do not grant access directly from the event payload.
+**Why:** A delayed reversal may arrive after access has expired again; current provider truth preserves that later state, and lookup failures must retry without partial writes. Source/authentication/TEST verification and fixture passes remain distinct from real Apple refund-reversal acceptance.
+**Touches:** `supabase/functions/revenuecatWebhook`, billing acceptance runbook and parity audit. The approved version 8 rollout is recorded in the function README.
+
 ## 2026-06-08 — "Any active entitlement = premium" assumption made explicit
 **Type:** architecture · **Status:** active
 **Context:** The OR-gate unlock checks `customerInfo.entitlements.active` but the app only defines
