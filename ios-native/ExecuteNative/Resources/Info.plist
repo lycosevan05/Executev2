@@ -41,6 +41,14 @@
     <string>$(SUPABASE_UPLOAD_BUCKET)</string>
     <key>RevenueCatAPIKey</key>
     <string>$(REVENUECAT_API_KEY)</string>
+    <key>RevenueCatEntitlementID</key>
+    <string>$(REVENUECAT_ENTITLEMENT_ID)</string>
+    <key>RevenueCatOfferingID</key>
+    <string>$(REVENUECAT_OFFERING_ID)</string>
+    <key>RevenueCatMonthlyProductID</key>
+    <string>$(REVENUECAT_MONTHLY_PRODUCT_ID)</string>
+    <key>RevenueCatAnnualProductID</key>
+    <string>$(REVENUECAT_ANNUAL_PRODUCT_ID)</string>
     <key>AuthCallbackScheme</key>
     <string>$(AUTH_CALLBACK_SCHEME)</string>
     <key>UIAppFonts</key>

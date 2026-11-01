@@ -6,6 +6,10 @@ struct AppConfiguration: Equatable {
     let revenueCatAPIKey: String
     let uploadBucket: String
     let callbackScheme: String
+    var revenueCatEntitlementID = "Execute Performance Premium"
+    var revenueCatOfferingID = "default"
+    var revenueCatMonthlyProductID = "execute_premium_month"
+    var revenueCatAnnualProductID = "execute_premium_annual"
 
     var callbackURL: URL {
         URL(string: "\(callbackScheme)://login-callback")!
@@ -42,12 +46,22 @@ struct AppConfiguration: Equatable {
             throw AppError(title: "Callback configuration is missing", message: "Set AUTH_CALLBACK_SCHEME in Local.xcconfig.")
         }
 
-        return AppConfiguration(
+        var configuration = AppConfiguration(
             supabaseURL: supabaseURL,
             supabaseAnonKey: anonKey,
             revenueCatAPIKey: revenueCatKey,
             uploadBucket: uploadBucket.isEmpty ? "uploads" : uploadBucket,
             callbackScheme: callbackScheme
         )
+        // These are public identifiers, configurable for a separate native-dev app.
+        func identifier(_ key: String, fallback: String) -> String {
+            let configured = value(key)
+            return configured.isEmpty || configured.contains("$(") ? fallback : configured
+        }
+        configuration.revenueCatEntitlementID = identifier("RevenueCatEntitlementID", fallback: configuration.revenueCatEntitlementID)
+        configuration.revenueCatOfferingID = identifier("RevenueCatOfferingID", fallback: configuration.revenueCatOfferingID)
+        configuration.revenueCatMonthlyProductID = identifier("RevenueCatMonthlyProductID", fallback: configuration.revenueCatMonthlyProductID)
+        configuration.revenueCatAnnualProductID = identifier("RevenueCatAnnualProductID", fallback: configuration.revenueCatAnnualProductID)
+        return configuration
     }
 }

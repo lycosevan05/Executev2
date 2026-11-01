@@ -446,6 +446,8 @@ private struct NutritionLoggingActions: View {
             }
             .buttonStyle(ExecutePressStyle())
 
+            .accessibilityIdentifier("nutrition.aiLog")
+
             Button(action: openManual) {
                 HStack(spacing: ExecuteSpacing.sm) {
                     Image(systemName: "plus")

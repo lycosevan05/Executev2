@@ -59,16 +59,26 @@ actor UserScopedCacheStore {
         activeUserID = nil
     }
 
+    func deactivate(userID: UUID) {
+        guard activeUserID == userID else { return }
+        deactivate()
+    }
+
     func purgeActiveUser() {
         guard let activeUserID else {
             deactivate()
             return
         }
-        let prefix = "execute.cache.\(activeUserID.uuidString)."
+        purge(userID: activeUserID)
+    }
+
+    // A completed deletion must never purge a newer account's active cache.
+    func purge(userID: UUID) {
+        let prefix = "execute.cache.\(userID.uuidString)."
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
             defaults.removeObject(forKey: key)
         }
-        deactivate()
+        deactivate(userID: userID)
     }
 
     func read<Value: Decodable & Sendable>(_ key: CacheKey, as type: Value.Type) -> CacheRead<Value> {

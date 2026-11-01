@@ -30,6 +30,7 @@ final class AppEnvironment: ObservableObject {
         cache: UserScopedCacheStore,
         router: AppRouter,
         subscriptionService: SubscriptionServicing,
+        subscriptionReader: SubscriptionReading = EmptySubscriptionReader(),
         dataService: SupabaseDataService? = nil,
         realtimeService: SupabaseRealtimeService? = nil,
         storageService: SupabaseStorageService? = nil,
@@ -52,11 +53,28 @@ final class AppEnvironment: ObservableObject {
             cache: cache,
             router: router,
             subscriptionService: subscriptionService,
+            subscriptionReader: subscriptionReader,
             configurationError: configurationError
         )
     }
 
     static func live() -> AppEnvironment {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-execute-billing-ui-tests") {
+            let service = MockSubscriptionService()
+            service.offeredPackages = [
+                BillingPackage(id: "$rc_monthly", productID: "execute_premium_month", plan: .monthly, localizedPrice: "$14.99"),
+                BillingPackage(id: "$rc_annual", productID: "execute_premium_annual", plan: .annual, localizedPrice: "$99.99")
+            ]
+            let paid = PremiumState(isPremium: true, entitlementIdentifier: "UI-test-only", expirationDate: .distantFuture)
+            service.purchaseResult = .purchased(paid)
+            if ProcessInfo.processInfo.arguments.contains("-execute-restore-entitled") { service.restoredState = paid }
+            return preview(
+                authService: MockAuthService(restoredUser: ExecuteUser(id: UUID(), email: "ui-test@example.com", displayName: "Test member")),
+                subscriptionService: service
+            )
+        }
+#endif
         let cache = UserScopedCacheStore()
         let router = AppRouter()
         do {
@@ -79,6 +97,7 @@ final class AppEnvironment: ObservableObject {
                 cache: cache,
                 router: router,
                 subscriptionService: subscriptionService,
+                subscriptionReader: SupabaseSubscriptionReader(client: client),
                 dataService: SupabaseDataService(client: client),
                 realtimeService: SupabaseRealtimeService(client: client),
                 storageService: SupabaseStorageService(client: client, defaultBucket: configuration.uploadBucket),
@@ -98,7 +117,7 @@ final class AppEnvironment: ObservableObject {
         }
     }
 
-    static func preview(authService: AuthServicing = MockAuthService()) -> AppEnvironment {
+    static func preview(authService: AuthServicing = MockAuthService(), subscriptionService: SubscriptionServicing = MockSubscriptionService()) -> AppEnvironment {
         AppEnvironment(
             configuration: nil,
             configurationError: nil,
@@ -106,7 +125,7 @@ final class AppEnvironment: ObservableObject {
             accountService: MockAccountService(),
             cache: UserScopedCacheStore(),
             router: AppRouter(),
-            subscriptionService: MockSubscriptionService(),
+            subscriptionService: subscriptionService,
             aiService: MockAIService()
         )
     }

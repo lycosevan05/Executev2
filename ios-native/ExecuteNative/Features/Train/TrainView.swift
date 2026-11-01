@@ -630,7 +630,7 @@ private struct WorkoutSessionActiveView: View {
             Text("SESSION NOTES")
                 .font(ExecuteTypography.caption(9).weight(.bold))
                 .foregroundStyle(WorkoutSessionPalette.mutedText)
-            TextEditor(text: Binding(get: { model.notes }, set: model.updateNotes))
+            TextEditor(text: Binding(get: { model.notes }, set: { model.updateNotes($0) }))
                 .font(ExecuteTypography.body(13))
                 .foregroundStyle(WorkoutSessionPalette.primaryText)
                 .scrollContentBackground(.hidden)

@@ -23,11 +23,13 @@ final class AppState: ObservableObject {
     private let accountService: AccountServicing
     private let cache: UserScopedCacheStore
     let router: AppRouter
-    private let subscriptionService: SubscriptionServicing
+    let billing: BillingStore
     private let configurationError: AppError?
     private let sessionRestoreTimeoutNanoseconds: UInt64
     private var didStart = false
     private var subscriptionRefreshTask: Task<Void, Never>?
+    private var sessionGeneration = UUID()
+    private var authenticationGeneration = UUID()
 
     init(
         authService: AuthServicing,
@@ -35,6 +37,7 @@ final class AppState: ObservableObject {
         cache: UserScopedCacheStore,
         router: AppRouter,
         subscriptionService: SubscriptionServicing,
+        subscriptionReader: SubscriptionReading = EmptySubscriptionReader(),
         configurationError: AppError?,
         sessionRestoreTimeoutNanoseconds: UInt64 = 10_000_000_000
     ) {
@@ -42,14 +45,16 @@ final class AppState: ObservableObject {
         self.accountService = accountService
         self.cache = cache
         self.router = router
-        self.subscriptionService = subscriptionService
+        self.billing = BillingStore(service: subscriptionService, reader: subscriptionReader)
         self.configurationError = configurationError
         self.sessionRestoreTimeoutNanoseconds = sessionRestoreTimeoutNanoseconds
+        billing.onPremiumStateChanged = { [weak self] state in self?.premiumState = state }
     }
 
     func start() async {
         guard !didStart else { return }
         didStart = true
+        let attempt = beginAuthenticationAttempt()
 #if DEBUG
         startupLogger.debug("[Startup] Bootstrap started")
 #endif
@@ -64,7 +69,9 @@ final class AppState: ObservableObject {
 #if DEBUG
             startupLogger.debug("[Startup] Restoring Supabase session")
 #endif
-            if let user = try await restoreSessionWithTimeout() {
+            let restoredUser = try await restoreSessionWithTimeout()
+            guard authenticationGeneration == attempt else { return }
+            if let user = restoredUser {
 #if DEBUG
                 startupLogger.debug("[Startup] Session result: authenticated")
 #endif
@@ -77,6 +84,7 @@ final class AppState: ObservableObject {
 #endif
             }
         } catch {
+            guard authenticationGeneration == attempt else { return }
             launchState = .failed(AppError.from(error, title: "Could not restore your session"))
 #if DEBUG
             startupLogger.error("[Startup] Session restoration failed")
@@ -95,7 +103,9 @@ final class AppState: ObservableObject {
     }
 
     func verifyEmailOTP(email: String, token: String) async throws {
+        let attempt = beginAuthenticationAttempt()
         let user = try await authService.verifyEmailOTP(email: email, token: token)
+        guard authenticationGeneration == attempt else { throw CancellationError() }
         await activate(user)
     }
 
@@ -104,45 +114,78 @@ final class AppState: ObservableObject {
     }
 
     func handleOpenURL(_ url: URL) async {
+        let attempt = beginAuthenticationAttempt()
         do {
-            if let user = try await authService.handleCallbackURL(url) {
+            let callbackUser = try await authService.handleCallbackURL(url)
+            guard authenticationGeneration == attempt else { return }
+            if let user = callbackUser {
                 await activate(user)
             }
         } catch {
+            guard authenticationGeneration == attempt else { return }
             launchState = .failed(AppError.from(error, title: "Sign-in could not be completed"))
         }
     }
 
     func signOut() async {
+        authenticationGeneration = UUID()
+        sessionGeneration = UUID()
+        let session = sessionGeneration
+        let userID = signedInUserID
+        subscriptionRefreshTask?.cancel()
+        // Supabase removes its local session before the logout network request.
+        // Revoke billing immediately, even if that request subsequently fails.
+        billing.deactivate()
         do {
-            subscriptionRefreshTask?.cancel()
             try await authService.signOut()
-            await cache.deactivate()
-            premiumState = .free
+            if let userID { await cache.deactivate(userID: userID) }
+            guard sessionGeneration == session else { return }
             router.reset()
             launchState = .signedOut
         } catch {
+            if let userID { await cache.deactivate(userID: userID) }
+            guard sessionGeneration == session else { return }
             launchState = .failed(AppError.from(error, title: "Could not sign out"))
         }
     }
 
     func deleteAccount() async throws {
+        let session = sessionGeneration
+        let authentication = authenticationGeneration
+        let userID = signedInUserID
         subscriptionRefreshTask?.cancel()
         try await accountService.deleteAccount()
+        if let userID { await cache.purge(userID: userID) }
+        guard sessionGeneration == session else { return }
+        billing.deactivate()
+        // A new sign-in may be awaiting the SDK even before activate runs.
+        // Do not queue a logout behind it or invalidate its eventual result.
+        guard authenticationGeneration == authentication else {
+            sessionGeneration = UUID()
+            router.reset()
+            launchState = .signedOut
+            return
+        }
+        authenticationGeneration = UUID()
         try? await authService.signOut()
-        await cache.purgeActiveUser()
-        premiumState = .free
+        guard sessionGeneration == session else { return }
+        sessionGeneration = UUID()
         router.reset()
         launchState = .signedOut
     }
 
     func handleScenePhase(_ phase: ScenePhase) async {
         guard case .signedIn = launchState, phase == .active else { return }
-        premiumState = (try? await subscriptionService.currentPremiumState()) ?? premiumState
+        await billing.refresh()
     }
 
     private func activate(_ user: ExecuteUser) async {
+        authenticationGeneration = UUID()
+        sessionGeneration = UUID()
+        let session = sessionGeneration
+        billing.activate(user)
         await cache.activate(userID: user.id)
+        guard sessionGeneration == session else { return }
 #if DEBUG
         startupLogger.debug("[Startup] User cache activated")
 #endif
@@ -156,22 +199,19 @@ final class AppState: ObservableObject {
         subscriptionRefreshTask?.cancel()
         subscriptionRefreshTask = Task { [weak self] in
             guard let self else { return }
-            do {
-                // Email identity preserves the existing RevenueCat webhook contract.
-                try await subscriptionService.configure(appUserID: user.email)
-                guard !Task.isCancelled else { return }
-                premiumState = try await subscriptionService.currentPremiumState()
-#if DEBUG
-                startupLogger.debug("[Startup] RevenueCat initialized")
-#endif
-            } catch {
-                guard !Task.isCancelled else { return }
-                premiumState = .free
-#if DEBUG
-                startupLogger.error("[Startup] RevenueCat unavailable; continuing with server state")
-#endif
-            }
+            guard !Task.isCancelled, sessionGeneration == session else { return }
+            await billing.refresh()
         }
+    }
+
+    private var signedInUserID: UUID? {
+        guard case .signedIn(let user) = launchState else { return nil }
+        return user.id
+    }
+
+    private func beginAuthenticationAttempt() -> UUID {
+        authenticationGeneration = UUID()
+        return authenticationGeneration
     }
 
     private func restoreSessionWithTimeout() async throws -> ExecuteUser? {

@@ -5,6 +5,7 @@ options:
     iOS: "16.0"
 settings:
   base:
+    DEVELOPMENT_TEAM: 58GZDC8UKY
     IPHONEOS_DEPLOYMENT_TARGET: "16.0"
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
@@ -52,21 +53,52 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: ExecuteNativeTests
+        excludes: ["*.storekit"]
+      - path: ExecuteNativeTests/Billing.storekit
+        buildPhase: resources
     dependencies:
       - target: ExecuteNative
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.executelabs.execute.native-dev.tests
         GENERATE_INFOPLIST_FILE: YES
+  ExecuteNativeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ExecuteNativeUITests
+    dependencies:
+      - target: ExecuteNative
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.executelabs.execute.native-dev.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: ExecuteNative
 schemes:
   ExecuteNative:
     build:
       targets:
         ExecuteNative: all
         ExecuteNativeTests: [test]
+        ExecuteNativeUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
         - ExecuteNativeTests
+        - ExecuteNativeUITests
+  ExecuteNative-StoreKit:
+    build:
+      targets:
+        ExecuteNative: all
+        ExecuteNativeTests: [test]
+    run:
+      config: Debug
+      storeKitConfiguration: ExecuteNativeTests/Billing.storekit
+    test:
+      config: Debug
+      targets:
+        - name: ExecuteNativeTests
+          selectedTests: [StoreKitBillingTests]

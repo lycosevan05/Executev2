@@ -76,6 +76,7 @@ struct LegalDocumentView: View {
         .background(ExecuteColor.parchment)
         .navigationTitle(document.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .executeScreen()
     }
 

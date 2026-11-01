@@ -1,0 +1,65 @@
+{
+  "identifier": "execute-billing-local-tests",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA"
+  },
+  "subscriptionGroups": [
+    {
+      "id": "execute-test-premium",
+      "localizations": [],
+      "name": "Execute Premium (local test)",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "14.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "1001",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Local test fixture",
+              "displayName": "Execute Premium Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "execute_premium_month",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Monthly",
+          "subscriptionGroupID": "execute-test-premium",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "99.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "1002",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Local test fixture",
+              "displayName": "Execute Premium Annual",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "execute_premium_annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Annual",
+          "subscriptionGroupID": "execute-test-premium",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

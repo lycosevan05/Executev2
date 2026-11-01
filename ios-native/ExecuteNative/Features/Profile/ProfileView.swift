@@ -72,6 +72,7 @@ struct ProfileDashboardView: View {
                 }
 
                 ProfilePremiumCard(state: premiumState, action: model.openBilling)
+                    .accessibilityIdentifier("profile.billing")
 
                 ProfileSection(title: "About") {
                     VStack(spacing: 0) {

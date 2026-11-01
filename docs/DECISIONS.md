@@ -102,3 +102,24 @@ TanStack Query / react-hook-form / react-router v6; Tailwind + Radix + framer-mo
 **Why:** Reuse one React codebase for web and the iOS shell; Supabase gives auth + serverless without
 standing up a backend. Recorded as the baseline all later decisions build on.
 **Touches:** whole repo · **Commit:** 5c9149a
+
+## 2026-10-31 — Native billing identity and entitlement isolation
+**Type:** architecture · **Status:** active
+**Context:** Native purchases, auth callbacks and account changes can finish after a newer session starts; web subscribers also need their existing backend access.
+**Decision:** Keep the existing email identity, serialize auth/RevenueCat mutations, discard stale session results, and clear access on sign-out. Native Premium resolves the exact `Execute Performance Premium` entitlement OR the authenticated account's active/trialing backend row. The device never writes subscription rows.
+**Why:** Preserve the shared backend contract and legitimate web access while preventing an earlier account's asynchronous result from granting access to a later account. User-scoped cache cleanup targets the original UUID.
+**Touches:** `ios-native/ExecuteNative/App`, `Core/Authentication`, `Core/Persistence`, `Core/RevenueCat`, `Features/Billing`.
+
+## 2026-10-31 — Shared RevenueCat transfer reconciliation
+**Type:** architecture · **Status:** active
+**Context:** The prior webhook acknowledged TRANSFER without reconciling both account rows, leaving backend Premium stale after the receipt moved.
+**Decision:** Read current provider state for both transfer sides and reconcile email-keyed rows atomically through a service-role-only, security-invoker RPC. Reject revision conflicts/provider failures for retry; preserve unrelated metadata and independently verified retained purchases. Retain the approved `verify_jwt=false` gateway with existing bearer-secret authentication and the existing project-wide restore policy.
+**Why:** Event payloads cannot safely serve as current entitlement truth after transfers or delayed delivery. Atomic updates prevent partially moved access. Missing Stripe credentials fail closed for reconciliation rather than guessing a downgrade; later Stripe lifecycle projection remains a separate limitation.
+**Touches:** `supabase/functions/revenuecatWebhook`, `supabase/migrations/20261021000000_reconcile_revenuecat_subscriptions.sql`. Scoped deployment, auth negatives and physical A → B acceptance are recorded in the native audit.
+
+## 2026-10-31 — Separate native-dev store configuration and auth mail
+**Type:** provider · **Status:** active
+**Context:** Native subscription testing required its own Apple/RevenueCat app and the built-in Supabase mail quota repeatedly blocked disposable-account sign-in.
+**Decision:** Preserve the original Execute app; use `com.executelabs.execute.native-dev`, verified team `58GZDC8UKY`, separate monthly/annual products and the matching public SDK key in ignored local configuration. With approval, route shared Supabase auth mail through Resend using verified `auth.executelabs.ca` and a domain-restricted Sending key stored privately in Supabase.
+**Why:** Isolate development store records while retaining the shared entitlement contract, and provide reliable code delivery without bypassing email verification. Keep all private credentials out of mobile configuration, source and logs.
+**Touches:** native build configuration and setup/audit documentation; provider settings were applied through the approved dashboard workflow.

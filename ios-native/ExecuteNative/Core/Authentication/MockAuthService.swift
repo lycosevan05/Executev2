@@ -5,6 +5,7 @@ final class MockAuthService: AuthServicing {
     var restoredUser: ExecuteUser?
     var restoreError: AppError?
     var restoreDelayNanoseconds: UInt64?
+    var signOutError: AppError?
     var sentOTPs: [String] = []
 
     init(
@@ -32,5 +33,8 @@ final class MockAuthService: AuthServicing {
     }
     func authorizationURL(for provider: OAuthProvider) async throws -> URL { URL(string: "https://example.com")! }
     func handleCallbackURL(_ url: URL) async throws -> ExecuteUser? { restoredUser }
-    func signOut() async throws { restoredUser = nil }
+    func signOut() async throws {
+        restoredUser = nil
+        if let signOutError { throw signOutError }
+    }
 }
