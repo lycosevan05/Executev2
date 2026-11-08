@@ -2,6 +2,7 @@ import SwiftUI
 
 enum AppPreviewDestination: Equatable {
     case home
+    case recovery
     case track
     case nutrition
     case profile
@@ -15,6 +16,7 @@ enum AppLaunchOptions {
 
     static func previewDestination(arguments: [String] = ProcessInfo.processInfo.arguments) -> AppPreviewDestination? {
 #if DEBUG
+        if arguments.contains("-execute-recovery-preview") { return .recovery }
         if arguments.contains(profilePreviewArgument) { return .profile }
         if arguments.contains(nutritionPreviewArgument) { return .nutrition }
         if arguments.contains(trackPreviewArgument) { return .track }
@@ -69,6 +71,12 @@ private struct FeaturePreviewRootView: View {
     var body: some View {
         NavigationStack {
             switch destination {
+            case .recovery:
+#if DEBUG
+                RecoveryPreviewView()
+#else
+                EmptyView()
+#endif
             case .home:
                 HomeDashboardView(model: .preview(name: "Evan"))
             case .track:
@@ -98,7 +106,7 @@ private struct FeaturePreviewRootView: View {
 
     private var selectedTab: AppTab {
         switch destination {
-        case .home: .home
+        case .home, .recovery: .home
         case .track: .track
         case .nutrition: .nutrition
         case .profile: .home

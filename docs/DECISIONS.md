@@ -130,3 +130,18 @@ standing up a backend. Recorded as the baseline all later decisions build on.
 **Decision:** Preserve the original Execute app; use `com.executelabs.execute.native-dev`, verified team `58GZDC8UKY`, separate monthly/annual products and the matching public SDK key in ignored local configuration. With approval, route shared Supabase auth mail through Resend using verified `auth.executelabs.ca` and a domain-restricted Sending key stored privately in Supabase.
 **Why:** Isolate development store records while retaining the shared entitlement contract, and provide reliable code delivery without bypassing email verification. Keep all private credentials out of mobile configuration, source and logs.
 **Touches:** native build configuration and setup/audit documentation; provider settings were applied through the approved dashboard workflow.
+
+
+## 2026-10-31 — Feature-scoped native Recovery persistence and guidance
+**Type:** architecture · **Status:** active
+**Context:** Recovery needs exact-date JSON queries, canonical linked-day selection and stale-session protection without expanding the shared entity service or changing the backend schema.
+**Decision:** Use an injected Recovery repository with authenticated, paginated server filters and existing shallow `patch_record` writes. Commit local mutation state after acknowledgement, re-read before upserts/toggles, and guard account/date generations plus the live session. Preserve the source-derived readiness algorithm and its actual 5–100 clamp. Build fresh structured personalization context through the existing AI boundary and invalidate Home only for the matching user UUID.
+**Why:** Failed reads cannot authorize duplicate creation, failed writes cannot appear saved, and delayed guidance cannot write into a newer date/session. Fixtures enable implementation without provider administrator access. Cross-device atomicity and production/device acceptance remain explicit limits; customization omission is proposed for review in the audit/PR.
+**Touches:** `ios-native/ExecuteNative/Features/Recovery`, shell/environment wiring, UUID-scoped cache invalidation, Home refresh and focused tests.
+
+## 2026-11-08 — Recovery canonical selection and retry follow-up
+**Type:** architecture · **Status:** active
+**Context:** Collapsing top-level and nested sources hides canonical legacy plan payloads, and a failed personalization refresh must remain actionable after its data mutation succeeds.
+**Decision:** Match the web Recovery selectors in four ordered passes across rows while preserving exact plan/batch priority. Keep the separate source-copy helper unchanged to preserve the web write contract. Clear obsolete guidance errors on load and retain a user-scoped pending invalidation for explicit retry or same-user reload.
+**Why:** Preserve canonical selection parity and acknowledged saves without duplicating limitations or silently discarding failed invalidation work.
+**Touches:** Recovery models/view model and focused reference/regression fixtures only. No provider/schema configuration changes.

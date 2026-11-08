@@ -1,0 +1,51 @@
+[
+  {
+    "file": "accessibility-text.png",
+    "fixture_only": true,
+    "test": "RecoveryUITests/testAccessibilityTextLayout()",
+    "device": "Recovery small iPhone fixture QA",
+    "timestamp": 1793515583.928
+  },
+  {
+    "file": "guidance.png",
+    "fixture_only": true,
+    "test": "RecoveryUITests/testCheckInGuidanceEditAndTasks()",
+    "device": "Recovery small iPhone fixture QA",
+    "timestamp": 1793515606.05
+  },
+  {
+    "file": "check-in.png",
+    "fixture_only": true,
+    "test": "RecoveryUITests/testCheckInGuidanceEditAndTasks()",
+    "device": "Recovery small iPhone fixture QA",
+    "timestamp": 1793515600.513
+  },
+  {
+    "file": "guidance-retry.png",
+    "fixture_only": true,
+    "test": "RecoveryUITests/testGuidanceFailureRetainsCheckInAndRetry()",
+    "device": "Recovery small iPhone fixture QA",
+    "timestamp": 1793515618.935
+  },
+  {
+    "file": "limitations.png",
+    "fixture_only": true,
+    "test": "RecoveryUITests/testLimitationsAddAndArchive()",
+    "device": "Recovery small iPhone fixture QA",
+    "timestamp": 1793515628.771
+  },
+  {
+    "file": "home-route.png",
+    "fixture_only": true,
+    "test": "RecoveryUITests/testProductionHomeRouteOpensRecovery()",
+    "device": "Recovery small iPhone fixture QA",
+    "timestamp": 1793515645.581
+  },
+  {
+    "file": "home-action.png",
+    "fixture_only": true,
+    "test": "RecoveryUITests/testProductionHomeRouteOpensRecovery()",
+    "device": "Recovery small iPhone fixture QA",
+    "timestamp": 1793515642.411
+  }
+]

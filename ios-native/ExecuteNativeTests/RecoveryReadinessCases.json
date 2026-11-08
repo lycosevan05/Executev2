@@ -1,0 +1,3032 @@
+[
+  {
+    "now": "2026-11-01T01:30:00Z",
+    "zone": "UTC",
+    "inputs": {},
+    "result": {
+      "score": 64,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 14
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T05:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "checkIn": {
+        "energy": 7,
+        "soreness": 3,
+        "sleep": 7,
+        "stress": 3,
+        "motivation": 7
+      }
+    },
+    "result": {
+      "score": 55,
+      "breakdown": {
+        "baseFromCheckin": 37,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 0,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 18
+      },
+      "hasCheckIn": true
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T06:59:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 0
+      }
+    },
+    "result": {
+      "score": 68,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 0,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 18
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T07:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 4
+      }
+    },
+    "result": {
+      "score": 65,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 3,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 15
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Sleep was short — recovery affected"
+    ]
+  },
+  {
+    "now": "2026-10-31T09:59:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 5
+      }
+    },
+    "result": {
+      "score": 68,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 7,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 1,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 18
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Sleep was short — recovery affected"
+    ]
+  },
+  {
+    "now": "2026-10-31T10:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 6
+      }
+    },
+    "result": {
+      "score": 74,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 13,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 1,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 24
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 7
+      }
+    },
+    "result": {
+      "score": 77,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 18,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 5,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 27
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 78,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 5,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 28
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 10
+      }
+    },
+    "result": {
+      "score": 78,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 9,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 28
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "steps": 0
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 1,
+        "hoursAwake": 11,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T21:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "steps": 1
+      }
+    },
+    "result": {
+      "score": 62,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 2,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 14,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 12
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "steps": 2499
+      }
+    },
+    "result": {
+      "score": 59,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 2,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 14,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 9
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T23:30:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "steps": 2500
+      }
+    },
+    "result": {
+      "score": 60,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 4,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 16.5,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 10
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-11-01T01:30:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "steps": 5000
+      }
+    },
+    "result": {
+      "score": 65,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 6,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 15
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T05:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "steps": 7500
+      }
+    },
+    "result": {
+      "score": 70,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 8,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 0,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 20
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Step goal nearly reached"
+    ]
+  },
+  {
+    "now": "2026-10-31T06:59:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "steps": 10000
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 10,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 0,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Step goal nearly reached"
+    ]
+  },
+  {
+    "now": "2026-10-31T07:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 900,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 66,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 4,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 16
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Nutrition off target — readiness reduced"
+    ]
+  },
+  {
+    "now": "2026-10-31T09:59:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 1000,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 8,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 3,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T10:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 1399,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 70,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 8,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 3,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 20
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 1400,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 72,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 11,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 7,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 22
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 1700,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 74,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 14,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 7,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 24
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T18:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 2300,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 74,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 14,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 11,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 24
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T18:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 2600,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 11,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 1,
+        "hoursAwake": 11,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T21:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 3001,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 61,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 6,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 14,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 11
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Nutrition off target — readiness reduced",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Energized",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 66,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 7,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 14,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 16
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Workout completed — good recovery response",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T23:30:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Good",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 64,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 5,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 16.5,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 14
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-11-01T01:30:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Tired",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 64,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 14
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T05:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Drained",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 65,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": -4,
+        "timeOfDayPoints": 0,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 15
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Post-workout fatigue detected"
+    ]
+  },
+  {
+    "now": "2026-10-31T06:59:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Sore",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 67,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": -1,
+        "timeOfDayPoints": 0,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 17
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T07:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Pain or discomfort",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 66,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": -6,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 16
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Post-workout fatigue detected"
+    ]
+  },
+  {
+    "now": "2026-10-31T09:59:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 2100,
+        "protein_consumed_g": 150
+      },
+      "activePlan": {
+        "plan_payload": {
+          "nutrition_targets": {
+            "calories": 2100,
+            "protein_g": 150
+          }
+        }
+      }
+    },
+    "result": {
+      "score": 77,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 20,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 3,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 27
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Nutrition on point — fuelling recovery"
+    ]
+  },
+  {
+    "now": "2026-10-31T10:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "steps": 5000,
+        "calories_consumed": 1800
+      },
+      "userProfile": {
+        "step_goal_daily": 5000,
+        "calorie_goal": 1800
+      }
+    },
+    "result": {
+      "score": 78,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 10,
+        "nutritionPoints": 14,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 3,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 28
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Step goal nearly reached",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-11-01T01:30:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T05:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 75,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 0,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 25
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T06:59:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 75,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 0,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 25
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T07:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 77,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 27
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T09:59:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 77,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 1,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 27
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T10:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 79,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 1,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 29
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 79,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 5,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 29
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 78,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 5,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 28
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 78,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 9,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 28
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 76,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 1,
+        "hoursAwake": 9,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 26
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:00:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 74,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -2,
+        "hoursAwake": 12,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 24
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:01:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -8,
+        "hoursAwake": 12,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T23:30:00Z",
+    "zone": "UTC",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 68,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 14.5,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 18
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-11-01T01:30:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {},
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 1,
+        "hoursAwake": 11.5,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T05:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "checkIn": {
+        "energy": 7,
+        "soreness": 3,
+        "sleep": 7,
+        "stress": 3,
+        "motivation": 7
+      }
+    },
+    "result": {
+      "score": 48,
+      "breakdown": {
+        "baseFromCheckin": 37,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 15,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 11
+      },
+      "hasCheckIn": true
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T06:59:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 0
+      }
+    },
+    "result": {
+      "score": 61,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 17,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 11
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T07:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 4
+      }
+    },
+    "result": {
+      "score": 59,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 3,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 9
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Sleep was short — recovery affected",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T09:59:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 5
+      }
+    },
+    "result": {
+      "score": 62,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 7,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 12
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Sleep was short — recovery affected",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T10:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 6
+      }
+    },
+    "result": {
+      "score": 66,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 13,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 16
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 7
+      }
+    },
+    "result": {
+      "score": 76,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 18,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 26
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 77,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 27
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 10
+      }
+    },
+    "result": {
+      "score": 79,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 2,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 29
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "steps": 0
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 4,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "steps": 1
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 2,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 7,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "steps": 2499
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 2,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 7,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T23:30:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "steps": 2500
+      }
+    },
+    "result": {
+      "score": 70,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 4,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 9.5,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 20
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-11-01T01:30:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "steps": 5000
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 6,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 1,
+        "hoursAwake": 11.5,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T05:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "steps": 7500
+      }
+    },
+    "result": {
+      "score": 63,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 8,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 15,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 13
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Step goal nearly reached",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T06:59:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "steps": 10000
+      }
+    },
+    "result": {
+      "score": 64,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 10,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 17,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 14
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Step goal nearly reached",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T07:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 900,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 60,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 4,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 10
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Nutrition off target — readiness reduced",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T09:59:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 1000,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 63,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 8,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 13
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T10:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 1399,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 63,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 8,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 13
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 1400,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 11,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T14:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 1700,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 73,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 14,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 23
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T18:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 2300,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 74,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 14,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 4,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 24
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 2600,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 72,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 11,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 4,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 22
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 3001,
+        "protein_consumed_g": 100
+      },
+      "nutritionProfile": {
+        "protein_target_g": 150
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 6,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 7,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Nutrition off target — readiness reduced",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Energized",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 76,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 7,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 7,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 26
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Workout completed — good recovery response"
+    ]
+  },
+  {
+    "now": "2026-10-31T23:30:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Good",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 74,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 5,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 9.5,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 24
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-11-01T01:30:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Tired",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 1,
+        "hoursAwake": 11.5,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": []
+  },
+  {
+    "now": "2026-10-31T05:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Drained",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 58,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": -4,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 15,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 8
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Post-workout fatigue detected",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T06:59:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Sore",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 60,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": -1,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 17,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 10
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T07:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "workout_done": true
+      },
+      "workoutLog": {
+        "post_workout_feeling": "Pain or discomfort",
+        "session_rpe": 9,
+        "pain_flag": "Yes, concerning"
+      }
+    },
+    "result": {
+      "score": 60,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": -6,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 10
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Post-workout fatigue detected",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T09:59:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "calories_consumed": 2100,
+        "protein_consumed_g": 150
+      },
+      "activePlan": {
+        "plan_payload": {
+          "nutrition_targets": {
+            "calories": 2100,
+            "protein_g": 150
+          }
+        }
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 5,
+        "nutritionPoints": 20,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Nutrition on point — fuelling recovery",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T10:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "steps": 5000,
+        "calories_consumed": 1800
+      },
+      "userProfile": {
+        "step_goal_daily": 5000,
+        "calorie_goal": 1800
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 10,
+        "stepPoints": 10,
+        "nutritionPoints": 14,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Step goal nearly reached",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-11-01T01:30:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 76,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 1,
+        "hoursAwake": 9.5,
+        "timeOfDayLabel": "Evening wind-down",
+        "dynamicScaled": 26
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T05:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 69,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -8,
+        "hoursAwake": 13,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 19
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T06:59:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 68,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -10,
+        "hoursAwake": 15,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 18
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T07:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T09:59:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T10:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 71,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": -5,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Off-hours",
+        "dynamicScaled": 21
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Late night / early hours — readiness naturally lower"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 77,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 27
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T14:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 77,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 3,
+        "hoursAwake": 0,
+        "timeOfDayLabel": "Morning warm-up",
+        "dynamicScaled": 27
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 79,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 2,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 29
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T18:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 79,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 2,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 29
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:00:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 79,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 5,
+        "hoursAwake": 5,
+        "timeOfDayLabel": "Peak window",
+        "dynamicScaled": 29
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night",
+      "Peak performance window (10am–2pm)"
+    ]
+  },
+  {
+    "now": "2026-10-31T21:01:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 78,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 5,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 28
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "now": "2026-10-31T23:30:00Z",
+    "zone": "America/Vancouver",
+    "inputs": {
+      "dailyLog": {
+        "sleep_hours": 8
+      }
+    },
+    "result": {
+      "score": 78,
+      "breakdown": {
+        "baseFromCheckin": 50,
+        "sleepPoints": 20,
+        "stepPoints": 5,
+        "nutritionPoints": 10,
+        "workoutAdj": 0,
+        "timeOfDayPoints": 4,
+        "hoursAwake": 7.5,
+        "timeOfDayLabel": "Afternoon",
+        "dynamicScaled": 28
+      },
+      "hasCheckIn": false
+    },
+    "drivers": [
+      "Good sleep last night"
+    ]
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "manual"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "manual"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "manual"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [],
+    "expectedPlanID": null,
+    "expectedDailyID": null
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "manual"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "plan": {
+      "id": "00000000-0000-0000-0000-000000000009",
+      "generation_batch_id": "batch"
+    },
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source_plan_id": "00000000-0000-0000-0000-000000000009",
+        "generation_batch_id": "old"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000003",
+        "generated_at": "2026-10-27T12:00:00Z",
+        "source_plan_id": "00000000-0000-0000-0000-000000000009",
+        "generation_batch_id": "batch"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000003"
+  },
+  {
+    "kind": "selection",
+    "plan": {
+      "id": "00000000-0000-0000-0000-000000000009",
+      "generation_batch_id": "batch"
+    },
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source_plan_id": "00000000-0000-0000-0000-000000000009"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  }
+]
