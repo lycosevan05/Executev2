@@ -25,6 +25,7 @@ final class RecoveryViewModel: ObservableObject {
     private var generation = UUID()
     private var guidanceGeneration = UUID()
     private var saveNeedsRetry = false
+    private var contextNeedsRetry = false
 
     init(repository: RecoveryRepository, ai: AIResponding, cache: UserScopedCacheStore,
          date: Date? = nil, source: String? = nil, clock: @escaping () -> Date = Date.init, timeZone: TimeZone = .current) {
@@ -64,7 +65,7 @@ final class RecoveryViewModel: ObservableObject {
     func stop() {
         generation = UUID(); guidanceGeneration = UUID(); identity = nil
         snapshot = RecoverySnapshot(); draft = RecoveryCheckIn(); loaded = false; loading = true
-        busy = false; generating = false; saveNeedsRetry = false; error = nil; guidanceError = nil; status = nil; isEditing = true
+        busy = false; generating = false; saveNeedsRetry = false; contextNeedsRetry = false; error = nil; guidanceError = nil; status = nil; isEditing = true
     }
     private func current(_ request: UUID, _ identity: RecoveryIdentity) -> Bool {
         guard request == generation, self.identity == identity, !Task.isCancelled else { return false }
@@ -81,8 +82,9 @@ final class RecoveryViewModel: ObservableObject {
     }
     func load(user: ExecuteUser) async {
         guard !busy else { return }
+        if identity?.user.id != user.id { contextNeedsRetry = false }
         let request = UUID(); generation = request; guidanceGeneration = UUID()
-        loading = true; loaded = false; saveNeedsRetry = false; error = nil; status = nil; generating = false
+        loading = true; loaded = false; saveNeedsRetry = false; error = nil; guidanceError = nil; status = nil; generating = false
         // Clear an earlier account immediately; never retain old health data behind a spinner.
         snapshot = RecoverySnapshot(); draft = RecoveryCheckIn(); isEditing = true; tab = defaultTab
         do {
@@ -107,6 +109,7 @@ final class RecoveryViewModel: ObservableObject {
                 draft = RecoveryCheckIn(record.data); isEditing = record.data["energy"]?.doubleValue == nil
                 tab = .guidance
             }
+            if contextNeedsRetry { await invalidateContext(identity, request: request) }
             await refreshSavedReadiness(identity, request: request)
             guard current(request, identity) else { return }
             loaded = true; loading = false
@@ -135,6 +138,14 @@ final class RecoveryViewModel: ObservableObject {
     }
     func retry(user: ExecuteUser) async {
         if saveNeedsRetry && loaded { await save() }
+        else if contextNeedsRetry, loaded, let identity, identity.user.id == user.id {
+            guard !busy, !generating else { return }
+            let request = generation
+            guard recoverSessionIfNeeded(request, identity: identity) else { return }
+            busy = true; error = nil
+            defer { if generation == request { busy = false } }
+            await invalidateContext(identity, request: request)
+        }
         else { await load(user: user) }
     }
     func selectDate(_ date: Date, user: ExecuteUser) async {
@@ -294,6 +305,7 @@ final class RecoveryViewModel: ObservableObject {
         NotificationCenter.default.post(name: .recoveryDidChange, object: identity.user.id)
     }
     private func invalidateContext(_ identity: RecoveryIdentity, request: UUID) async {
+        guard current(request, identity) else { return }
         do {
             let rows = try await repository.rows(.userAIContexts, fields: [:], identity: identity)
             for row in rows {
@@ -301,8 +313,12 @@ final class RecoveryViewModel: ObservableObject {
                 _ = try await repository.write(.userAIContexts, id: row.id,
                     patch: .object(["lastUpdatedAt": .string("1970-01-01T00:00:00.000Z")]), identity: identity)
             }
+            if current(request, identity) { contextNeedsRetry = false }
         } catch {
-            if current(request, identity) { self.error = AppError.from(error, title: "Saved; personalization refresh needs retry") }
+            if current(request, identity) {
+                contextNeedsRetry = true
+                self.error = AppError.from(error, title: "Saved; personalization refresh needs retry")
+            }
         }
     }
     static let bodyAreas = ["Lower Back", "Knee (Left)", "Knee (Right)", "Shoulder (Left)", "Shoulder (Right)", "Hip", "Ankle", "Wrist", "Neck", "Elbow", "Hamstring", "Calf", "Other"]

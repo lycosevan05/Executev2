@@ -30,6 +30,13 @@
 
 ---
 
+## 2026-11-01 — Reconcile refund reversals from current provider state
+**Type:** architecture · **Status:** active
+**Context:** The webhook acknowledged `REFUND_REVERSED` without refreshing customer state, so a reversal could leave backend access stale.
+**Decision:** Route refund reversals through the existing provider lookup and atomic reconciliation path, retaining authentication, gateway settings and restore policy. Do not grant access directly from the event payload.
+**Why:** A delayed reversal may arrive after access has expired again; current provider truth preserves that later state, and lookup failures must retry without partial writes. Source/authentication/TEST verification and fixture passes remain distinct from real Apple refund-reversal acceptance.
+**Touches:** `supabase/functions/revenuecatWebhook`, billing acceptance runbook and parity audit. The approved version 8 rollout is recorded in the function README.
+
 ## 2026-06-08 — "Any active entitlement = premium" assumption made explicit
 **Type:** architecture · **Status:** active
 **Context:** The OR-gate unlock checks `customerInfo.entitlements.active` but the app only defines
@@ -131,3 +138,10 @@ standing up a backend. Recorded as the baseline all later decisions build on.
 **Decision:** Use an injected Recovery repository with authenticated, paginated server filters and existing shallow `patch_record` writes. Commit local mutation state after acknowledgement, re-read before upserts/toggles, and guard account/date generations plus the live session. Preserve the source-derived readiness algorithm and its actual 5–100 clamp. Build fresh structured personalization context through the existing AI boundary and invalidate Home only for the matching user UUID.
 **Why:** Failed reads cannot authorize duplicate creation, failed writes cannot appear saved, and delayed guidance cannot write into a newer date/session. Fixtures enable implementation without provider administrator access. Cross-device atomicity and production/device acceptance remain explicit limits; customization omission is proposed for review in the audit/PR.
 **Touches:** `ios-native/ExecuteNative/Features/Recovery`, shell/environment wiring, UUID-scoped cache invalidation, Home refresh and focused tests.
+
+## 2026-11-08 — Recovery canonical selection and retry follow-up
+**Type:** architecture · **Status:** active
+**Context:** Collapsing top-level and nested sources hides canonical legacy plan payloads, and a failed personalization refresh must remain actionable after its data mutation succeeds.
+**Decision:** Match the web Recovery selectors in four ordered passes across rows while preserving exact plan/batch priority. Keep the separate source-copy helper unchanged to preserve the web write contract. Clear obsolete guidance errors on load and retain a user-scoped pending invalidation for explicit retry or same-user reload.
+**Why:** Preserve canonical selection parity and acknowledged saves without duplicating limitations or silently discarding failed invalidation work.
+**Touches:** Recovery models/view model and focused reference/regression fixtures only. No provider/schema configuration changes.

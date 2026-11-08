@@ -95,8 +95,13 @@ enum RecoverySelection {
                let exact = linked.first(where: { $0.data["generation_batch_id"]?.stringValue == batch }) { return exact }
             if let first = linked.first { return first }
         }
-        return rows.first { source($0) == "plan_questionnaire_overview" }
-            ?? rows.first { source($0) == "plan_questionnaire_initial" } ?? rows.first
+        // Match Recovery.jsx's four passes across rows. A noncanonical legacy source
+        // must not hide a canonical nested payload; top-level matches still rank first.
+        return rows.first { $0.data["source"]?.stringValue == "plan_questionnaire_overview" }
+            ?? rows.first { $0.data["plan_payload"]?["source"]?.stringValue == "plan_questionnaire_overview" }
+            ?? rows.first { $0.data["source"]?.stringValue == "plan_questionnaire_initial" }
+            ?? rows.first { $0.data["plan_payload"]?["source"]?.stringValue == "plan_questionnaire_initial" }
+            ?? rows.first
     }
     static func toggledItems(_ data: JSONValue, id: String) -> JSONValue {
         // Preserve even unknown legacy completion values, as well as IDs from other features.

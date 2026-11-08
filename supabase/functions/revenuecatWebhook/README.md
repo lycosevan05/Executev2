@@ -18,7 +18,7 @@ active RevenueCat purchase or an active/trialing Stripe subscription stays paid.
 ## Deployment gate
 
 **Scoped rollout completed on 2026-10-21 (2026-10-22 UTC):** the additive migration
-and only this function were deployed after approval. Current function is **v7**,
+and only this function were deployed after approval. That rollout produced **v7**,
 bundle SHA-256 `7ac44932bac5ff55ee6d0a493d0e90dd8fe9495b80560396e174e8ceabc69c61`,
 `verify_jwt=false`. The V1 project secret was configured privately. Preflight found
 5 subscription rows, zero duplicates and zero Stripe-linked rows; the new index,
@@ -86,7 +86,7 @@ anonymous-ID rejection and RPC privileges. Fixture writes roll back.
 
 The six SQL scenarios were run with PGlite in an isolated temporary directory;
 this checks PostgreSQL function/transaction behavior, not concurrent connections
-to deployed Supabase. The 17 handler tests use provider fixtures, not live writes.
+to deployed Supabase. The handler suite now has 20 tests using provider fixtures, not live writes.
 Neither test suite establishes sandbox transfer acceptance.
 
 Scope limit: the existing Stripe webhook can still overwrite the shared effective
@@ -98,3 +98,42 @@ accounts. No project-wide restore-policy change is included.
 References: [RevenueCat webhooks](https://www.revenuecat.com/docs/integrations/webhooks),
 [transfer fields](https://www.revenuecat.com/docs/integrations/webhooks/event-types-and-fields),
 [customer lookup](https://www.revenuecat.com/docs/api-v1/customers).
+
+## Refund-reversal follow-up — 2026-11-01
+
+**Deployed and verified as version 8 after explicit approval.** Previously
+`REFUND_REVERSED` returned 200/skipped without refreshing customer state. It now
+uses the same current RevenueCat snapshot, optional Stripe check and atomic RPC
+as the existing events. It does not grant access from the event payload. Three
+regressions cover current active access, a delayed reversal after expiry, and
+provider failure returning 503 without writes. All 20 tests, lint, entrypoint type-check,
+changed-file formatting and whitespace checks passed. The three new tests failed
+against the prior source. These fixtures do not establish real Apple reversal
+acceptance.
+
+Preflight reconfirmed deployed v7 and its original bundle SHA above. Only
+`revenuecatWebhook` was deployed from a reviewed four-file stage to project
+`shoflbdwlmvttidoolvd`. At **2026-11-01 07:50 UTC / 12:50 a.m. Vancouver**, the
+management API reported active **v8**, bundle SHA-256
+`5c74136c9ab166cceea0c9763509b785fb62f7a74424c83ca745e5d81fc05c24`,
+retaining `verify_jwt=false`. A fresh source download matched all four reviewed
+file hashes. Compared with v7, index/config/shared CORS are identical and the only
+runtime change is the added event type. Other functions' versions/hashes stayed
+unchanged. No migration, credentials, provider configuration, restore policy,
+backfill or native app deployment changed.
+
+**Authentication and configured transport smoke passed.** Missing and invalid
+bearer requests returned 401/Unauthorized on both the canonical function URL and
+the exact existing URL saved in RevenueCat. RevenueCat's configured synthetic
+TEST `6F475DD8-ED66-4EE7-9302-F995BE75EB9D` at **07:51:09 UTC** returned 200,
+`{"received":true,"skipped":"TEST"}`. The saved bearer value was not read or changed.
+TEST skips customer/provider/database reconciliation; it proves configured
+transport/authentication, not the new refund-reversal route or a real refund.
+The new route has source verification and regression coverage; supported Sandbox
+refund/reversal with provider, actual event, backend and device evidence remains
+open. Previously skipped events were not replayed and no subscription row was
+manually edited.
+
+The downloaded v7 source remains in the private rollback folder recorded in the
+setup workspace rollout manifest. Roll back only this function while retaining
+its gateway setting. Rollback does not undo reconciliations already performed.

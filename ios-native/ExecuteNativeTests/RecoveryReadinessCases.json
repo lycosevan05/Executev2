@@ -2576,5 +2576,457 @@
     "drivers": [
       "Good sleep last night"
     ]
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_initial"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "manual"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "manual"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "manual"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "plan_questionnaire_initial",
+        "plan_payload": {
+          "source": "plan_questionnaire_overview"
+        }
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000002",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
+  },
+  {
+    "kind": "selection",
+    "rows": [],
+    "expectedPlanID": null,
+    "expectedDailyID": null
+  },
+  {
+    "kind": "selection",
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "manual"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source": "legacy"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "kind": "selection",
+    "plan": {
+      "id": "00000000-0000-0000-0000-000000000009",
+      "generation_batch_id": "batch"
+    },
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source_plan_id": "00000000-0000-0000-0000-000000000009",
+        "generation_batch_id": "old"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000003",
+        "generated_at": "2026-10-27T12:00:00Z",
+        "source_plan_id": "00000000-0000-0000-0000-000000000009",
+        "generation_batch_id": "batch"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000003"
+  },
+  {
+    "kind": "selection",
+    "plan": {
+      "id": "00000000-0000-0000-0000-000000000009",
+      "generation_batch_id": "batch"
+    },
+    "rows": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "generated_at": "2026-10-29T12:00:00Z",
+        "source": "plan_questionnaire_overview"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "generated_at": "2026-10-28T12:00:00Z",
+        "source_plan_id": "00000000-0000-0000-0000-000000000009"
+      }
+    ],
+    "expectedPlanID": "00000000-0000-0000-0000-000000000001",
+    "expectedDailyID": "00000000-0000-0000-0000-000000000002"
   }
 ]

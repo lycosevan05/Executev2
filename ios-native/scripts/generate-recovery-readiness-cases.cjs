@@ -38,5 +38,37 @@ for (const zone of ['UTC', 'America/Vancouver']) {
   output.push({now,zone,inputs,result,drivers:sandbox.getReadinessDrivers(result.breakdown,inputs.dailyLog,null)});
  }
 }
-fs.writeFileSync('ios-native/ExecuteNativeTests/RecoveryReadinessCases.json',JSON.stringify(output,null,2)+'\n');
-console.log(`${output.length} cases generated from src/lib/readinessScore.js`);
+// Exercise the real Recovery.jsx selectors, including legacy source masking and
+// cross-row precedence. Keep these in the existing test resource.
+const recovery = fs.readFileSync('src/pages/Recovery.jsx', 'utf8');
+const selectors = recovery.slice(recovery.indexOf('function sameValue('), recovery.indexOf('async function loadLinkedDailyLogForDate('));
+const sandbox = {backend:{entities:{AIPlan:{filter:async () => sandbox.plans}}}};
+vm.createContext(sandbox); vm.runInContext(selectors, sandbox);
+const overview = 'plan_questionnaire_overview', initial = 'plan_questionnaire_initial';
+const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
+const row = (n, data) => ({id:id(n), generated_at:`2026-10-${String(30-n).padStart(2, '0')}T12:00:00Z`, ...data});
+const kinds = [{source:overview},{source:'legacy',plan_payload:{source:overview}},
+               {source:initial},{source:'legacy',plan_payload:{source:initial}}];
+const scenarios = [];
+for (const left of kinds) for (const right of kinds) scenarios.push({rows:[row(1,left),row(2,right)]});
+for (const legacy of ['legacy', '', initial]) {
+ scenarios.push({rows:[row(1,{source:'manual'}),row(2,{source:legacy,plan_payload:{source:overview}})]});
+}
+scenarios.push({rows:[]}, {rows:[row(1,{source:'manual'}),row(2,{source:'legacy'})]});
+const plan = {id:id(9),generation_batch_id:'batch'};
+scenarios.push({plan,rows:[row(1,{source:overview}),row(2,{source_plan_id:id(9),generation_batch_id:'old'}),row(3,{source_plan_id:id(9),generation_batch_id:'batch'})]},
+ {plan,rows:[row(1,{source:overview}),row(2,{source_plan_id:id(9)})]});
+(async () => {
+ for (const item of scenarios) {
+  sandbox.plans = item.rows;
+  output.push({kind:'selection', ...item,
+    expectedPlanID:(await sandbox.loadActiveCanonicalMasterPlan())?.id ?? null,
+    expectedDailyID:sandbox.chooseBestLinkedRecord(item.rows,item.plan)?.id ?? null});
+ }
+ const path = 'ios-native/ExecuteNativeTests/RecoveryReadinessCases.json';
+ const generated = JSON.stringify(output,null,2)+'\n';
+ if (process.argv.includes('--check')) {
+  require('node:assert/strict').equal(fs.readFileSync(path,'utf8'),generated,'Saved fixtures differ from web reference');
+ } else { fs.writeFileSync(path,generated); }
+ console.log(`90 readiness + ${scenarios.length} selection fixtures ${process.argv.includes('--check') ? 'verified' : 'generated'} from the web reference (not native test execution)`);
+})().catch(error => {console.error(error);process.exitCode=1;});

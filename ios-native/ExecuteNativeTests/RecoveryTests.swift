@@ -12,7 +12,7 @@ final class RecoveryTests: XCTestCase {
     }
     func testJavaScriptReferenceMatrix() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "RecoveryReadinessCases", withExtension: "json"))
-        let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: url))
+        let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: url)).filter { $0["kind"]?.stringValue != "selection" }
         XCTAssertEqual(cases.count, 90)
         for item in cases {
             let inputs = item["inputs"]!, expected = item["result"]!, b = expected["breakdown"]!
@@ -32,6 +32,22 @@ final class RecoveryTests: XCTestCase {
             XCTAssertEqual(result.timeOfDayLabel, b["timeOfDayLabel"]!.stringValue!)
             XCTAssertEqual(result.dynamicScaled, Int(b["dynamicScaled"]!.doubleValue!))
             XCTAssertEqual(result.drivers, item["drivers"]!.recoveryArray!.compactMap(\.stringValue))
+        }
+    }
+    func testCanonicalSelectionMatchesWebReferenceIncludingMaskedNestedSources() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "RecoveryReadinessCases", withExtension: "json"))
+        let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: url)).filter { $0["kind"]?.stringValue == "selection" }
+        XCTAssertEqual(cases.count, 23)
+        func row(_ value: JSONValue) throws -> BackendRow {
+            var data = try XCTUnwrap(value.objectValue)
+            let id = try XCTUnwrap(UUID(uuidString: try XCTUnwrap(data.removeValue(forKey: "id")?.stringValue)))
+            return RecoveryFixtureRepository.row(data, id: id)
+        }
+        for item in cases {
+            let rows = try XCTUnwrap(item["rows"]?.recoveryArray).map { try row($0) }
+            let plan = try item["plan"].map { try row($0) }
+            XCTAssertEqual(RecoverySelection.canonical(rows)?.id.uuidString.lowercased(), item["expectedPlanID"]?.stringValue, "Master: \(item)")
+            XCTAssertEqual(RecoverySelection.canonical(rows, plan: plan)?.id.uuidString.lowercased(), item["expectedDailyID"]?.stringValue, "Daily: \(item)")
         }
     }
     func testPreviewInvertsSorenessAndStressAndUsesSleepQuality() {
@@ -186,6 +202,90 @@ final class RecoveryTests: XCTestCase {
         XCTAssertNotNil(withAI.guidance); XCTAssertFalse(withAI.guidanceStale)
         withAI.edit(); withAI.draft.stress = 10
         XCTAssertTrue(withAI.guidanceStale)
+        XCTAssertEqual(repo.records[.readinessCheckIns]?.count, 1)
+    }
+    func testGuidanceErrorClearsOnReloadAndDateChange() async {
+        let repo = RecoveryFixtureRepository(), ai = RecoveryFixtureAI(), vm = model(repo, ai: ai)
+        await vm.load(user: user); await vm.save(generate: false)
+        ai.fail = true
+        await vm.generateGuidance()
+        XCTAssertNotNil(vm.guidanceError)
+        await vm.load(user: user)
+        XCTAssertNil(vm.guidanceError)
+        XCTAssertNotNil(vm.snapshot.checkIn)
+        await vm.generateGuidance()
+        XCTAssertNotNil(vm.guidanceError)
+        await vm.selectDate(noon.addingTimeInterval(-86400), user: user)
+        XCTAssertNil(vm.guidanceError)
+        XCTAssertNil(vm.snapshot.checkIn)
+    }
+    func testPersonalizationInvalidationRetryPreservesSavedLimitationAndDraft() async {
+        let repo = RecoveryFixtureRepository(), vm = model(repo)
+        repo.records[.userAIContexts] = [RecoveryFixtureRepository.row(["lastUpdatedAt": .string("fresh"), "unknown": .bool(true)])]
+        await vm.load(user: user)
+        repo.failureTable = .userAIContexts
+        let added = await vm.addLimitation(area: "Hip", severity: "moderate_pain", notes: "Fixture")
+        XCTAssertTrue(added)
+        XCTAssertNotNil(vm.error)
+        XCTAssertEqual(repo.records[.userAIContexts]?[0].data["lastUpdatedAt"], .string("fresh"))
+        let writes = repo.writes
+        vm.draft.energy = 9
+        await vm.retry(user: user)
+        XCTAssertNotNil(vm.error)
+        XCTAssertEqual(repo.writes, writes)
+        repo.failureTable = nil
+        await vm.retry(user: user)
+        XCTAssertNil(vm.error)
+        XCTAssertEqual(repo.writes, writes + 1)
+        XCTAssertEqual(vm.draft.energy, 9)
+        XCTAssertEqual(repo.records[.injuryProfiles]?.count, 1)
+        XCTAssertNil(vm.snapshot.checkIn)
+        XCTAssertEqual(repo.records[.userAIContexts]?[0].data["lastUpdatedAt"], .string("1970-01-01T00:00:00.000Z"))
+        XCTAssertEqual(repo.records[.userAIContexts]?[0].data["unknown"], .bool(true))
+    }
+    func testSameUserReloadRetriesPendingPersonalizationInvalidation() async {
+        let repo = RecoveryFixtureRepository(), vm = model(repo)
+        repo.records[.userAIContexts] = [RecoveryFixtureRepository.row(["lastUpdatedAt": .string("fresh")])]
+        await vm.load(user: user)
+        repo.failureTable = .userAIContexts
+        _ = await vm.addLimitation(area: "Hip", severity: "moderate_pain", notes: "Fixture")
+        XCTAssertNotNil(vm.error)
+        repo.failureTable = nil
+        await vm.load(user: user)
+        XCTAssertNil(vm.error)
+        XCTAssertTrue(vm.loaded)
+        XCTAssertEqual(repo.records[.userAIContexts]?[0].data["lastUpdatedAt"], .string("1970-01-01T00:00:00.000Z"))
+        XCTAssertEqual(repo.records[.injuryProfiles]?.count, 1)
+    }
+    func testPendingPersonalizationRetryDoesNotWriteAfterAccountChange() async {
+        let repo = RecoveryFixtureRepository(), vm = model(repo)
+        repo.records[.userAIContexts] = [RecoveryFixtureRepository.row(["lastUpdatedAt": .string("fresh")])]
+        await vm.load(user: user)
+        repo.failureTable = .userAIContexts
+        _ = await vm.addLimitation(area: "Hip", severity: "moderate_pain", notes: "Fixture")
+        XCTAssertNotNil(vm.error)
+        let writes = repo.writes
+        repo.failureTable = nil
+        let next = ExecuteUser(id: UUID(), email: "next-fixture@example.invalid", displayName: "Next")
+        await vm.retry(user: next)
+        XCTAssertEqual(repo.writes, writes)
+        XCTAssertEqual(repo.records[.userAIContexts]?[0].data["lastUpdatedAt"], .string("fresh"))
+        XCTAssertNil(vm.error)
+    }
+    func testGuidanceWriteFailureRetainsSavedCheckInAndCanRetry() async {
+        let repo = RecoveryFixtureRepository(), ai = RecoveryFixtureAI(), vm = model(repo, ai: ai)
+        await vm.load(user: user); await vm.save(generate: true)
+        let saved = vm.snapshot.checkIn
+        let previous = vm.guidance?.trainingRecommendation
+        repo.failureTable = .readinessCheckIns
+        await vm.generateGuidance()
+        XCTAssertNotNil(vm.guidanceError)
+        XCTAssertEqual(vm.snapshot.checkIn?.id, saved?.id)
+        XCTAssertEqual(vm.guidance?.trainingRecommendation, previous)
+        repo.failureTable = nil
+        await vm.generateGuidance()
+        XCTAssertNil(vm.guidanceError)
+        XCTAssertFalse(vm.guidanceStale)
         XCTAssertEqual(repo.records[.readinessCheckIns]?.count, 1)
     }
     func testDelayedAIResponseCannotWriteAfterDateSwitchOrStop() async {
