@@ -564,3 +564,13 @@ package, recheck the older26.1 runtime's destination eligibility and run bounded
 cancellation before the full suite. Code3 remains unresolved; cache cleanup adds
 no StoreKit pass. Private exact deletion/retention manifest and before/after
 measurements are in setup-workspace `work/storage-audit-20261101/`.
+
+### Restart continuation — 2026-11-08
+
+The six Stripe reconciliation issues are implemented locally. All 50 focused
+checks and 15 controlled PostgreSQL/handler groups pass; both webhook entrypoints
+type-check and scoped lint/formatting pass. No live provider, deployment or native
+acceptance is claimed. Fresh inventory shows RC v8 but no Stripe endpoint/secrets.
+Recovery PR #2 remains draft with a reproduced invalidation-retry defect; StoreKit
+platform recognition/restart remains blocked independently. Preserve legal/PDF
+work. See the single [current handoff and detailed evidence](reports/2026-11-08-billing-review.md).

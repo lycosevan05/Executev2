@@ -1,136 +1,55 @@
-import Stripe from 'npm:stripe@14.21.0';
-import { handleCors, json } from '../_shared/cors.ts';
-import { createServiceClient } from '../_shared/records.ts';
+import Stripe from "stripe";
+import { createClient } from "@supabase/supabase-js";
+import { corsHeaders, handleCors } from "../_shared/cors.ts";
+import { createStripeHandler } from "./reconcile.ts";
 
-const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') || '', {
-  apiVersion: '2024-04-10',
-});
-
-async function upsertSubscription(userId: string, data: Record<string, unknown>) {
-  const service = createServiceClient();
-  const payload = {
-    ...data,
-    user_id: userId,
-    updated_at: new Date().toISOString(),
-  };
-
-  // Atomic INSERT ... ON CONFLICT via RPC — the old read-then-write
-  // upsertRecordBy raced with revenuecatWebhook and could duplicate rows.
-  const { data, error } = await service.rpc('upsert_user_subscription', {
-    p_user_id: userId,
-    p_data: payload,
-  });
-  if (error) throw error;
-  return data;
+function serviceClient() {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SERVICE_ROLE_KEY") ||
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) throw new Error("Subscription storage is not configured.");
+  return createClient(url, key);
 }
 
+// The SDK is used only for raw-body signature verification, never provider API
+// calls. Current Stripe REST lookups retain the existing 2024-04-10 API header.
+const cryptoProvider = Stripe.createSubtleCryptoProvider();
 Deno.serve(async (req) => {
   const cors = handleCors(req);
   if (cors) return cors;
-
-  const body = await req.text();
-  const sig = req.headers.get('stripe-signature');
-  const webhookSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET');
-
-  if (!webhookSecret) {
-    return json({ error: 'STRIPE_WEBHOOK_SECRET is not configured.' }, 500);
+  const handler = createStripeHandler({
+    webhookSecret: Deno.env.get("STRIPE_WEBHOOK_SECRET"),
+    stripeKey: Deno.env.get("STRIPE_SECRET_KEY"),
+    revenueCatKey: Deno.env.get("REVENUECAT_SECRET_API_KEY"),
+    fetch,
+    verifyEvent: (body, signature, secret) =>
+      Stripe.webhooks.constructEventAsync(
+        body,
+        signature,
+        secret,
+        undefined,
+        cryptoProvider,
+      ),
+    async read(userId) {
+      const { data, error } = await serviceClient().from("user_subscriptions")
+        .select("data,updated_date").eq("data->>user_id", userId).maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    async apply(changes) {
+      const { data, error } = await serviceClient().rpc(
+        "reconcile_revenuecat_subscriptions",
+        { p_changes: changes },
+      );
+      if (error) throw error;
+      if (data !== changes.length) {
+        throw new Error("Incomplete subscription reconciliation");
+      }
+    },
+  });
+  const response = await handler(req);
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    response.headers.set(key, value);
   }
-
-  let event;
-  try {
-    event = await stripe.webhooks.constructEventAsync(body, sig, webhookSecret);
-  } catch (err) {
-    return json({ error: `Webhook signature verification failed: ${err.message}` }, 400);
-  }
-
-  try {
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object;
-        const userId = session.metadata?.user_id;
-        if (!userId) break;
-
-        const subscription = await stripe.subscriptions.retrieve(String(session.subscription));
-        await upsertSubscription(userId, {
-          plan: 'premium',
-          status: subscription.status === 'trialing' ? 'trialing' : 'active',
-          stripe_customer_id: session.customer,
-          stripe_subscription_id: session.subscription,
-          stripe_price_id: subscription.items.data[0]?.price?.id || '',
-          current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
-          current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-          cancel_at_period_end: subscription.cancel_at_period_end,
-        });
-        break;
-      }
-
-      case 'customer.subscription.created':
-      case 'customer.subscription.updated': {
-        const sub = event.data.object;
-        const userId = sub.metadata?.user_id;
-        if (!userId) break;
-
-        const isPremiumStatus = sub.status === 'active' || sub.status === 'trialing';
-        await upsertSubscription(userId, {
-          plan: isPremiumStatus ? 'premium' : 'free',
-          status: sub.status,
-          stripe_customer_id: sub.customer,
-          stripe_subscription_id: sub.id,
-          stripe_price_id: sub.items.data[0]?.price?.id || '',
-          current_period_start: new Date(sub.current_period_start * 1000).toISOString(),
-          current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
-          cancel_at_period_end: sub.cancel_at_period_end,
-        });
-        break;
-      }
-
-      case 'customer.subscription.deleted': {
-        const sub = event.data.object;
-        const userId = sub.metadata?.user_id;
-        if (!userId) break;
-
-        await upsertSubscription(userId, {
-          plan: 'free',
-          status: 'canceled',
-          stripe_subscription_id: sub.id,
-          cancel_at_period_end: false,
-        });
-        break;
-      }
-
-      case 'invoice.payment_succeeded': {
-        const invoice = event.data.object;
-        const sub = await stripe.subscriptions.retrieve(String(invoice.subscription)).catch(() => null);
-        const userId = sub?.metadata?.user_id;
-        if (!sub || !userId) break;
-
-        await upsertSubscription(userId, {
-          plan: 'premium',
-          status: 'active',
-          current_period_start: new Date(sub.current_period_start * 1000).toISOString(),
-          current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
-        });
-        break;
-      }
-
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object;
-        const sub = await stripe.subscriptions.retrieve(String(invoice.subscription)).catch(() => null);
-        const userId = sub?.metadata?.user_id;
-        if (!sub || !userId) break;
-
-        await upsertSubscription(userId, {
-          status: 'past_due',
-        });
-        break;
-      }
-    }
-  } catch (err) {
-    console.error('[stripeWebhook] Error handling event:', err.message);
-    // 5xx so Stripe retries the delivery — a swallowed error here would
-    // silently drop a subscription state change (matches revenuecatWebhook).
-    return json({ error: 'Internal error' }, 500);
-  }
-
-  return json({ received: true });
+  return response;
 });

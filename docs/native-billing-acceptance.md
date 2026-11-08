@@ -193,3 +193,13 @@ rollback details are in the function README and private rollout manifest.
 This is source/authentication/transport smoke plus local regression coverage;
 real Apple refund/reversal acceptance remains unverified. No historical replay
 or manual subscription edit was used.
+
+## Restart continuation — 2026-11-08
+
+The six Stripe reconciliation issues are implemented locally. All 50 focused
+checks and 15 controlled PostgreSQL/handler groups pass; both webhook entrypoints
+type-check and scoped lint/formatting pass. No live provider, deployment or native
+acceptance is claimed. Fresh inventory shows RC v8 but no Stripe endpoint/secrets.
+Recovery PR #2 remains draft with a reproduced invalidation-retry defect; StoreKit
+platform recognition/restart remains blocked independently. Preserve legal/PDF
+work. See the single [current handoff and detailed evidence](reports/2026-11-08-billing-review.md).

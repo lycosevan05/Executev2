@@ -63,6 +63,9 @@ function fixture() {
       if (url.hostname === "api.stripe.com") {
         return Promise.resolve(Response.json({
           id: "sub_existing",
+          customer: "cus_keep",
+          items: { data: [{ price: { id: "price_keep" } }] },
+          metadata: { user_id: a },
           status: "active",
           current_period_start: 1792616400,
           current_period_end: 1792702800,
@@ -217,7 +220,13 @@ Deno.test("an old canceled Stripe subscription does not preserve stale RevenueCa
     ((url, init) =>
       String(url).includes("api.stripe.com")
         ? Promise.resolve(
-          Response.json({ id: "sub_existing", status: "canceled" }),
+          Response.json({
+            id: "sub_existing",
+            customer: "cus_keep",
+            items: { data: [{ price: { id: "price_keep" } }] },
+            metadata: { user_id: a },
+            status: "canceled",
+          }),
         )
         : fetcher(url, init)) as typeof fetch;
   equal((await createHandler(f.deps)(f.request())).status, 200);
@@ -384,4 +393,93 @@ Deno.test("refund reversal provider failure requests retry without writing", asy
   equal(response.status, 503);
   equal(f.writes(), 0);
   equal(f.rows.get(a)?.data.plan, "premium");
+});
+
+Deno.test("subscription-level billing grace grants only through its current end", () => {
+  const body = snapshot(true, { expires_date: "2026-10-21T20:00:00Z" });
+  Object.assign(body.subscriber.subscriptions.native_month, {
+    grace_period_expires_date: end,
+  });
+  equal(revenueCatProjection(body, a).plan, "premium");
+  Object.assign(body.subscriber.subscriptions.native_month, {
+    grace_period_expires_date: "2026-10-21T20:30:00Z",
+  });
+  equal(revenueCatProjection(body, a).plan, "free");
+});
+Deno.test("newly created current RevenueCat customer is accepted without a grant", async () => {
+  const f = fixture();
+  f.deps.fetch = (() =>
+    Promise.resolve(
+      Response.json(snapshot(false), { status: 201 }),
+    )) as typeof fetch;
+  equal((await createHandler(f.deps)(f.request())).status, 200);
+  equal(f.rows.get(a)?.data.plan, "free");
+  equal(f.rows.get(b)?.data.plan, "free");
+});
+Deno.test("RC expiry preserves another known active Stripe subscription in either link order", async () => {
+  for (const reverse of [false, true]) {
+    const f = fixture();
+    Object.assign(f.rows.get(a)!.data, {
+      stripe_subscription_id: "sub_old",
+      stripe_subscription_ids: reverse
+        ? ["sub_new", "sub_old"]
+        : ["sub_old", "sub_new"],
+    });
+    const fetcher = f.deps.fetch;
+    f.deps.fetch = ((input, init) => {
+      const url = String(input);
+      if (!url.includes("api.stripe.com")) return fetcher(input, init);
+      const id = url.split("/").at(-1)!;
+      return Promise.resolve(
+        Response.json({
+          id,
+          customer: "cus_keep",
+          items: { data: [{ price: { id: "price_keep" } }] },
+          metadata: { user_id: a },
+          status: id === "sub_new" ? "active" : "canceled",
+          current_period_start: 1792616400,
+          current_period_end: 1792702800,
+        }),
+      );
+    }) as typeof fetch;
+    equal((await createHandler(f.deps)(f.request())).status, 200);
+    equal(f.rows.get(a)?.data.plan, "premium");
+    equal(f.rows.get(a)?.data.stripe_subscription_id, "sub_new");
+    equal(f.rows.get(a)?.data.revenuecat_plan, "free");
+  }
+});
+Deno.test("explicit Stripe owner mismatch aborts both RC transfer writes", async () => {
+  const f = fixture();
+  f.rows.get(a)!.data.stripe_subscription_id = "sub_existing";
+  const fetcher = f.deps.fetch;
+  f.deps.fetch =
+    ((input, init) =>
+      String(input).includes("api.stripe.com")
+        ? Promise.resolve(
+          Response.json({
+            id: "sub_existing",
+            customer: "cus_keep",
+            items: { data: [{ price: { id: "price_keep" } }] },
+            metadata: { user_id: b },
+            status: "active",
+            current_period_start: 1792616400,
+            current_period_end: 1792702800,
+          }),
+        )
+        : fetcher(input, init)) as typeof fetch;
+  equal((await createHandler(f.deps)(f.request())).status, 503);
+  equal(f.writes(), 0);
+});
+
+Deno.test("explicit subscription grace cannot be extended by a conflicting entitlement fallback", () => {
+  for (const grace of [null, "2026-10-21T20:30:00Z"]) {
+    const body = snapshot(true, {
+      expires_date: "2026-10-21T20:00:00Z",
+      grace_period_expires_date: end,
+    });
+    Object.assign(body.subscriber.subscriptions.native_month, {
+      grace_period_expires_date: grace,
+    });
+    equal(revenueCatProjection(body, a).plan, "free");
+  }
 });

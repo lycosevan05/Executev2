@@ -1,3 +1,9 @@
+import {
+  knownStripeSubscriptionIDs,
+  mergeProviderProjections,
+  projectStripeSubscriptions,
+} from "../_shared/billingProjection.ts";
+
 export interface RevenueCatEvent {
   id?: string;
   type: string;
@@ -104,7 +110,12 @@ async function getJson(
     },
     signal: AbortSignal.timeout(8000),
   });
-  if (response.status !== 200) throw new Error("Provider lookup failed");
+  const acceptedCreatedCustomer =
+    url.startsWith("https://api.revenuecat.com/v1/subscribers/") &&
+    response.status === 201;
+  if (response.status !== 200 && !acceptedCreatedCustomer) {
+    throw new Error("Provider lookup failed");
+  }
   return object(await response.json());
 }
 
@@ -130,16 +141,22 @@ export function revenueCatProjection(body: Data, userId: string): Data {
       throw new Error("Invalid entitlement product");
     }
     product = entitlement.product_identifier;
+    if (subscriptions[product] !== undefined) {
+      subscription = object(subscriptions[product]);
+    }
     const expires = date(entitlement.expires_date);
-    const grace = date(entitlement.grace_period_expires_date ?? null);
+    // Current subscription grace (including explicit null) takes precedence;
+    // older responses without that field retain the entitlement-level fallback.
+    const grace = date(
+      Object.hasOwn(subscription, "grace_period_expires_date")
+        ? subscription.grace_period_expires_date
+        : entitlement.grace_period_expires_date ?? null,
+    );
     end = expires === null
       ? null
       : (grace && Date.parse(grace) > Date.parse(expires) ? grace : expires);
     start = date(entitlement.purchase_date);
     active = end === null || Date.parse(end) > now;
-    if (subscriptions[product] !== undefined) {
-      subscription = object(subscriptions[product]);
-    }
   }
   const status = active
     ? (subscription.period_type === "trial" ? "trialing" : "active")
@@ -179,39 +196,32 @@ async function changeFor(
     `https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(userId)}`,
     deps.revenueCatKey!,
   );
-  const projection = revenueCatProjection(body, userId);
-  const stripeId = row?.data.stripe_subscription_id;
-  if (stripeId != null && stripeId !== "") {
-    if (typeof stripeId !== "string" || !deps.stripeKey) {
-      throw new Error("Stripe reconciliation unavailable");
-    }
-    const stripe = await getJson(
-      deps,
-      `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(stripeId)}`,
-      deps.stripeKey,
-      { "Stripe-Version": "2024-04-10" },
-    );
-    if (stripe.id !== stripeId || typeof stripe.status !== "string") {
-      throw new Error("Invalid Stripe subscription");
-    }
-    if (stripe.status === "active" || stripe.status === "trialing") {
-      if (
-        typeof stripe.current_period_start !== "number" ||
-        typeof stripe.current_period_end !== "number"
-      ) {
-        throw new Error("Missing Stripe billing period");
+  let projection = revenueCatProjection(body, userId);
+  const stripeIDs = knownStripeSubscriptionIDs(row?.data ?? {});
+  if (stripeIDs.length) {
+    if (!deps.stripeKey) throw new Error("Stripe reconciliation unavailable");
+    const snapshots = await Promise.all(stripeIDs.map(async (id) => {
+      const stripe = await getJson(
+        deps,
+        `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(id)}`,
+        deps.stripeKey!,
+        { "Stripe-Version": "2024-04-10" },
+      );
+      if (stripe.id !== id) throw new Error("Invalid Stripe subscription");
+      if (stripe.metadata != null) {
+        const metadata = object(stripe.metadata);
+        if (metadata.user_id != null && metadata.user_id !== userId) {
+          throw new Error("Stripe subscription identity mismatch");
+        }
       }
-      Object.assign(projection, {
-        plan: "premium",
-        status: stripe.status,
-        store: "stripe",
-        current_period_start: new Date(stripe.current_period_start * 1000)
-          .toISOString(),
-        current_period_end: new Date(stripe.current_period_end * 1000)
-          .toISOString(),
-        cancel_at_period_end: stripe.cancel_at_period_end === true,
-      });
-    }
+      return stripe;
+    }));
+    const stripe = projectStripeSubscriptions(
+      snapshots,
+      row?.data ?? {},
+      projection.revenuecat_observed_at as string,
+    );
+    projection = mergeProviderProjections(projection, stripe);
   }
   return {
     user_id: userId,

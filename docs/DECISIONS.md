@@ -130,3 +130,18 @@ standing up a backend. Recorded as the baseline all later decisions build on.
 **Decision:** Preserve the original Execute app; use `com.executelabs.execute.native-dev`, verified team `58GZDC8UKY`, separate monthly/annual products and the matching public SDK key in ignored local configuration. With approval, route shared Supabase auth mail through Resend using verified `auth.executelabs.ca` and a domain-restricted Sending key stored privately in Supabase.
 **Why:** Isolate development store records while retaining the shared entitlement contract, and provide reliable code delivery without bypassing email verification. Keep all private credentials out of mobile configuration, source and logs.
 **Touches:** native build configuration and setup/audit documentation; provider settings were applied through the approved dashboard workflow.
+
+## 2026-11-08 — Reconcile both billing provider event paths from current truth
+**Type:** architecture · **Status:** implemented locally; deployment review pending
+**Context:** Stripe events could overwrite independently valid RevenueCat access,
+replay stale subscription state or acknowledge an invoice after a provider failure.
+**Decision:** Both event paths read current provider snapshots and apply shared
+email-keyed effective access through the existing revision-checked atomic RPC.
+Preserve RC exact-entitlement/grace rules and Stripe active/trialing eligibility;
+provider errors and conflicts retry without writes. Track bounded known Stripe
+links to retain replacement/independent purchases; keep the existing REST API and
+authentication contracts. Refund-only Stripe revocation policy is unchanged.
+**Why:** Either valid purchase must preserve access regardless of event order;
+saved provider flags and historical event names cannot establish current access.
+**Touches:** both webhook reconciliation modules, shared billing projection and
+focused tests. See the [verification and rollout handoff](reports/2026-11-08-billing-review.md).
