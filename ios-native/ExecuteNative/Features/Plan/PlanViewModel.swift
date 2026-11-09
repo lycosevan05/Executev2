@@ -154,6 +154,9 @@ final class PlanViewModel: ObservableObject {
             let llmRequest = try PlanRefinement.request(current: activeRecord.payload, change: changeRequest, dates: dates)
             let raw = try await aiService.structuredResponse(llmRequest, as: JSONValue.self)
             guard request == generation, !Task.isCancelled else { return }
+            guard hasPremiumAccess() else {
+                throw AppError(title: "Premium required", message: "Your membership changed while the plan was being revised. Refresh Premium & Billing before trying again.")
+            }
             let revised = try PlanRefinement.normalize(raw, dates: dates, overrides: activeRecord.payload["split_overrides"])
             pendingPayload = try PlanRefinement.payload(current: activeRecord, revised: revised, batch: "refine_\(UUID().uuidString)", now: Date())
             revisedOverview = revised
@@ -178,14 +181,23 @@ final class PlanViewModel: ObservableObject {
             guard request == generation, !Task.isCancelled else { return }
             let batch = pendingPayload["generation_batch_id"]?.stringValue
             let existing = records.first { $0.payload["generation_batch_id"]?.stringValue == batch }
-            if existing == nil {
+            if let existing {
+                guard Self.selectActiveRecord(records)?.id == existing.id else {
+                    throw AppError(title: "A newer plan is active", message: "Your earlier revision was saved, but another plan has since replaced it. Discard this preview and refresh to keep the latest plan.")
+                }
+            } else {
                 guard let newest = Self.selectActiveRecord(records), newest.id == activeRecord.id, newest.payload == activeRecord.payload else {
                     throw AppError(title: "Your plan changed", message: "Discard this preview, refresh your plan and request the change again so another update is preserved.")
                 }
             }
             let saved: EntityRecord<JSONValue>
             if let existing { saved = existing }
-            else { saved = try await dataService.create(.aiPlans, payload: pendingPayload, user: user) }
+            else {
+                guard hasPremiumAccess() else {
+                    throw AppError(title: "Premium required", message: "Your membership changed before the revision could be saved.")
+                }
+                saved = try await dataService.create(.aiPlans, payload: pendingPayload, user: user)
+            }
             guard request == generation, !Task.isCancelled else { return }
             var cleanupFailed = false
             // Creating first protects the working plan when generation or persistence fails.

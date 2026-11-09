@@ -96,6 +96,20 @@ final class PlanRefinementTests: XCTestCase {
         XCTAssertNotNil(model.editError)
     }
 
+    func testLostResponseRetryPreservesANewerConcurrentPlan() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), model = model(data, ai: ai)
+        await model.start(for: user); model.changeRequest = "More mobility"; await model.refine()
+        data.loseCreateResponse = true
+        await model.saveRevision()
+        let newer = PlanFixtureData.row(payload: .object(["plan_type": .string("daily"), "status": .string("active"), "summary": .string("A later revision")]), created: Date().addingTimeInterval(60))
+        data.rows[.aiPlans]!.append(newer)
+        await model.saveRevision()
+        XCTAssertEqual(data.creates, 1)
+        XCTAssertEqual(data.updates, 0)
+        XCTAssertEqual(data.rows[.aiPlans]!.last?.data["status"], .string("active"))
+        XCTAssertNotNil(model.editError)
+    }
+
     func testStoppedSessionIgnoresLateAIResponse() async {
         let data = PlanFixtureData(), ai = PlanFixtureAI(), model = model(data, ai: ai)
         await model.start(for: user); model.changeRequest = "More mobility"
@@ -115,6 +129,25 @@ final class PlanRefinementTests: XCTestCase {
         premium = false
         await model.saveRevision()
         XCTAssertEqual(data.creates, 0)
+        XCTAssertNotNil(model.editError)
+    }
+
+    func testPremiumRevocationDuringRequestsCannotPublishOrCreateRevision() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI()
+        var premium = true
+        let model = PlanViewModel(dataService: data, cache: UserScopedCacheStore(suiteName: "PlanTests.\(UUID())"), router: AppRouter(), aiService: ai, hasPremiumAccess: { premium })
+        await model.start(for: user); model.changeRequest = "More mobility"
+        ai.beforeReturn = { premium = false }
+        await model.refine()
+        XCTAssertNil(model.revisedOverview)
+        XCTAssertNotNil(model.editError)
+        premium = true; ai.beforeReturn = nil
+        await model.refine()
+        XCTAssertNotNil(model.revisedOverview)
+        data.beforeListReturn = { premium = false }
+        await model.saveRevision()
+        XCTAssertEqual(data.creates, 0)
+        XCTAssertEqual(data.updates, 0)
         XCTAssertNotNil(model.editError)
     }
 
@@ -203,6 +236,7 @@ private final class PlanFixtureData: EntityDataServicing {
     var loseCreateResponse = false, failReads = false, failCreates = false, failUpdates = false
     var failSecondPage = false
     var offsets: [EntityTable: [Int]] = [:]
+    var beforeListReturn: (() -> Void)?
     init() {
         rows[.aiPlans] = [Self.row(id: originalID, payload: .object([
             "plan_type": .string("daily"), "status": .string("active"),
@@ -216,6 +250,7 @@ private final class PlanFixtureData: EntityDataServicing {
     }
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>] {
         if failReads { throw AppError(title: "Read failed", message: "Fixture network failure") }
+        beforeListReturn?()
         return try (rows[table] ?? []).map { try EntityRecord(row: $0) }
     }
     func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload> {

@@ -163,3 +163,6 @@ focused tests. See the [verification and rollout handoff](reports/2026-11-08-bil
 
 ### Follow-up — paginate plan cleanup
 Plan replacement cleanup reads every page rather than silently stopping at the first500 workouts or100 contexts. Stable creation-date/ID ordering prevents cleanup's update timestamps from shifting pages. Reads fail closed, check cancellation/session generation between pages, and retain the saved revision for cleanup retry. The eleventh focused model method exercises a second-page failure and successful retry over501 linked workouts without creating another master plan. Existing first-page callers keep their limit/ordering contract, with an ID tiebreaker added.
+
+### Follow-up — preserve later revisions and recheck Premium after awaits
+A retry that finds its committed batch must still confirm that batch is the active canonical plan. If another device has since created a newer plan, cleanup stops rather than archiving that plan. Premium is rechecked after the AI response and immediately before a new create, so revocation during a request cannot publish/save a new revision. Two additional regression methods reproduce these timings; the focused model total is13.
