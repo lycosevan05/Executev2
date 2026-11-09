@@ -398,3 +398,9 @@ A generic signed Debug iPhone build and strict codesign verification pass for th
 Use normal Xcode signing for live simulator checks. The unsigned fixture artifact verified a code but could not store a Keychain session (non-secret probe write/read status-34018); normal signing restored Keychain access (0/0). Email sign-in now requires a readable persisted SDK session for the same user before showing Home. The code prompt supports the provider's code length without claiming six digits, and a fresh-code action is available. Temporary probes/diagnostics are removed.
 
 Three new actual-SDK/local HTTP-storage tests pass for rejected storage, a user-only response, and restoration in a new client; the16 existing startup/authentication-race methods also pass. The corrected live app restored the designated QA account after termination/relaunch without another code, and Recovery now loads its real form. Live check-in/guidance persistence is in progress; do not infer that gate from the authentication or fixture results.
+
+## Live Recovery checkpoint — 2026-11-09
+
+Through the normal signed app and real user RLS, a synthetic QA check-in and DailyLog were created and restored after app relaunch. Independent read-only database checks confirm exactly one of each with the same IDs and input value. Guidance is not yet persisted: the deployed backend lacks the `patch_record` RPC used for native updates. This is a partial persistence pass, not complete Recovery acceptance.
+
+The single helper migration and20-group local PostgreSQL/RLS test package are prepared. Caller RLS/privileges remain enforced, ownership columns are immutable, and anonymous calls/subscription-table updates are excluded. The exact deployment and rollback are staged for specific approval on the shared app backend; no bulk migration, shared-backend DDL, manual entitlement grant, PR merge or distribution occurred.
