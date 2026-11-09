@@ -53,7 +53,9 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: ExecuteNativeTests
-        excludes: ["*.storekit"]
+        excludes: ["*.storekit", "*.json"]
+      - path: ExecuteNativeTests/RecoveryReadinessCases.json
+        buildPhase: resources
       - path: ExecuteNativeTests/Billing.storekit
         buildPhase: resources
     dependencies:

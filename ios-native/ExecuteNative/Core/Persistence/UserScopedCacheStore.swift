@@ -53,6 +53,13 @@ actor UserScopedCacheStore {
         activeUserID = userID
     }
 
+    func invalidate(_ key: CacheKey, userID: UUID) {
+        guard activeUserID == userID else { return }
+        memory[key] = nil
+        optimisticSnapshots[key] = nil
+        removePersistedValue(for: key)
+    }
+
     func deactivate() {
         memory.removeAll()
         optimisticSnapshots.removeAll()

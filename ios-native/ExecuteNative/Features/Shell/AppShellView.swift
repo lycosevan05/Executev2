@@ -76,6 +76,8 @@ private struct AppShellContentView: View {
             FoodLogView(initialDate: date)
         case .profile(let section):
             ProfileView(initialSection: section)
+        case .recovery(let date, let source):
+            RecoveryView(initialDate: date, source: source)
         case .billing:
             BillingView()
         case .privacy:

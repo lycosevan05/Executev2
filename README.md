@@ -4,7 +4,11 @@ Execute is now wired to Supabase for auth, data, storage, realtime updates, and 
 
 ## Native migration progress — 2026-11-08
 
-The current progress record is the [native billing and integration handoff](docs/reports/2026-11-08-billing-review.md). It covers completed work, exact commits and environments, verification evidence, and the next action. Update that handoff after each milestone; keep credentials out of documentation.
+The canonical progress record is the [Execute Document in Google Drive](https://docs.google.com/spreadsheets/d/1_OzvTKdgPQoWczXRffeqoZuHOj5Nh2tlQ1xYuJYecLY/edit). Write progress there as work proceeds: update it after each meaningful milestone and leave a short resumable checkpoint before any handoff. Use a separate agent to maintain these updates, giving it verified results and evidence from the implementation work.
+
+Each update must include the result, relevant commits/PRs and environments, verification evidence, remaining dependencies or blockers, and the next action. Distinguish implementation complete, locally tested, provider verified, and device verified; do not present historical handoff claims as newly verified results. Keep credentials and secret values out of all progress records.
+
+The [native billing and integration handoff](docs/reports/2026-11-08-billing-review.md) remains supporting repository detail. Keep it consistent with milestone updates; it does not replace writing progress to the Execute Document in Google Drive.
 
 - Billing reconciliation is implemented and locally verified (`51332a8`).
 - The two webhooks are deployed to a **separate integration project**; production is unchanged. RevenueCat test transport/authentication passes. Stripe endpoint and real-provider acceptance checks are in progress.

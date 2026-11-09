@@ -145,3 +145,11 @@ authentication contracts. Refund-only Stripe revocation policy is unchanged.
 saved provider flags and historical event names cannot establish current access.
 **Touches:** both webhook reconciliation modules, shared billing projection and
 focused tests. See the [verification and rollout handoff](reports/2026-11-08-billing-review.md).
+
+
+## 2026-11-08 — Reuse the published Recovery retry implementation
+**Type:** architecture · **Status:** active
+**Context:** PR #2 follow-up `6fa8528` and separate local fix `c301f6c` both address failed personalization invalidation after acknowledged Recovery saves.
+**Decision:** Import the published native Recovery feature into an isolated integration branch, retain current billing source/documentation, and reuse its retry implementation rather than layering the older fix over it. Keep PR #2 draft until native and live acceptance pass; do not merge it under this checkpoint.
+**Why:** The current 28 model methods and all five additional retry regressions from the separate fix pass on the published implementation. No remaining failing behavior justifies duplicating its retry state machinery. Model evidence remains distinct from native/device and live RLS/AI verification.
+**Touches:** Native Recovery, project wiring, test helper and native README; canonical milestones remain in the Execute Document on Google Drive.

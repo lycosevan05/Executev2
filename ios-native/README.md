@@ -366,3 +366,13 @@ configured RevenueCat TEST returns200/skipped TEST. Gateway/authentication,
 credentials, schema, restore policy and the native build are unchanged. This
 closes the deployment step, not real Apple refund/reversal acceptance. See the
 function README and billing runbook for the exact evidence and rollback scope.
+
+## Recovery integration checkpoint — 2026-11-08
+
+The isolated integration branch imports the native Recovery source, project wiring, reference cases and UI tests from PR #2 follow-up `6fa8528` onto billing checkout `2952130`. The original billing documentation above is retained. PR #2 remains draft and unmerged.
+
+Recovery covers selected-date check-ins, readiness, limitations, persisted guidance, retry and canonical task selection. Debug-only `-execute-recovery-preview` and `-execute-recovery-ui-tests` use synthetic services; they do not establish live acceptance.
+
+The published retry implementation passes all 28 current model regression methods and the five additional regressions from separate fix `c301f6c` (33 methods total). Those checks cover acknowledged check-in/DailyLog/limitation writes, date reload, account change and stopped-session invalidation. The older fix is therefore not cherry-picked wholesale. The test helper now constructs its default fixture AI inside its main-actor function, fixing a directly reproduced Swift actor-isolation compile error.
+
+These results use a standalone Mac model runner with process-failing assertions, not native XCTest or live persistence. Native compilation, simulator/UI, authenticated RLS/AI persistence and physical-device checks remain open. Both Xcode 26.6 and installed Xcode 26.4 currently list no eligible native destinations because their required iOS platform is not recognized. No StoreKit test or restart was performed in this checkpoint.
