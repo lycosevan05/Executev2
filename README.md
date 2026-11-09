@@ -2,6 +2,17 @@
 
 Execute is now wired to Supabase for auth, data, storage, realtime updates, and Edge Functions. AI calls are routed through a Supabase Edge Function that uses `OPENAI_API_KEY` server-side.
 
+## Native migration progress — 2026-11-08
+
+The current progress record is the [native billing and integration handoff](docs/reports/2026-11-08-billing-review.md). It covers completed work, exact commits and environments, verification evidence, and the next action. Update that handoff after each milestone; keep credentials out of documentation.
+
+- Billing reconciliation is implemented and locally verified (`51332a8`).
+- The two webhooks are deployed to a **separate integration project**; production is unchanged. RevenueCat test transport/authentication passes. Stripe endpoint and real-provider acceptance checks are in progress.
+- The focused Recovery retry fix is saved separately (`c301f6c`), with model regressions passing; Recovery PR #2 remains draft and unmerged.
+- Native end-to-end acceptance remains open while Xcode platform recognition is blocked.
+
+Use the handoff's scoped deployment procedure for migration work. The general setup commands below are not authorization to push every migration to an existing backend.
+
 ## Local Setup
 
 Create `.env.local`:
