@@ -203,3 +203,24 @@ acceptance is claimed. Fresh inventory shows RC v8 but no Stripe endpoint/secret
 Recovery PR #2 remains draft with a reproduced invalidation-retry defect; StoreKit
 platform recognition/restart remains blocked independently. Preserve legal/PDF
 work. See the single [current handoff and detailed evidence](reports/2026-11-08-billing-review.md).
+
+## Native acceptance after support installation — 2026-11-09
+
+This checkpoint supersedes the platform-blocked status above. The completed official Xcode support installation restored eligible destinations in Xcode26.6. On dedicated simulator `E26EF6EE-DDA9-48A4-92E5-6CBE29B75CDE` (iPhone17/iOS26.1, build23B86), the unchanged `ExecuteNative-StoreKit` acceptance definition passed:
+
+| Case | Observed result | Duration |
+| --- | --- | --- |
+| Cancellation, run first | `.userCancelled`; zero current entitlements | 2.258s |
+| Monthly/annual metadata | Two products, nonempty localized display prices, one month/year periods | 0.051s |
+| Purchase and App Store sync | Verified local purchase; entitlement recovered after sync | 0.742s |
+| Ask to Buy | `.pending`; zero current entitlements | 0.803s |
+
+Cancellation used a30-second execution allowance and finished with xcodebuild exit0. The remaining three cases reused the compiled build with `test-without-building`, exit0. Independent xcresult summaries contain1+3 passed, zero failed/skipped; no `SKInternalErrorDomain Code=3` appeared. These are local Apple StoreKit fixtures, not App Store Connect/RevenueCat receipt or real-provider acceptance. Later Ask to Buy approval/rejection remains separate.
+
+Ordinary fixture-free `ExecuteNative` also compiled successfully. Native XCTest passed all28 Recovery and13 Plan refinement methods (41/41, zero failed/skipped). Existing UI tests passed Billing3 + Recovery6 (9/9), covering navigation, mock purchase/restore membership UI, legal destinations, Recovery tasks/limitations/guidance failure and large text. UI services are fixtures; these results do not establish live RLS/AI persistence or authenticated cross-provider gates. The two isolated provider/server cross-provider scenarios are independently verified in the Execute workbook, with native matching-session access still open.
+
+The standalone signed Debug iPhone artifact builds through the generic iOS destination and passes strict codesign verification for team `58GZDC8UKY`, native-dev bundle and existing native-dev monthly/annual IDs. A device-specific build could not mount the connected iPhone's developer disk image; no installation or physical-device launch is claimed. No distribution, production deployment, PR push or merge occurred.
+
+Evidence is retained under the current chat workspace `work/post-restart-native`: four xcresult bundles, extracted summaries, logs, exported UI attachments and the public device-build manifest. The normal app is open at sign-in on the dedicated simulator with no fixture arguments. Live Recovery/Plan checks await private sign-in using a disposable Execute account. Plan saving additionally needs legitimate Premium access and an existing active plan; no manual entitlement grants are authorized.
+
+The Code3 investigation closed within the original30-minute total limit: prior1383s plus resumed235s =1618s (26m58s), leaving182s unused. Do not restart an unrestricted diagnostic loop. Canonical progress remains the Execute Document on Google Drive, maintained by the separate writer.
