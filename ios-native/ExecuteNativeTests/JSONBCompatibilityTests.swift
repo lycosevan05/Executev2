@@ -1,4 +1,5 @@
 import XCTest
+import Supabase
 @testable import ExecuteNative
 
 final class LaunchOptionsTests: XCTestCase {
@@ -540,4 +541,95 @@ final class StartupStateTests: XCTestCase {
             sessionRestoreTimeoutNanoseconds: timeoutNanoseconds
         )
     }
+}
+
+/// Local HTTP/storage fixtures exercise the real SDK's silent storage failure behavior.
+/// They are not provider authentication acceptance and never leave URLProtocol.
+@MainActor
+final class AuthPersistenceTests: XCTestCase {
+    private func service(storage: AuthFixtureStorage, userOnly: Bool = false) -> SupabaseAuthService {
+        let url = URL(string: userOnly ? "https://auth-user-only.invalid" : "https://auth-session.invalid")!
+        let transport = URLSessionConfiguration.ephemeral
+        transport.protocolClasses = [AuthFixtureProtocol.self]
+        let client = SupabaseClient(supabaseURL: url, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: storage, storageKey: "native-auth-fixture", autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: URLSession(configuration: transport))))
+        let configuration = AppConfiguration(supabaseURL: url, supabaseAnonKey: "public-fixture-only", revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "fixture")
+        return SupabaseAuthService(client: client, configuration: configuration)
+    }
+
+    func testSuccessfulRemoteVerificationCannotSignInWhenStorageRejectsSession() async {
+        let storage = AuthFixtureStorage(rejectWrites: true)
+        do {
+            _ = try await service(storage: storage).verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+            XCTFail("A user response alone must not activate an unsaved session")
+        } catch let error as AppError {
+            XCTAssertEqual(error.title, "Sign-in could not be saved")
+            XCTAssertGreaterThan(storage.writeAttempts, 0)
+        } catch { XCTFail("Unexpected fixture error: \(error)") }
+    }
+
+    func testVerifiedSessionRestoresInANewClientFromTheSameStorage() async throws {
+        let storage = AuthFixtureStorage()
+        let signedIn = try await service(storage: storage).verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        XCTAssertEqual(signedIn.id, AuthFixtureProtocol.userID)
+        let restored = try await service(storage: storage).restoreSession()
+        XCTAssertEqual(restored?.id, signedIn.id)
+        XCTAssertEqual(restored?.email, signedIn.email)
+    }
+
+    func testUserOnlyResponseDoesNotEstablishASession() async {
+        do {
+            _ = try await service(storage: AuthFixtureStorage(), userOnly: true).verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+            XCTFail("A user-only response is not a session")
+        } catch let error as AppError { XCTAssertEqual(error.title, "Sign-in incomplete") }
+        catch { XCTFail("Unexpected fixture error: \(error)") }
+    }
+}
+
+private final class AuthFixtureStorage: AuthLocalStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+    private var attempts = 0
+    private let rejectWrites: Bool
+    init(rejectWrites: Bool = false) { self.rejectWrites = rejectWrites }
+    var writeAttempts: Int { lock.lock(); defer { lock.unlock() }; return attempts }
+    func store(key: String, value: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        attempts += 1
+        if rejectWrites { throw AppError(title: "Fixture storage denied", message: "Non-secret fixture") }
+        values[key] = value
+    }
+    func retrieve(key: String) throws -> Data? {
+        lock.lock(); defer { lock.unlock() }; return values[key]
+    }
+    func remove(key: String) throws {
+        lock.lock(); defer { lock.unlock() }; values[key] = nil
+    }
+}
+
+private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
+    static let userID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+    override class func canInit(with request: URLRequest) -> Bool {
+        ["auth-session.invalid", "auth-user-only.invalid"].contains(request.url?.host ?? "")
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url, url.path == "/auth/v1/verify" else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        let user: [String: Any] = ["id": Self.userID.uuidString, "aud": "authenticated", "role": "authenticated",
+            "email": "fixture@example.invalid", "app_metadata": [:], "user_metadata": [:],
+            "created_at": "2026-11-09T00:00:00Z", "updated_at": "2026-11-09T00:00:00Z"]
+        let body: [String: Any] = url.host == "auth-user-only.invalid" ? user : [
+            "access_token": "fixture-access-not-a-real-token", "refresh_token": "fixture-refresh-not-a-real-token",
+            "token_type": "bearer", "expires_in": 3600, "expires_at": Int(Date().timeIntervalSince1970) + 3600, "user": user]
+        do {
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: try JSONSerialization.data(withJSONObject: body))
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() { }
 }

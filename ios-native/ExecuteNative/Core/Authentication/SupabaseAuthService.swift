@@ -34,7 +34,18 @@ final class SupabaseAuthService: AuthServicing {
     func verifyEmailOTP(email: String, token: String) async throws -> ExecuteUser {
         try await operations.enqueue {
             let response = try await self.client.auth.verifyOTP(email: email, token: token, type: .email)
-            return Self.user(from: response.user)
+            guard response.session != nil else {
+                throw AppError(title: "Sign-in incomplete", message: "The verification did not create a session. Request a new code and try again.")
+            }
+            let persisted: Session
+            do { persisted = try await self.client.auth.session }
+            catch {
+                throw AppError(title: "Sign-in could not be saved", message: "Your session could not be saved securely on this device. Sign-in has not completed.")
+            }
+            guard persisted.user.id == response.user.id else {
+                throw AppError(title: "Sign-in changed", message: "Another sign-in replaced this attempt. Close and reopen Execute to continue.")
+            }
+            return Self.user(from: persisted.user)
         }
     }
 

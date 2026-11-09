@@ -29,13 +29,18 @@ struct AuthenticationView: View {
                             .background(ExecuteColor.parchment)
                             .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
                         if otpWasSent {
-                            TextField("6-digit code", text: $code)
+                            TextField("Email code", text: $code)
                                 .keyboardType(.numberPad)
                                 .textContentType(.oneTimeCode)
                                 .padding(ExecuteSpacing.sm)
                                 .background(ExecuteColor.parchment)
                                 .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
                             ExecutePrimaryButton(title: "Verify code", action: verifyCode, isLoading: isWorking)
+                            ExecuteSecondaryButton(title: "Send a new code") {
+                                guard !isWorking else { return }
+                                code = ""
+                                sendCode()
+                            }
                         } else {
                             ExecutePrimaryButton(title: "Continue with email", action: sendCode, isLoading: isWorking)
                         }
@@ -95,7 +100,7 @@ struct AuthenticationView: View {
     private func verifyCode() {
         Task {
             guard code.count >= 6 else {
-                error = AppError(title: "Enter the full code", message: "The email code has six digits.")
+                error = AppError(title: "Enter the full code", message: "Enter the complete verification code from your email.")
                 return
             }
             isWorking = true

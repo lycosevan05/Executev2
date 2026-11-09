@@ -8,6 +8,7 @@ of completed physical tests. A fixture pass does not establish a sandbox pass.
 
 - Use the standalone `ios-native/ExecuteNative.xcodeproj`, ordinary `ExecuteNative`
   scheme, StoreKit Configuration **None**, and no mock/preview launch arguments.
+- Use normal Xcode signing for live sign-in. A `CODE_SIGNING_ALLOWED=NO` fixture artifact can run local tests while lacking Keychain access; it must not be reused for live authenticated acceptance.
 - Preserve the original Execute app, existing tester purchase history, RevenueCat
   restore policy and provider mappings. Do not clear purchase history to simulate
   a clean customer or write subscription rows to manufacture an outcome.
