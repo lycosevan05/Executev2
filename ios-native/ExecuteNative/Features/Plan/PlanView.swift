@@ -17,12 +17,14 @@ private struct PlanScreen: View {
         _model = StateObject(wrappedValue: PlanViewModel(
             dataService: environment.dataService,
             cache: environment.cache,
-            router: environment.router
+            router: environment.router,
+            aiService: environment.aiService,
+            hasPremiumAccess: { environment.appState.premiumState.isPremium }
         ))
     }
 
     var body: some View {
-        PlanDashboardView(model: model)
+        PlanDashboardView(model: model, isPremium: appState.premiumState.isPremium)
             .task(id: signedInUser?.id) {
                 if let signedInUser { await model.start(for: signedInUser) }
             }
@@ -53,6 +55,7 @@ private enum PlanDashboardTab: String, CaseIterable, Identifiable {
 
 struct PlanDashboardView: View {
     @ObservedObject var model: PlanViewModel
+    var isPremium = true
     @State private var selectedTab: PlanDashboardTab = .week
 
     var body: some View {
@@ -74,7 +77,11 @@ struct PlanDashboardView: View {
                     case .blueprint:
                         PlanBlueprintSection(narratives: model.narratives.isEmpty ? model.legacyNarratives : model.narratives)
                     case .adjustments:
-                        PlanAdjustmentsSection(refresh: { Task { await model.refresh() } })
+                        if isPremium {
+                            PlanAdjustmentsSection(model: model)
+                        } else {
+                            PlanMessageCard(text: "Personalized plan changes are included with Execute Premium. Open Premium & Billing in your profile to manage your membership.")
+                        }
                     }
                 } else {
                     PlanEmptyState()
@@ -325,7 +332,7 @@ private struct PlanBlueprintSection: View {
 }
 
 private struct PlanAdjustmentsSection: View {
-    let refresh: () -> Void
+    @ObservedObject var model: PlanViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
@@ -334,14 +341,51 @@ private struct PlanAdjustmentsSection: View {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(ExecuteColor.chartreuseDark)
-                Text("Plan editing is the next native slice.")
+                Text("Refine your plan")
                     .font(ExecuteTypography.label(15).weight(.semibold))
-                Text("The native dashboard is now reading your existing plan data. Questionnaire, refine, and AI generation controls will be connected here next.")
+                Text("Describe what you want to change. Review the revised week before saving it.")
                     .font(ExecuteTypography.body(13))
                     .foregroundStyle(ExecuteColor.olive)
                     .fixedSize(horizontal: false, vertical: true)
-                Button(action: refresh) {
-                    Label("Refresh plan data", systemImage: "arrow.clockwise")
+                TextEditor(text: $model.changeRequest)
+                    .frame(minHeight: 100)
+                    .accessibilityLabel("Requested plan changes")
+                    .disabled(model.isRefining || model.isSaving || model.revisedOverview != nil)
+                if let revised = model.revisedOverview {
+                    Text(revised["change_summary"]?.stringValue ?? "Review your revised week below.")
+                        .font(ExecuteTypography.body(14))
+                    if let targets = revised["nutrition_targets"] {
+                        Text("Daily targets: \(Int(targets["calories"]?.doubleValue ?? 0)) kcal · \(Int(targets["protein_g"]?.doubleValue ?? 0)) g protein · \(Int(targets["carbs_g"]?.doubleValue ?? 0)) g carbs · \(Int(targets["fat_g"]?.doubleValue ?? 0)) g fat")
+                            .font(ExecuteTypography.caption(12))
+                    }
+                    if case .array(let days) = revised["weekly_overview"]?["days"] {
+                        ForEach(Array(days.enumerated()), id: \.offset) { _, day in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(day["date"]?.stringValue ?? "") · \(day["day_type"]?.stringValue ?? "")")
+                                    .font(ExecuteTypography.caption(11))
+                                Text(day["session_title"]?.stringValue ?? "")
+                                    .font(ExecuteTypography.label(14))
+                                Text(day["priority"]?.stringValue ?? "")
+                                    .font(ExecuteTypography.body(12))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, ExecuteSpacing.xs)
+                        }
+                    }
+                    Button("Save changes") { Task { await model.saveRevision() } }
+                        .disabled(model.isSaving)
+                    Button("Discard preview") { model.discardRevision() }
+                        .disabled(model.isSaving)
+                }
+                if model.isRefining || model.isSaving {
+                    ProgressView(model.isSaving ? "Saving plan…" : "Revising plan…")
+                }
+                if let error = model.editError {
+                    Text(error.message).foregroundStyle(ExecuteColor.destructive)
+                }
+                if let status = model.editStatus { Text(status).font(ExecuteTypography.body(13)) }
+                Button { Task { await model.refine() } } label: {
+                    Label("Preview changes", systemImage: "sparkles")
                         .font(ExecuteTypography.label(13).weight(.semibold))
                         .foregroundStyle(ExecuteColor.charcoal)
                         .frame(maxWidth: .infinity, minHeight: 42)
@@ -349,6 +393,7 @@ private struct PlanAdjustmentsSection: View {
                         .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
                 }
                 .buttonStyle(ExecutePressStyle())
+                .disabled(!model.canRefine)
             }
             .padding(ExecuteSpacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -42,23 +42,38 @@ final class PlanViewModel: ObservableObject {
     @Published private(set) var isInitialLoading = true
     @Published private(set) var isRefreshing = false
     @Published private(set) var error: AppError?
+    @Published var changeRequest = ""
+    @Published private(set) var revisedOverview: JSONValue?
+    @Published private(set) var isRefining = false
+    @Published private(set) var isSaving = false
+    @Published private(set) var editError: AppError?
+    @Published private(set) var editStatus: String?
 
     private let dataService: EntityDataServicing?
+    private let aiService: AIResponding?
+    private let hasPremiumAccess: () -> Bool
     private let cache: UserScopedCacheStore
     private let router: AppRouter
     private var user: ExecuteUser?
     private var hasStarted = false
+    private var activeRecord: EntityRecord<JSONValue>?
+    private var pendingPayload: JSONValue?
+    private var generation = UUID()
 
     private let planCacheKey = CacheKey("plan", "active")
 
     init(
         dataService: EntityDataServicing?,
         cache: UserScopedCacheStore,
-        router: AppRouter
+        router: AppRouter,
+        aiService: AIResponding? = nil,
+        hasPremiumAccess: @escaping () -> Bool = { false }
     ) {
         self.dataService = dataService
         self.cache = cache
         self.router = router
+        self.aiService = aiService
+        self.hasPremiumAccess = hasPremiumAccess
     }
 
     static func preview() -> PlanViewModel {
@@ -96,18 +111,127 @@ final class PlanViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
+        generation = UUID()
+        plan = nil; activeRecord = nil; isSaving = false; isRefining = false; discardRevision()
+        isInitialLoading = true
         self.user = user
         hasStarted = true
-        await restoreCachedPlan()
         await reload()
     }
 
     func stop() {
         hasStarted = false
+        generation = UUID()
+        user = nil; activeRecord = nil; plan = nil
+        isRefining = false; isSaving = false; discardRevision()
     }
 
     func refresh() async {
+        guard !isRefining, !isSaving, revisedOverview == nil else { return }
         await reload(isRefresh: true)
+    }
+
+    var canRefine: Bool {
+        hasPremiumAccess() && activeRecord != nil && !changeRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && changeRequest.count <= 4_000 && !isRefining && !isSaving && revisedOverview == nil
+    }
+
+    func discardRevision() {
+        guard !isSaving else { return }
+        revisedOverview = nil; pendingPayload = nil; editError = nil; editStatus = nil
+    }
+
+    func refine() async {
+        guard canRefine, let activeRecord, let aiService else {
+            editError = AppError(title: "Plan editing unavailable", message: "Load an active plan and connect the AI service before requesting changes.")
+            return
+        }
+        let request = generation
+        isRefining = true; editError = nil; editStatus = nil
+        defer { if request == generation { isRefining = false } }
+        do {
+            let dates = PlanRefinement.dates(from: Date())
+            let llmRequest = try PlanRefinement.request(current: activeRecord.payload, change: changeRequest, dates: dates)
+            let raw = try await aiService.structuredResponse(llmRequest, as: JSONValue.self)
+            guard request == generation, !Task.isCancelled else { return }
+            let revised = try PlanRefinement.normalize(raw, dates: dates, overrides: activeRecord.payload["split_overrides"])
+            pendingPayload = try PlanRefinement.payload(current: activeRecord, revised: revised, batch: "refine_\(UUID().uuidString)", now: Date())
+            revisedOverview = revised
+        } catch {
+            guard request == generation else { return }
+            editError = AppError.from(error, title: "Could not revise your plan")
+        }
+    }
+
+    func saveRevision() async {
+        guard hasPremiumAccess() else {
+            editError = AppError(title: "Premium required", message: "An active Premium membership is needed to save personalized plan changes.")
+            return
+        }
+        guard !isSaving, !isRefining, let pendingPayload, let activeRecord, let user, let dataService else { return }
+        let request = generation
+        isSaving = true; editError = nil; editStatus = nil
+        defer { if request == generation { isSaving = false } }
+        do {
+            // A retry checks the same batch first, including after a committed create whose response was lost.
+            let records: [EntityRecord<JSONValue>] = try await dataService.list(.aiPlans, orderBy: "-created_date", limit: 100)
+            guard request == generation, !Task.isCancelled else { return }
+            let batch = pendingPayload["generation_batch_id"]?.stringValue
+            let existing = records.first { $0.payload["generation_batch_id"]?.stringValue == batch }
+            if existing == nil {
+                guard let newest = Self.selectActiveRecord(records), newest.id == activeRecord.id, newest.payload == activeRecord.payload else {
+                    throw AppError(title: "Your plan changed", message: "Discard this preview, refresh your plan and request the change again so another update is preserved.")
+                }
+            }
+            let saved: EntityRecord<JSONValue>
+            if let existing { saved = existing }
+            else { saved = try await dataService.create(.aiPlans, payload: pendingPayload, user: user) }
+            guard request == generation, !Task.isCancelled else { return }
+            var cleanupFailed = false
+            // Creating first protects the working plan when generation or persistence fails.
+            for old in records where old.id != saved.id && old.payload["status"]?.stringValue == "active" && old.payload["plan_type"]?.stringValue == "daily" {
+                guard request == generation, !Task.isCancelled else { return }
+                do {
+                    let _: EntityRecord<JSONValue> = try await dataService.update(.aiPlans, id: old.id, patch: .object(["status": .string("archived")]))
+                } catch { cleanupFailed = true }
+            }
+            let supersededID = pendingPayload["supersedes_plan_id"]?.stringValue?.lowercased()
+            let oldIDs = Set(records.filter {
+                $0.id != saved.id && ($0.id.uuidString.lowercased() == supersededID || ($0.payload["status"]?.stringValue == "active" && $0.payload["plan_type"]?.stringValue == "daily"))
+            }.map { $0.id.uuidString.lowercased() })
+            do {
+                let children: [EntityRecord<JSONValue>] = try await dataService.list(.workoutPlans, orderBy: "-created_date", limit: 500)
+                guard request == generation, !Task.isCancelled else { return }
+                if children.count == 500 { cleanupFailed = true }
+                for child in children where oldIDs.contains(child.payload["source_plan_id"]?.stringValue?.lowercased() ?? "") && child.payload["status"]?.stringValue != "archived" {
+                    guard request == generation, !Task.isCancelled else { return }
+                    let _: EntityRecord<JSONValue> = try await dataService.update(.workoutPlans, id: child.id, patch: .object(["status": .string("archived")]))
+                }
+                let contexts: [EntityRecord<JSONValue>] = try await dataService.list(.userAIContexts, orderBy: "-created_date", limit: 100)
+                guard request == generation, !Task.isCancelled else { return }
+                if contexts.count == 100 { cleanupFailed = true }
+                for context in contexts {
+                    guard request == generation, !Task.isCancelled else { return }
+                    let _: EntityRecord<JSONValue> = try await dataService.update(.userAIContexts, id: context.id, patch: .object(["lastUpdatedAt": .string("1970-01-01T00:00:00.000Z")]))
+                }
+            } catch { cleanupFailed = true }
+            guard request == generation, !Task.isCancelled else { return }
+            self.activeRecord = saved
+            plan = try saved.payload.decoded(as: HomeAIPlan.self)
+            await cache.invalidate(CacheKey("home", "dashboard"), userID: user.id)
+            await cache.invalidate(planCacheKey, userID: user.id)
+            guard request == generation, !Task.isCancelled else { return }
+            // Leave preview and batch intact on incomplete cleanup so Save retries never create another plan.
+            if cleanupFailed {
+                editStatus = "Your revised plan is saved. The previous plan cleanup or personalization refresh needs another attempt; tap Save changes to retry."
+            } else {
+                self.pendingPayload = nil; revisedOverview = nil; changeRequest = ""
+                editStatus = "Your revised plan is saved."
+            }
+        } catch {
+            guard request == generation else { return }
+            editError = AppError.from(error, title: "Could not save your plan")
+        }
     }
 
     func openWorkout() {
@@ -161,43 +285,37 @@ final class PlanViewModel: ObservableObject {
         }
     }
 
-    private func restoreCachedPlan() async {
-        switch await cache.read(planCacheKey, as: HomeAIPlan.self) {
-        case .fresh(let value), .stale(let value):
-            plan = value
-            isInitialLoading = false
-        case .missing:
-            break
-        }
-    }
-
     private func reload(isRefresh: Bool = false) async {
         guard let dataService else {
             isInitialLoading = false
             return
         }
 
+        let request = generation
         if isRefresh { isRefreshing = true }
         error = nil
         defer {
-            isInitialLoading = false
-            isRefreshing = false
+            if request == generation { isInitialLoading = false; isRefreshing = false }
         }
 
         do {
-            let records: [EntityRecord<HomeAIPlan>] = try await dataService.list(.aiPlans, orderBy: "-updated_date", limit: 50)
-            guard let active = selectActivePlan(records) else {
+            let records: [EntityRecord<JSONValue>] = try await dataService.list(.aiPlans, orderBy: "-created_date", limit: 100)
+            guard request == generation, !Task.isCancelled else { return }
+            guard let active = Self.selectActiveRecord(records) else {
+                activeRecord = nil
                 plan = nil
                 return
             }
-            plan = active.payload
-            try? await cache.write(active.payload, for: planCacheKey, ttl: 300)
+            activeRecord = active
+            plan = try active.payload.decoded(as: HomeAIPlan.self)
         } catch {
+            guard request == generation else { return }
             if plan == nil { self.error = AppError.from(error, title: "Could not load your plan") }
         }
     }
 
-    private func selectActivePlan(_ records: [EntityRecord<HomeAIPlan>]) -> EntityRecord<HomeAIPlan>? {
-        records.first { $0.payload.status?.lowercased() == "active" } ?? records.first
+    static func selectActiveRecord(_ records: [EntityRecord<JSONValue>]) -> EntityRecord<JSONValue>? {
+        records.filter { $0.payload["status"]?.stringValue == "active" && $0.payload["plan_type"]?.stringValue == "daily" }
+            .max { ($0.createdDate ?? .distantPast) < ($1.createdDate ?? .distantPast) }
     }
 }

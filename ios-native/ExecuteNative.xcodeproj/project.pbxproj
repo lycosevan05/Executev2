@@ -78,6 +78,8 @@
 		3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F30ADD4AE865BF13490528 /* RecoveryTests.swift */; };
 		B848D3765D49A75737ED890C /* RecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FF8D5033A9FF62626236E59 /* RecoveryUITests.swift */; };
 		DEAD00000000000000000001 /* RecoveryReadinessCases.json in Resources */ = {isa = PBXBuildFile; fileRef = DEAD00000000000000000002 /* RecoveryReadinessCases.json */; };
+		D10000000000000000000001 /* PlanRefinement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000002 /* PlanRefinement.swift */; };
+		D10000000000000000000003 /* PlanRefinementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000004 /* PlanRefinementTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -166,6 +168,8 @@
 		42F30ADD4AE865BF13490528 /* RecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryTests.swift; sourceTree = "<group>"; };
 		7FF8D5033A9FF62626236E59 /* RecoveryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryUITests.swift; sourceTree = "<group>"; };
 		DEAD00000000000000000002 /* RecoveryReadinessCases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = RecoveryReadinessCases.json; sourceTree = "<group>"; };
+		D10000000000000000000002 /* PlanRefinement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanRefinement.swift; sourceTree = "<group>"; };
+		D10000000000000000000004 /* PlanRefinementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanRefinementTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -280,6 +284,7 @@
 			isa = PBXGroup;
 			children = (
 				42F30ADD4AE865BF13490528 /* RecoveryTests.swift */,
+				D10000000000000000000004 /* PlanRefinementTests.swift */,
 				DEAD00000000000000000002 /* RecoveryReadinessCases.json */,
 				A318512948BBB8B2878D0DBD /* JSONBCompatibilityTests.swift */,
 				D61B264331AA8E656EFE1C72 /* Billing.storekit */,
@@ -474,6 +479,7 @@
 			children = (
 				86566F576D7100D2FE8DB318 /* PlanView.swift */,
 				6196C67B3E06966564038000 /* PlanViewModel.swift */,
+				D10000000000000000000002 /* PlanRefinement.swift */,
 			);
 			path = Plan;
 			sourceTree = "<group>";
@@ -619,6 +625,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */,
+				D10000000000000000000003 /* PlanRefinementTests.swift in Sources */,
 				72B41B9AFF16B3ADF192368A /* JSONBCompatibilityTests.swift in Sources */,
 				FA425AD5183C9FB5C5F5F38B /* StoreKitBillingTests.swift in Sources */,
 				10BCE687A619405436A3616D /* BillingTests.swift in Sources */,
@@ -663,6 +670,7 @@
 				744088A61AE3AF94A879D623 /* NutritionViewModel.swift in Sources */,
 				7F6BA815C4AD47E4D70769C0 /* PlanView.swift in Sources */,
 				7BAE005FA23C3F4C06AAC384 /* PlanViewModel.swift in Sources */,
+				D10000000000000000000001 /* PlanRefinement.swift in Sources */,
 				C10000000000000000000001 /* ProfileModels.swift in Sources */,
 				C10000000000000000000003 /* ProfileView.swift in Sources */,
 				C10000000000000000000005 /* ProfileViewModel.swift in Sources */,
