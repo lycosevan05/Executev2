@@ -174,7 +174,7 @@ final class PlanViewModel: ObservableObject {
         defer { if request == generation { isSaving = false } }
         do {
             // A retry checks the same batch first, including after a committed create whose response was lost.
-            let records: [EntityRecord<JSONValue>] = try await dataService.list(.aiPlans, orderBy: "-created_date", limit: 100)
+            let records: [EntityRecord<JSONValue>] = try await dataService.listAll(.aiPlans, isCurrent: { request == self.generation })
             guard request == generation, !Task.isCancelled else { return }
             let batch = pendingPayload["generation_batch_id"]?.stringValue
             let existing = records.first { $0.payload["generation_batch_id"]?.stringValue == batch }
@@ -200,16 +200,14 @@ final class PlanViewModel: ObservableObject {
                 $0.id != saved.id && ($0.id.uuidString.lowercased() == supersededID || ($0.payload["status"]?.stringValue == "active" && $0.payload["plan_type"]?.stringValue == "daily"))
             }.map { $0.id.uuidString.lowercased() })
             do {
-                let children: [EntityRecord<JSONValue>] = try await dataService.list(.workoutPlans, orderBy: "-created_date", limit: 500)
+                let children: [EntityRecord<JSONValue>] = try await dataService.listAll(.workoutPlans, isCurrent: { request == self.generation })
                 guard request == generation, !Task.isCancelled else { return }
-                if children.count == 500 { cleanupFailed = true }
                 for child in children where oldIDs.contains(child.payload["source_plan_id"]?.stringValue?.lowercased() ?? "") && child.payload["status"]?.stringValue != "archived" {
                     guard request == generation, !Task.isCancelled else { return }
                     let _: EntityRecord<JSONValue> = try await dataService.update(.workoutPlans, id: child.id, patch: .object(["status": .string("archived")]))
                 }
-                let contexts: [EntityRecord<JSONValue>] = try await dataService.list(.userAIContexts, orderBy: "-created_date", limit: 100)
+                let contexts: [EntityRecord<JSONValue>] = try await dataService.listAll(.userAIContexts, isCurrent: { request == self.generation })
                 guard request == generation, !Task.isCancelled else { return }
-                if contexts.count == 100 { cleanupFailed = true }
                 for context in contexts {
                     guard request == generation, !Task.isCancelled else { return }
                     let _: EntityRecord<JSONValue> = try await dataService.update(.userAIContexts, id: context.id, patch: .object(["lastUpdatedAt": .string("1970-01-01T00:00:00.000Z")]))

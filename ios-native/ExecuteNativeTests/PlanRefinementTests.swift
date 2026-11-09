@@ -118,6 +118,26 @@ final class PlanRefinementTests: XCTestCase {
         XCTAssertNotNil(model.editError)
     }
 
+    func testPaginationFailureAndRetryCleanEntireLargeHistoryWithoutAnotherCreate() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), model = model(data, ai: ai)
+        data.rows[.workoutPlans] = (0..<501).map { _ in PlanFixtureData.row(payload: .object([
+            "source_plan_id": .string(data.originalID.uuidString), "status": .string("planned")
+        ])) }
+        await model.start(for: user); model.changeRequest = "More mobility"; await model.refine()
+        data.failSecondPage = true
+        await model.saveRevision()
+        XCTAssertEqual(data.creates, 1)
+        XCTAssertNotNil(model.revisedOverview)
+        XCTAssertTrue(data.rows[.workoutPlans]!.allSatisfy { $0.data["status"] == .string("planned") })
+        data.failSecondPage = false
+        await model.saveRevision()
+        XCTAssertEqual(data.creates, 1)
+        XCTAssertNil(model.revisedOverview)
+        XCTAssertEqual(data.rows[.workoutPlans]?.count, 501)
+        XCTAssertTrue(data.rows[.workoutPlans]!.allSatisfy { $0.data["status"] == .string("archived") })
+        XCTAssertTrue(data.offsets[.workoutPlans]!.contains(500))
+    }
+
     func testDatesAreLocalAcrossDaylightSavingAndMalformedWeekIsRejected() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "America/Vancouver")!
@@ -181,6 +201,8 @@ private final class PlanFixtureData: EntityDataServicing {
     var rows: [EntityTable: [BackendRow]] = [:]
     var creates = 0, updates = 0
     var loseCreateResponse = false, failReads = false, failCreates = false, failUpdates = false
+    var failSecondPage = false
+    var offsets: [EntityTable: [Int]] = [:]
     init() {
         rows[.aiPlans] = [Self.row(id: originalID, payload: .object([
             "plan_type": .string("daily"), "status": .string("active"),
@@ -204,6 +226,12 @@ private final class PlanFixtureData: EntityDataServicing {
         rows[table, default: []].append(row)
         if loseCreateResponse { loseCreateResponse = false; throw AppError(title: "Response lost", message: "Fixture committed then disconnected") }
         return try EntityRecord(row: row)
+    }
+    func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
+        offsets[table, default: []].append(offset)
+        if failSecondPage && offset > 0 { throw AppError(title: "Page failed", message: "Fixture second page failed") }
+        let records: [EntityRecord<Payload>] = try await list(table, orderBy: orderBy, limit: limit)
+        return Array(records.dropFirst(offset).prefix(limit))
     }
     func update<Payload: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<Payload> {
         if failUpdates { throw AppError(title: "Update failed", message: "Fixture network failure") }

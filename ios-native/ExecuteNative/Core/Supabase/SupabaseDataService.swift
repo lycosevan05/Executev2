@@ -35,9 +35,33 @@ private struct PatchRecordParameters: Encodable {
 @MainActor
 protocol EntityDataServicing {
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>]
+    func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>]
     func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload>
     func update<Payload: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<Payload>
     func delete(_ table: EntityTable, id: UUID) async throws
+}
+
+extension EntityDataServicing {
+    func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
+        guard offset == 0 else {
+            throw AppError(title: "More records need loading", message: "This data service does not support another page.")
+        }
+        return try await list(table, orderBy: orderBy, limit: limit)
+    }
+
+    /// Immutable creation order plus an ID tiebreaker keeps cleanup writes from shifting pages.
+    func listAll<Payload: Codable & Sendable>(_ table: EntityTable, isCurrent: () -> Bool) async throws -> [EntityRecord<Payload>] {
+        var records: [EntityRecord<Payload>] = []
+        var offset = 0
+        while true {
+            try Task.checkCancellation()
+            guard isCurrent() else { throw CancellationError() }
+            let page: [EntityRecord<Payload>] = try await listPage(table, orderBy: "created_date", limit: 500, offset: offset)
+            records.append(contentsOf: page)
+            if page.count < 500 { return records }
+            offset += page.count
+        }
+    }
 }
 
 @MainActor
@@ -47,13 +71,18 @@ final class SupabaseDataService: EntityDataServicing {
     init(client: SupabaseClient) { self.client = client }
 
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String = "-created_date", limit: Int = 100) async throws -> [EntityRecord<Payload>] {
+        try await listPage(table, orderBy: orderBy, limit: limit, offset: 0)
+    }
+
+    func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
         let descending = orderBy.hasPrefix("-")
         let column = descending ? String(orderBy.dropFirst()) : orderBy
         let rows: [BackendRow] = try await client
             .from(table.rawValue)
             .select()
             .order(column, ascending: !descending)
-            .limit(limit)
+            .order("id", ascending: !descending)
+            .range(from: offset, to: offset + limit - 1)
             .execute()
             .value
         return try rows.map { try EntityRecord<Payload>(row: $0) }
