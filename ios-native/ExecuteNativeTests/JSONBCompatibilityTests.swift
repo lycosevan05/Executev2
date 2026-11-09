@@ -633,3 +633,75 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     override func stopLoading() { }
 }
+
+@MainActor
+final class PatchRecordTransportTests: XCTestCase {
+    private func update(shape: String) async throws -> EntityRecord<JSONValue> {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [PatchRecordFixtureProtocol.self]
+        let client = SupabaseClient(supabaseURL: URL(string: "https://\(shape).patch-fixture.invalid")!, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: AuthFixtureStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: URLSession(configuration: configuration))))
+        return try await SupabaseDataService(client: client).update(.readinessCheckIns, id: PatchRecordFixtureProtocol.recordID, patch: .object(["energy": .number(8)]))
+    }
+    func testSetResponseAcknowledgesRequestedRowAndMicrosecondTimestamp() async throws {
+        let row = try await update(shape: "array")
+        XCTAssertEqual(row.id, PatchRecordFixtureProtocol.recordID)
+        XCTAssertEqual(row.payload["energy"], .number(8))
+        XCTAssertNotNil(row.updatedDate)
+    }
+    func testDirectResponseAcknowledgesRequestedRow() async throws {
+        let row = try await update(shape: "object")
+        XCTAssertEqual(row.id, PatchRecordFixtureProtocol.recordID)
+    }
+    func testFunctionColumnSetResponseAcknowledgesRequestedRow() async throws {
+        let row = try await update(shape: "wrapped-array")
+        XCTAssertEqual(row.payload["energy"], .number(8))
+    }
+    func testFunctionColumnObjectResponseAcknowledgesRequestedRow() async throws {
+        let row = try await update(shape: "wrapped-object")
+        XCTAssertEqual(row.id, PatchRecordFixtureProtocol.recordID)
+    }
+    func testEmptyOrMultipleResponsesCannotAcknowledgeAnUpdate() async {
+        for shape in ["empty", "multiple"] {
+            do { _ = try await update(shape: shape); XCTFail("Unexpected acknowledgment") }
+            catch let error as AppError { XCTAssertEqual(error.title, "Update acknowledgment missing") }
+            catch { XCTFail("Unexpected fixture error: \(error)") }
+        }
+    }
+    func testAnotherRecordCannotAcknowledgeTheRequestedUpdate() async {
+        do { _ = try await update(shape: "wrong-id"); XCTFail("Wrong record acknowledged") }
+        catch let error as AppError { XCTAssertEqual(error.title, "Update acknowledgment missing") }
+        catch { XCTFail("Unexpected fixture error: \(error)") }
+    }
+}
+
+private final class PatchRecordFixtureProtocol: URLProtocol, @unchecked Sendable {
+    static let recordID = UUID(uuidString: "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb")!
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".patch-fixture.invalid") == true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url, url.path == "/rest/v1/rpc/patch_record" else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        let shape = url.host!.components(separatedBy: ".")[0]
+        let row: [String: Any] = ["id": shape == "wrong-id" ? "ffffffff-1111-2222-3333-bbbbbbbbbbbb" : Self.recordID.uuidString,
+            "data": ["energy": 8], "updated_date": "2026-11-09T08:00:28.126079+00:00"]
+        let body: Any
+        switch shape {
+        case "object": body = row
+        case "wrapped-array": body = [["patch_record": row]]
+        case "wrapped-object": body = ["patch_record": row]
+        case "empty": body = [] as [Any]
+        case "multiple": body = [row, row]
+        default: body = [row]
+        }
+        do {
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: try JSONSerialization.data(withJSONObject: body))
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() { }
+}

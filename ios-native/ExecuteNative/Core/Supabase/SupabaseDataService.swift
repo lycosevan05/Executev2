@@ -32,6 +32,25 @@ private struct PatchRecordParameters: Encodable {
     }
 }
 
+enum PatchRecordResponse {
+    static func row(_ response: JSONValue, expectedID: UUID) throws -> BackendRow {
+        var value = response
+        if case .array(let rows) = value {
+            guard rows.count == 1 else { throw invalidAcknowledgment() }
+            value = rows[0]
+        }
+        if value["id"] == nil, let wrapped = value["patch_record"] { value = wrapped }
+        guard let id = value["id"]?.stringValue.flatMap(UUID.init(uuidString:)), id == expectedID else {
+            throw invalidAcknowledgment()
+        }
+        return try value.decoded(as: BackendRow.self, decoder: PostgrestClient.Configuration.jsonDecoder)
+    }
+
+    private static func invalidAcknowledgment() -> AppError {
+        AppError(title: "Update acknowledgment missing", message: "The server did not return exactly the requested record. Reload before retrying.")
+    }
+}
+
 @MainActor
 protocol EntityDataServicing {
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>]
@@ -111,11 +130,11 @@ final class SupabaseDataService: EntityDataServicing {
 
     func update<Payload: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<Payload> {
         let parameters = PatchRecordParameters(pTable: table.rawValue, pID: id, pPatch: patch)
-        let row: BackendRow = try await client
+        let response: JSONValue = try await client
             .rpc("patch_record", params: parameters)
-            .single()
             .execute()
             .value
+        let row = try PatchRecordResponse.row(response, expectedID: id)
         return try EntityRecord(row: row)
     }
 
