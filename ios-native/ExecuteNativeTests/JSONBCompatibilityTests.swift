@@ -268,6 +268,17 @@ final class NavigationTests: XCTestCase {
 
 @MainActor
 final class HomeLogicTests: XCTestCase {
+    func testHomeDailyLogAcceptsSharedPlanningChecklistAndNativeCompletionFields() throws {
+        let plan = BackendRow(id: UUID(), ownerID: nil, ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: nil, updatedDate: nil,
+            data: .object(["weekly_overview": .object(["days": .array([.object(["date": .string("2026-11-11"), "workout_needed": .bool(true), "recovery_focus": .string("Mobility")])])])]))
+        let patch = try XCTUnwrap(RecoveryDailyProjection.patch(plan: plan, date: "2026-11-11", existing: nil))
+        let daily = try patch.decoded(as: HomeDailyLog.self)
+        XCTAssertEqual(daily.plannedChecklistItems?.count, 3)
+        XCTAssertEqual(daily.checklistItems?.first?.source, "plan")
+        XCTAssertEqual(daily.checklistItems?.first?.completed, false)
+        let native = HomeChecklistItem(id: "native", type: "custom", title: "Keep", detail: "Detail", source: "custom", customItemID: UUID(), completed: true, completedAt: "2026-11-11T20:00:00Z")
+        XCTAssertEqual(try JSONDecoder().decode(HomeChecklistItem.self, from: JSONEncoder().encode(native)), native)
+    }
     func testManualCalorieTargetOverridesPlanTarget() {
         let nutritionProfile = HomeNutritionProfile(
             calorieTarget: 2_100,

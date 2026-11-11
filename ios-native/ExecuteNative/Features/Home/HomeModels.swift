@@ -323,6 +323,21 @@ struct HomeChecklistItem: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
+extension HomeChecklistItem {
+    // Shared web planning items have id/type/title/description/status. Native UI state is optional.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        type = try values.decode(String.self, forKey: .type)
+        title = try values.decode(String.self, forKey: .title)
+        detail = try values.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        source = try values.decodeIfPresent(String.self, forKey: .source) ?? "plan"
+        customItemID = try values.decodeIfPresent(UUID.self, forKey: .customItemID)
+        completed = try values.decodeIfPresent(Bool.self, forKey: .completed) ?? false
+        completedAt = try values.decodeIfPresent(String.self, forKey: .completedAt)
+    }
+}
+
 struct HomePageLayout: Codable, Sendable {
     let pageKey: String?
     let widgetOrder: [String]?
