@@ -80,6 +80,8 @@
 		DEAD00000000000000000001 /* RecoveryReadinessCases.json in Resources */ = {isa = PBXBuildFile; fileRef = DEAD00000000000000000002 /* RecoveryReadinessCases.json */; };
 		D10000000000000000000001 /* PlanRefinement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000002 /* PlanRefinement.swift */; };
 		D10000000000000000000003 /* PlanRefinementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000004 /* PlanRefinementTests.swift */; };
+		E10000000000000000000001 /* PlanGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000002 /* PlanGeneration.swift */; };
+		E20000000000000000000001 /* PlanGenerationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* PlanGenerationView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -170,6 +172,8 @@
 		DEAD00000000000000000002 /* RecoveryReadinessCases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = RecoveryReadinessCases.json; sourceTree = "<group>"; };
 		D10000000000000000000002 /* PlanRefinement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanRefinement.swift; sourceTree = "<group>"; };
 		D10000000000000000000004 /* PlanRefinementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanRefinementTests.swift; sourceTree = "<group>"; };
+		E10000000000000000000002 /* PlanGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanGeneration.swift; sourceTree = "<group>"; };
+		E20000000000000000000002 /* PlanGenerationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanGenerationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -480,6 +484,8 @@
 				86566F576D7100D2FE8DB318 /* PlanView.swift */,
 				6196C67B3E06966564038000 /* PlanViewModel.swift */,
 				D10000000000000000000002 /* PlanRefinement.swift */,
+				E20000000000000000000002 /* PlanGenerationView.swift */,
+				E10000000000000000000002 /* PlanGeneration.swift */,
 			);
 			path = Plan;
 			sourceTree = "<group>";
@@ -671,6 +677,8 @@
 				7F6BA815C4AD47E4D70769C0 /* PlanView.swift in Sources */,
 				7BAE005FA23C3F4C06AAC384 /* PlanViewModel.swift in Sources */,
 				D10000000000000000000001 /* PlanRefinement.swift in Sources */,
+				E20000000000000000000001 /* PlanGenerationView.swift in Sources */,
+				E10000000000000000000001 /* PlanGeneration.swift in Sources */,
 				C10000000000000000000001 /* ProfileModels.swift in Sources */,
 				C10000000000000000000003 /* ProfileView.swift in Sources */,
 				C10000000000000000000005 /* ProfileViewModel.swift in Sources */,

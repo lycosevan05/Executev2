@@ -68,6 +68,7 @@ struct PlanDashboardView: View {
                 if model.isInitialLoading && model.plan == nil {
                     PlanLoadingState()
                 } else if let plan = model.plan {
+                    if model.hasInitialPreview { PlanGenerationView(model: model, isPremium: isPremium) }
                     PlanFocusCard(plan: plan, today: model.today, openWorkout: model.openWorkout)
                     PlanSegmentedPicker(selection: $selectedTab)
 
@@ -84,7 +85,7 @@ struct PlanDashboardView: View {
                         }
                     }
                 } else {
-                    PlanEmptyState()
+                    PlanGenerationView(model: model, isPremium: isPremium)
                 }
             }
             .padding(.horizontal, ExecuteHomeStyle.screenInset)
@@ -442,26 +443,6 @@ private struct PlanLoadingState: View {
                 .foregroundStyle(ExecuteColor.mist)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, ExecuteSpacing.xxl)
-    }
-}
-
-private struct PlanEmptyState: View {
-    var body: some View {
-        VStack(spacing: ExecuteSpacing.md) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 32, weight: .semibold))
-                .foregroundStyle(ExecuteColor.chartreuseDark)
-            Text("Your performance plan is ready to build.")
-                .font(ExecuteTypography.title(20))
-                .multilineTextAlignment(.center)
-            Text("The native plan dashboard is connected to your existing data. Plan questionnaire and generation controls are the next step.")
-                .font(ExecuteTypography.body(14))
-                .foregroundStyle(ExecuteColor.olive)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, ExecuteSpacing.lg)
         .padding(.vertical, ExecuteSpacing.xxl)
     }
 }

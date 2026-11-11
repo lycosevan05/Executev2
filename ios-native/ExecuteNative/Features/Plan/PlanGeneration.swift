@@ -1,0 +1,137 @@
+import Foundation
+
+/// The same answer keys and deterministic target calculation used by the web questionnaire.
+struct PlanQuestionnaireAnswers: Equatable, Sendable {
+    var planType = "daily_performance"
+    var goal = "feel_better"
+    var optimize = "balanced"
+    var age = "", sex = "", weightKg = "", heightCm = ""
+    var currentTraining = "never", trainingDays = "3_5", sessionLength = "45"
+    var trainingLocation = "home", equipment = "Bodyweight only"
+    var limitations = "", sportSchedule = ""
+    var mealsPerDay = "3", diet = "", allergies = "", foodsToAvoid = "", favoriteFoods = ""
+    var supplements = "", desiredOutcome = "", mainBarrier = "", coachingStyle = "supportive", additionalNotes = ""
+
+    func validated() throws -> JSONValue {
+        guard let a = Double(age), a.isFinite, (13...100).contains(a),
+              let w = Double(weightKg), w.isFinite, (30...300).contains(w),
+              let h = Double(heightCm), h.isFinite, (120...250).contains(h),
+              ["male", "female"].contains(sex) else {
+            throw AppError(title: "Complete your starting details", message: "Enter age (13–100), weight in kg (30–300), height in cm (120–250), and the sex used for your starting target calculation.")
+        }
+        guard !desiredOutcome.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !mainBarrier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              trainingLocation == "gym" || !equipment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AppError(title: "A few details are missing", message: "Add your desired outcome, main barrier and available equipment.")
+        }
+        let strings = ["planType": planType, "goal": goal, "optimize": optimize, "sex": sex,
+            "currentTraining": currentTraining, "trainingDays": trainingDays, "sessionLength": sessionLength,
+            "trainingLocation": trainingLocation, "limitations": limitations, "sportSchedule": sportSchedule,
+            "mealsPerDay": mealsPerDay, "diet": diet, "allergies": allergies, "foodsToAvoid": foodsToAvoid,
+            "favoriteFoods": favoriteFoods, "supplements": supplements, "desiredOutcomeFeeling": desiredOutcome,
+            "mainBarrier": mainBarrier, "coachingStyle": coachingStyle, "additionalNotes": additionalNotes]
+        guard strings.values.allSatisfy({ $0.count <= 4_000 }), equipment.count <= 4_000 else {
+            throw AppError(title: "Shorten your answers", message: "Keep each answer under 4,000 characters.")
+        }
+        var values = strings.mapValues { JSONValue.string($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        values["age"] = .number(a); values["weightKg"] = .number(w); values["heightCm"] = .number(h)
+        values["equipment"] = .array(equipment.split(separator: ",").map { .string($0.trimmingCharacters(in: .whitespacesAndNewlines)) })
+        values["hasLimitations"] = .bool(!limitations.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        return .object(values)
+    }
+
+    mutating func prefill(user: JSONValue?, workout: JSONValue?, nutrition: JSONValue?) {
+        func text(_ value: JSONValue?) -> String { value?.stringValue ?? value?.doubleValue.map { String($0) } ?? "" }
+        age = text(user?["age"]); weightKg = text(user?["weight_kg"]); heightCm = text(user?["height_cm"])
+        sex = text(user?["sex"])
+        let activity = text(nutrition?["activity_level"] ?? workout?["current_activity_level"])
+        currentTraining = ["sedentary": "never", "lightly_active": "1_2_days", "moderately_active": "3_4_days", "very_active": "5_plus", "athlete": "5_plus"][activity] ?? "never"
+        func joined(_ key: String) -> String {
+            guard case .array(let values) = nutrition?[key] else { return text(nutrition?[key]) }
+            return values.compactMap(\.stringValue).joined(separator: ", ")
+        }
+        allergies = joined("allergies"); foodsToAvoid = joined("disliked_foods"); favoriteFoods = joined("liked_foods")
+        diet = joined("dietary_preferences")
+        if diet.isEmpty { diet = text(nutrition?["dietary_preference"]) }
+    }
+}
+
+enum PlanGeneration {
+    static func personalization(_ answers: JSONValue) -> [(EntityTable, JSONValue)] {
+        var user: [String: JSONValue] = ["onboarding_complete": .bool(true), "plan_questionnaire_completed": .bool(true), "updated_from_plan_questionnaire": .bool(true)]
+        for (source, destination) in [("age", "age"), ("weightKg", "weight_kg"), ("heightCm", "height_cm"), ("sex", "sex")] { user[destination] = answers[source] }
+        var result: [(EntityTable, JSONValue)] = [(.userProfiles, .object(user))]
+        let goal = answers["goal"]?.stringValue ?? "feel_better"
+        let title = ["feel_better": "Feel more energetic & healthy", "lose_fat": "Lose body fat", "build_muscle": "Build muscle", "get_stronger": "Get stronger", "improve_flexibility": "Improve flexibility", "sport_specific": "Sport-specific training"][goal] ?? goal
+        result.append((.goals, .object(["title": .string(title), "category": .string(goal == "lose_fat" ? "body" : goal == "feel_better" ? "habit" : ["get_stronger", "sport_specific"].contains(goal) ? "performance" : "fitness"), "source": .string("plan_questionnaire"), "status": .string("active"), "priority": .string("high")])))
+        if answers["planType"]?.stringValue != "nutrition" {
+            var workout: [String: JSONValue] = ["updated_from_plan_questionnaire": .bool(true), "equipment_available": answers["equipment"] ?? .array([]), "training_location": answers["trainingLocation"] ?? .string("home"), "plan_type": answers["planType"] ?? .string("daily_performance"), "has_limitations": answers["hasLimitations"] ?? .bool(false)]
+            for (source, destination) in [("limitations", "limitations_summary"), ("sportSchedule", "sport_schedule_notes")] {
+                if let value = answers[source]?.stringValue, !value.isEmpty { workout[destination] = .string(value) }
+            }
+            result.append((.workoutProfiles, .object(workout)))
+        }
+        if answers["planType"]?.stringValue != "workout" {
+            var nutrition: [String: JSONValue] = ["updated_from_plan_questionnaire": .bool(true), "calorie_target_source": .string("ai_plan"), "calorie_target": .null, "protein_target_g": .null, "carbs_target_g": .null, "fats_target_g": .null, "meals_per_day": .number(Double(answers["mealsPerDay"]?.stringValue ?? "3") ?? 3)]
+            for (source, destination) in [("allergies", "allergies"), ("foodsToAvoid", "disliked_foods"), ("favoriteFoods", "liked_foods")] {
+                if let text = answers[source]?.stringValue, !text.isEmpty {
+                    nutrition[destination] = .array(text.components(separatedBy: CharacterSet(charactersIn: ",\n")).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.map(JSONValue.string))
+                }
+            }
+            if let diet = answers["diet"]?.stringValue, !diet.isEmpty { nutrition["dietary_preference"] = .string(diet) }
+            result.append((.nutritionProfiles, .object(nutrition)))
+        }
+        return result
+    }
+
+    static func targets(_ answers: JSONValue) -> JSONValue {
+        let w = answers["weightKg"]!.doubleValue!, h = answers["heightCm"]!.doubleValue!, a = answers["age"]!.doubleValue!
+        func rounded(_ value: Double) -> Double { floor(value + 0.5) }
+        let bmr = 10 * w + 6.25 * h - 5 * a + (answers["sex"]?.stringValue == "male" ? 5 : -161)
+        let activity = ["never": 1.25, "1_2_days": 1.4, "3_4_days": 1.55, "5_plus": 1.725][answers["currentTraining"]?.stringValue ?? ""] ?? 1.45
+        let tdee = rounded(bmr * activity), goal = answers["goal"]?.stringValue ?? ""
+        let optimize = answers["optimize"]?.stringValue ?? ""
+        var factor = goal == "lose_fat" ? 0.82 : goal == "build_muscle" ? 1.12 : goal == "get_stronger" ? 1.05 : 1
+        if optimize == "fastest" { if goal == "lose_fat" { factor = 0.78 }; if goal == "build_muscle" { factor = 1.15 } }
+        if ["injury_safe", "consistent"].contains(optimize) { if goal == "lose_fat" { factor = 0.88 }; if goal == "build_muscle" { factor = 1.08 } }
+        let calories = rounded(tdee * factor), protein = rounded(w * (["build_muscle", "get_stronger"].contains(goal) ? 2.4 : 2)), fat = rounded(w)
+        return .object(["calories": .number(calories), "protein_g": .number(protein),
+            "carbs_g": .number(max(50, rounded((calories - protein * 4 - fat * 9) / 4))), "fat_g": .number(fat), "hydration_liters": .number(2.5)])
+    }
+
+    static func request(answers: JSONValue, context: JSONValue, dates: [String]) throws -> LLMRequest {
+        let base = try PlanRefinement.request(current: .object(["questionnaire": answers, "existing_personalization": context]), change: "Create the first personalized seven-day performance overview. There is no existing plan.", dates: dates)
+        let targetText = String(decoding: try JSONEncoder().encode(targets(answers)), as: UTF8.self)
+        return LLMRequest(prompt: base.prompt + """
+
+        This is INITIAL PLAN GENERATION. Use all questionnaire answers and existing active limitations.
+        Canonical daily targets are \(targetText). Echo them exactly; never calculate alternative targets.
+        Nutrition guidance must respect diet, allergies, dislikes, favorite foods and meal frequency.
+        Training must respect equipment, current activity, available days/session length and sport schedule.
+        Ramp progressively; place recovery around strenuous sport sessions. Do not diagnose or treat injuries.
+        Coaching tone and milestones must address the user's stated outcome and main barrier.
+        Return a lightweight overview only; no detailed workouts, recipes, logs or invented personal facts.
+        """, fileURLs: [], maxOutputTokens: 6_000, responseJSONSchema: base.responseJSONSchema, schemaName: "native_initial_plan")
+    }
+
+    static func payload(overview: JSONValue, answers: JSONValue, batch: String, now: Date) throws -> JSONValue {
+        let stamp = ISO8601DateFormatter().string(from: now)
+        var nested = overview.objectValue ?? [:]
+        nested["nutrition_targets_llm"] = nested["nutrition_targets"]
+        nested["nutrition_targets"] = targets(answers)
+        nested["questionnaire"] = answers
+        nested["generated_at"] = .string(stamp); nested["generation_batch_id"] = .string(batch)
+        nested["generation_status"] = .string("overview_ready"); nested["source"] = .string("plan_questionnaire_overview")
+        var result = nested
+        result["plan_type"] = .string("daily"); result["status"] = .string("active")
+        result["created_from"] = .string("plan_questionnaire"); result["version"] = .number(1)
+        guard case .array(let days) = overview["weekly_overview"]?["days"], let first = days.first?["date"], let last = days.last?["date"] else { throw AppError(title: "Incomplete plan", message: "Generate a complete seven-day overview before saving.") }
+        result["date_range_start"] = first; result["date_range_end"] = last
+        result["summary"] = overview["long_term_plan"]?["training_narrative"] ?? overview["plan_summary"]?["primary_goal"]
+        result["nutrition_guidance"] = overview["long_term_plan"]?["nutrition_narrative"] ?? overview["plan_summary"]?["nutrition_focus"]
+        result["recovery_advice"] = overview["long_term_plan"]?["recovery_narrative"] ?? overview["plan_summary"]?["recovery_focus"]
+        result["workout_suggestion"] = overview["plan_summary"]?["training_focus"]
+        result["plan_payload"] = .object(nested)
+        return .object(result)
+    }
+}

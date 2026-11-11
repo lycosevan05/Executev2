@@ -279,3 +279,131 @@ private final class PlanFixtureData: EntityDataServicing {
     }
     func delete(_ table: EntityTable, id: UUID) async throws { XCTFail("Plan refinement must never delete records") }
 }
+
+@MainActor
+final class PlanGenerationTests: XCTestCase {
+    private let user = ExecuteUser(id: UUID(), email: "initial-plan@example.invalid", displayName: "Fixture")
+    private func answers() -> PlanQuestionnaireAnswers {
+        var value = PlanQuestionnaireAnswers()
+        value.age = "30"; value.weightKg = "80"; value.heightCm = "175"; value.sex = "male"
+        value.desiredOutcome = "Consistent energy"; value.mainBarrier = "Limited time"
+        value.allergies = "Peanuts"; value.diet = "vegan"
+        return value
+    }
+    private func fixture() async -> (PlanFixtureData, PlanFixtureAI, PlanViewModel) {
+        let data = PlanFixtureData(), ai = PlanFixtureAI()
+        data.rows[.aiPlans] = []
+        let model = PlanViewModel(dataService: data, cache: UserScopedCacheStore(suiteName: "InitialPlan.\(UUID())"), router: AppRouter(), aiService: ai, hasPremiumAccess: { true })
+        await model.start(for: user)
+        model.questionnaire = answers()
+        return (data, ai, model)
+    }
+    func testGenerationSchemaDefinesNestedCalendarAndTargets() throws {
+        let schema = PlanRefinement.schema
+        XCTAssertNotNil(schema["properties"]?["weekly_overview"]?["properties"]?["days"]?["items"]?["properties"]?["date"])
+        XCTAssertNotNil(schema["properties"]?["nutrition_targets"]?["properties"]?["protein_g"])
+        let direct = PlanRefinementTests.overview()
+        let encoded = String(decoding: try JSONEncoder().encode(direct), as: UTF8.self)
+        for wrapped in [JSONValue.object(["overview": direct]), .object(["result": .string(encoded)]), .object(["output_text": .string(encoded)]), .string(encoded)] {
+            XCTAssertEqual(try PlanRefinement.normalize(wrapped, dates: PlanRefinement.dates(from: Date()), overrides: nil)["plan_summary"], direct["plan_summary"])
+        }
+    }
+    func testRequiredDetailsAndBoundsRejectInvalidAnswersBeforeAI() async throws {
+        let (data, _, model) = await fixture()
+        model.questionnaire.age = "nan"
+        await model.generateInitialPlan()
+        XCTAssertNil(model.revisedOverview); XCTAssertNotNil(model.editError); XCTAssertEqual(data.creates, 0)
+        var invalid = answers(); invalid.heightCm = "999"
+        XCTAssertThrowsError(try invalid.validated())
+        invalid = answers(); invalid.desiredOutcome = " "
+        XCTAssertThrowsError(try invalid.validated())
+    }
+    func testStartingTargetsMatchWebCalculationAndOverrideModelDrift() async throws {
+        let (data, _, model) = await fixture()
+        let expected = JSONValue.object(["calories": .number(2186), "protein_g": .number(160), "carbs_g": .number(207), "fat_g": .number(80), "hydration_liters": .number(2.5)])
+        XCTAssertEqual(PlanGeneration.targets(try answers().validated()), expected)
+        await model.generateInitialPlan()
+        XCTAssertEqual(model.revisedOverview?["nutrition_targets"], expected)
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+    func testInitialSaveAndLostResponseRetryCreateOnePlanAndPreserveAnswers() async throws {
+        let (data, ai, model) = await fixture()
+        await model.generateInitialPlan()
+        data.loseCreateResponse = true
+        await model.saveRevision()
+        XCTAssertNotNil(model.editError); XCTAssertEqual(data.rows[.aiPlans]?.count, 1)
+        await model.saveRevision()
+        XCTAssertNil(model.revisedOverview)
+        XCTAssertEqual(data.rows[.aiPlans]?.count, 1)
+        let saved = data.rows[.aiPlans]![0]
+        XCTAssertEqual(saved.data["created_from"], .string("plan_questionnaire"))
+        XCTAssertEqual(saved.data["plan_payload"]?["questionnaire"]?["allergies"], .string("Peanuts"))
+        XCTAssertEqual(data.rows[.userProfiles]?.count, 1)
+        XCTAssertEqual(data.rows[.goals]?.count, 1)
+        XCTAssertEqual(data.rows[.nutritionProfiles]?.first?.data["allergies"], .array([.string("Peanuts")]))
+        let restored = PlanViewModel(dataService: data, cache: UserScopedCacheStore(), router: AppRouter(), aiService: ai, hasPremiumAccess: { true })
+        await restored.start(for: user)
+        XCTAssertEqual(restored.plan?.generationBatchID, model.plan?.generationBatchID)
+        XCTAssertEqual(restored.weeklyDays.count, 7)
+    }
+    func testConcurrentFirstPlanCannotBeArchivedByStalePreview() async {
+        let (data, _, model) = await fixture()
+        await model.generateInitialPlan()
+        data.rows[.aiPlans] = [PlanFixtureData.row(payload: .object(["plan_type": .string("daily"), "status": .string("active")]))]
+        await model.saveRevision()
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+        XCTAssertNotNil(model.editError); XCTAssertNotNil(model.revisedOverview)
+    }
+    func testFailedInitialCreateLeavesPreviewAndNoProfileWrites() async {
+        let (data, _, model) = await fixture()
+        await model.generateInitialPlan(); data.failCreates = true
+        await model.saveRevision()
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+        XCTAssertNotNil(model.revisedOverview); XCTAssertNotNil(model.editError)
+    }
+    func testInitialPersonalizationFailureRetryReusesPlan() async {
+        let (data, _, model) = await fixture()
+        data.rows[.userProfiles] = [PlanFixtureData.row(payload: .object(["unrelated": .string("Keep")]))]
+        await model.generateInitialPlan(); data.failUpdates = true
+        await model.saveRevision()
+        XCTAssertEqual(data.rows[.aiPlans]?.count, 1); XCTAssertTrue(model.hasInitialPreview)
+        data.failUpdates = false
+        await model.saveRevision()
+        XCTAssertEqual(data.rows[.aiPlans]?.count, 1); XCTAssertFalse(model.hasInitialPreview)
+        XCTAssertEqual(data.rows[.userProfiles]?.first?.data["unrelated"], .string("Keep"))
+    }
+    func testStoppedAccountCannotPublishGeneratedPlan() async {
+        let (data, ai, model) = await fixture()
+        ai.beforeReturn = { model.stop() }
+        await model.generateInitialPlan()
+        XCTAssertNil(model.revisedOverview); XCTAssertFalse(model.canGenerate); XCTAssertEqual(data.creates, 0)
+        XCTAssertEqual(model.questionnaire.age, "")
+    }
+    func testPremiumRevocationDuringGenerationAndSaveReadPreventsWrites() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(); data.rows[.aiPlans] = []
+        var premium = true
+        let model = PlanViewModel(dataService: data, cache: UserScopedCacheStore(), router: AppRouter(), aiService: ai, hasPremiumAccess: { premium })
+        await model.start(for: user); model.questionnaire = answers()
+        ai.beforeReturn = { premium = false }; await model.generateInitialPlan()
+        XCTAssertNil(model.revisedOverview)
+        premium = true; ai.beforeReturn = nil; await model.generateInitialPlan()
+        data.beforeListReturn = { premium = false }; await model.saveRevision()
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+    func testPrefillPreservesProfileAllergiesAndCanonicalPatchesDoNotClearBlanks() throws {
+        var value = PlanQuestionnaireAnswers()
+        value.prefill(user: .object(["age": .number(30), "weight_kg": .number(80), "height_cm": .number(175), "sex": .string("male")]), workout: nil,
+                      nutrition: .object(["allergies": .array([.string("Peanuts")]), "dietary_preference": .string("vegan"), "activity_level": .string("moderately_active")]))
+        XCTAssertEqual(value.allergies, "Peanuts"); XCTAssertEqual(value.currentTraining, "3_4_days"); XCTAssertEqual(value.diet, "vegan")
+        value.desiredOutcome = "More energy"; value.mainBarrier = "Time"
+        let patches = PlanGeneration.personalization(try value.validated())
+        let nutrition = patches.first { $0.0 == .nutritionProfiles }!.1
+        XCTAssertEqual(nutrition["allergies"], .array([.string("Peanuts")]))
+        XCTAssertNil(nutrition["disliked_foods"])
+    }
+    func testInvalidGeneratedWeekNeverCreatesPlan() async {
+        let (data, ai, model) = await fixture(); ai.response = .object([:])
+        await model.generateInitialPlan(); await model.saveRevision()
+        XCTAssertNil(model.revisedOverview); XCTAssertNotNil(model.editError); XCTAssertEqual(data.creates, 0)
+    }
+}
