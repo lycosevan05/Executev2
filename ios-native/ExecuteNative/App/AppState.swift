@@ -30,6 +30,11 @@ final class AppState: ObservableObject {
     private var subscriptionRefreshTask: Task<Void, Never>?
     private var sessionGeneration = UUID()
     private var authenticationGeneration = UUID()
+    private var deletingUserIDs: Set<UUID> = []
+
+    func allowsDraftWrites(for userID: UUID) -> Bool {
+        signedInUserID == userID && !deletingUserIDs.contains(userID)
+    }
 
     init(
         authService: AuthServicing,
@@ -153,6 +158,8 @@ final class AppState: ObservableObject {
         let session = sessionGeneration
         let authentication = authenticationGeneration
         let userID = signedInUserID
+        if let userID { deletingUserIDs.insert(userID) }
+        defer { if let userID { deletingUserIDs.remove(userID) } }
         subscriptionRefreshTask?.cancel()
         try await accountService.deleteAccount()
         if let userID { await cache.purge(userID: userID) }

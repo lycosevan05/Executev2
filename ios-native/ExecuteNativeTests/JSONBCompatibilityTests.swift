@@ -716,3 +716,28 @@ private final class PatchRecordFixtureProtocol: URLProtocol, @unchecked Sendable
     }
     override func stopLoading() { }
 }
+
+@MainActor
+private final class DraftDeletionFixture: AccountServicing {
+    var operation: (() async throws -> Void)?
+    func deleteAccount() async throws { try await operation?() }
+}
+
+extension StartupStateTests {
+    func testAccountDeletionBlocksDraftWritesDuringRequestAndRestoresThemOnFailure() async throws {
+        let user = ExecuteUser(id: UUID(), email: "draft-delete@example.invalid", displayName: "Fixture")
+        let account = DraftDeletionFixture()
+        let state = makeState(authService: MockAuthService(restoredUser: user), accountService: account)
+        await state.start()
+        XCTAssertTrue(state.allowsDraftWrites(for: user.id))
+        account.operation = {
+            XCTAssertFalse(state.allowsDraftWrites(for: user.id))
+            throw AppError(title: "Fixture unavailable", message: "Deletion did not commit")
+        }
+        do { try await state.deleteAccount(); XCTFail("Expected failure") } catch { }
+        XCTAssertTrue(state.allowsDraftWrites(for: user.id))
+        account.operation = { XCTAssertFalse(state.allowsDraftWrites(for: user.id)) }
+        try await state.deleteAccount()
+        XCTAssertFalse(state.allowsDraftWrites(for: user.id))
+    }
+}

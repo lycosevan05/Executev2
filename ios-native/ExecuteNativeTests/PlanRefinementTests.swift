@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import ExecuteNative
 
 @MainActor
@@ -220,12 +221,17 @@ final class PlanRefinementTests: XCTestCase {
 @MainActor
 private final class PlanFixtureAI: AIResponding {
     var response = PlanRefinementTests.overview()
+    var responses: [JSONValue] = []
+    var requests: [LLMRequest] = []
+    var textRequests: [LLMRequest] = []
+    var pdfText = ""
     var beforeReturn: (() -> Void)?
     func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
+        requests.append(request)
         beforeReturn?()
-        return try response.decoded(as: type)
+        return try (responses.isEmpty ? response : responses.removeFirst()).decoded(as: type)
     }
-    func textResponse(_ request: LLMRequest) async throws -> String { "" }
+    func textResponse(_ request: LLMRequest) async throws -> String { textRequests.append(request); beforeReturn?(); return pdfText }
 }
 
 @MainActor
@@ -405,5 +411,164 @@ final class PlanGenerationTests: XCTestCase {
         let (data, ai, model) = await fixture(); ai.response = .object([:])
         await model.generateInitialPlan(); await model.saveRevision()
         XCTAssertNil(model.revisedOverview); XCTAssertNotNil(model.editError); XCTAssertEqual(data.creates, 0)
+    }
+}
+
+@MainActor
+final class PlanImportTests: XCTestCase {
+    let user = ExecuteUser(id: UUID(), email: "byo-fixture@example.invalid", displayName: "Fixture")
+    private func store() -> PlanDraftStore { PlanDraftStore(defaults: UserDefaults(suiteName: "BYOTests.\(UUID())")!) }
+    private func model(_ data: PlanFixtureData, _ ai: PlanFixtureAI, _ draft: PlanDraftStore) -> PlanViewModel {
+        PlanViewModel(dataService: data, cache: UserScopedCacheStore(suiteName: "BYOCache.\(UUID())"), router: AppRouter(), aiService: ai, hasPremiumAccess: { true }, draftStore: draft)
+    }
+    private func answers() -> PlanQuestionnaireAnswers {
+        var a = PlanQuestionnaireAnswers(); a.age = "30"; a.weightKg = "80"; a.heightCm = "175"; a.sex = "male"
+        a.desiredOutcome = "Fixture fitness"; a.mainBarrier = "Time"; a.planType = "custom"; a.byoScope = "both"
+        a.byoWorkoutText = "Wednesday, Friday, Sunday: push-ups 3 x 8. Rest other days."
+        a.byoMealText = "2200 kcal, protein160g, carbs250g, fat60g. Three meals."
+        return a
+    }
+    static func structured() -> JSONValue {
+        let exercise = JSONValue.object(["name": .string("Push-ups"), "sets": .number(3), "reps": .string("8")])
+        let workout = JSONValue.object(["derived_activity_level": .string("3_4_days"), "cadence": .object(["type": .string("weekly"), "advance": .string("daily"), "rest_weekdays": .array([])]),
+            "weekly_sessions": .array([0,3,5].map { .object(["weekday": .number(Double($0)), "title": .string("Supplied push-ups"), "exercises": .array([exercise])]) })])
+        let focus = JSONValue.object(["weekday": .null, "focus": .string("Three supplied meals"), "example_meals": .array([.string("Oats, tofu, rice")])])
+        let nutrition = JSONValue.object(["stated_calories": .number(2200), "stated_macros": .object(["protein_g": .number(160), "carbs_g": .number(250), "fat_g": .number(60)]), "daily_focus": .array([focus])])
+        return .object(["needs_clarification": .bool(false), "structured": .object(["workout": workout, "nutrition": nutrition])])
+    }
+    func testBYOPreviewPreservesSuppliedDaysExercisesAndExplicitTargetsWithoutWrites() async throws {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(); data.rows[.aiPlans] = []
+        let vm = model(data, ai, store()); await vm.start(for: user); vm.questionnaire = answers()
+        ai.responses = [Self.structured(), PlanRefinementTests.overview()]
+        await vm.generateInitialPlan()
+        XCTAssertNotNil(vm.revisedOverview); XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+        XCTAssertEqual(vm.revisedOverview?["nutrition_targets"]?["calories"], .number(2200))
+        let days = try XCTUnwrap(vm.revisedOverview?["weekly_overview"]?["days"]?.recoveryArray)
+        XCTAssertEqual(days.filter { $0["workout_needed"] == .bool(true) }.count, 3)
+        XCTAssertEqual(days.first?["byo_session"]?["exercises"]?.recoveryArray?.first?["name"], .string("Push-ups"))
+        await vm.saveRevision()
+        XCTAssertEqual(data.rows[.aiPlans]?.count, 1)
+        XCTAssertNotNil(data.rows[.aiPlans]?.first?.data["plan_payload"]?["byo_structured"])
+        XCTAssertEqual(data.rows[.aiPlans]?.first?.data["plan_payload"]?["byo_meal_text"], .string(answers().byoMealText))
+    }
+    func testClarificationDoesNotSilentlyFallBackAndAnswersAreSentOnRetry() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(); data.rows[.aiPlans] = []
+        let vm = model(data, ai, store()); await vm.start(for: user); vm.questionnaire = answers()
+        ai.response = .object(["needs_clarification": .bool(true), "clarification": .object(["questions": .array([.object(["id": .string("days"), "side": .string("workout"), "label": .string("Which days?"), "options": .array([.object(["id": .string("a"), "label": .string("Wednesday Friday Sunday")]), .object(["id": .string("b"), "label": .string("Other")])])])])])])
+        await vm.generateInitialPlan(); XCTAssertEqual(vm.byoQuestions.count, 1); XCTAssertNil(vm.revisedOverview); XCTAssertEqual(ai.requests.count, 1)
+        vm.questionnaire.byoClarifications["days"] = "Wednesday Friday Sunday"
+        ai.responses = [Self.structured(), PlanRefinementTests.overview()]
+        await vm.generateInitialPlan(); XCTAssertNotNil(vm.revisedOverview)
+        XCTAssertTrue(ai.requests[1].prompt.contains("Wednesday Friday Sunday")); XCTAssertEqual(data.creates, 0)
+    }
+    func testDraftRestoresAcrossModelInstancesAndAccountSwitchDoesNotOverwriteOrLeak() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), draft = store(); data.rows[.aiPlans] = []
+        let vm = model(data, ai, draft); await vm.start(for: user); vm.questionnaire = answers()
+        let other = ExecuteUser(id: UUID(), email: "other@example.invalid", displayName: "Other")
+        await vm.start(for: other)
+        XCTAssertEqual(vm.questionnaire.byoWorkoutText, ""); XCTAssertEqual(draft.load(user: user.id)?.answers.byoWorkoutText, answers().byoWorkoutText)
+        vm.stop()
+        let restored = model(data, ai, draft); await restored.start(for: user)
+        XCTAssertTrue(restored.draftRestored); XCTAssertEqual(restored.questionnaire, answers())
+        restored.discardSetupDraft(); XCTAssertNil(draft.load(user: user.id))
+    }
+    func testPendingPreviewAndLostCreateRetrySurviveRelaunchWithoutDuplicatePlan() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), draft = store(); data.rows[.aiPlans] = []
+        let vm = model(data, ai, draft); await vm.start(for: user); vm.questionnaire = answers()
+        ai.responses = [Self.structured(), PlanRefinementTests.overview()]; await vm.generateInitialPlan()
+        data.loseCreateResponse = true; await vm.saveRevision(); vm.stop()
+        let restored = model(data, ai, draft); await restored.start(for: user)
+        XCTAssertNotNil(restored.revisedOverview); await restored.saveRevision()
+        XCTAssertEqual(data.rows[.aiPlans]?.count, 1); XCTAssertNil(draft.load(user: user.id))
+    }
+    func testExistingPlanReplacementCreatesBeforeArchiveAndFailedCreatePreservesOldPlan() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI()
+        let setup = model(data, ai, store()); await setup.start(for: user); await setup.beginSetup(); setup.questionnaire = answers()
+        ai.responses = [Self.structured(), PlanRefinementTests.overview()]; await setup.generateInitialPlan()
+        data.failCreates = true; await setup.saveRevision()
+        XCTAssertEqual(data.rows[.aiPlans]?.first?.data["status"], .string("active")); XCTAssertEqual(data.rows[.aiPlans]?.count, 1)
+        data.failCreates = false; await setup.saveRevision()
+        XCTAssertEqual(data.rows[.aiPlans]?.count, 2); XCTAssertEqual(data.rows[.aiPlans]?.first?.data["status"], .string("archived"))
+    }
+    func testExpiredQuestionnaireRetainsOnlyBYOTextAndCannotReuseOldPreview() async throws {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), draft = store(); data.rows[.aiPlans] = []
+        try draft.save(PlanSetupDraft(answers: answers(), overview: PlanRefinementTests.overview(), payload: .object([:]), baseID: nil, basePayload: nil, savedAt: Date().addingTimeInterval(-1900)), user: user.id)
+        let vm = model(data, ai, draft); await vm.start(for: user)
+        XCTAssertEqual(vm.questionnaire.byoMealText, answers().byoMealText); XCTAssertEqual(vm.questionnaire.age, ""); XCTAssertNil(vm.revisedOverview)
+    }
+    private func pdf(text: String, pages: Int = 1) -> Data {
+        UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+            for _ in 0..<pages { context.beginPage(); (text as NSString).draw(in: CGRect(x: 30, y: 30, width: 550, height: 700), withAttributes: [.font: UIFont.systemFont(ofSize: 12)]) }
+        }
+    }
+    func testPDFTextCapsAndCorruptFiles() throws {
+        let text = String(repeating: "Synthetic training plan with push ups and gentle mobility every Wednesday. ", count: 8)
+        let extracted = try PlanPDFImport.extract(pdf(text: text)); XCTAssertTrue(extracted.sufficient); XCTAssertTrue(extracted.text.contains("Synthetic training"))
+        XCTAssertThrowsError(try PlanPDFImport.extract(Data("invalid".utf8)))
+        XCTAssertThrowsError(try PlanPDFImport.extract(Data(count: PlanPDFImport.maxBytes + 1)))
+        XCTAssertThrowsError(try PlanPDFImport.extract(pdf(text: text, pages: 31)))
+    }
+    func testScannedPDFNeedsExplicitAIAndImportedTextStaysOnChosenSide() async throws {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), draft = store(); data.rows[.aiPlans] = []
+        let vm = model(data, ai, draft); await vm.start(for: user); vm.questionnaire = answers()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("scan-\(UUID()).pdf")
+        try pdf(text: "").write(to: url); defer { try? FileManager.default.removeItem(at: url) }
+        await vm.importPDF(url, side: .nutrition)
+        XCTAssertTrue(vm.pdfNeedsAI); XCTAssertTrue(ai.textRequests.isEmpty)
+        ai.pdfText = String(repeating: "Synthetic nutrition plan includes oats tofu rice and vegetables with regular meals. ", count: 8)
+        await vm.processPendingPDFWithAI()
+        XCTAssertEqual(ai.textRequests.count, 1); XCTAssertNotNil(ai.textRequests.first?.inputFile)
+        XCTAssertEqual(vm.questionnaire.byoWorkoutText, answers().byoWorkoutText)
+        XCTAssertEqual(vm.questionnaire.byoMealText, ai.pdfText); XCTAssertFalse(vm.pdfNeedsAI)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(draft.load(user: user.id)), as: UTF8.self).contains("base64"))
+    }
+    func testRotatingCadenceSkipsFixedRestWeekdaysAcrossTheWeekend() throws {
+        var structured = try BYOPlan.validated(Self.structured(), sides: ["workout", "nutrition"]).objectValue!
+        var w = structured["workout"]!.objectValue!
+        w["cadence"] = .object(["type": .string("ab"), "advance": .string("training_days_only"), "rest_weekdays": .array([.number(0), .number(6)]),
+            "cycle": .array([.object(["label": .string("A"), "exercises": .array([])]), .object(["label": .string("B"), "exercises": .array([])])])])
+        structured["workout"] = .object(w)
+        let days = try XCTUnwrap(BYOPlan.mapped(PlanRefinementTests.overview(), structured: .object(structured))["weekly_overview"]?["days"]?.recoveryArray)
+        XCTAssertEqual(days[0]["session_title"], .string("A")); XCTAssertEqual(days[5]["session_title"], .string("B")); XCTAssertEqual(days[3]["workout_needed"], .bool(false)); XCTAssertEqual(days[4]["workout_needed"], .bool(false))
+    }
+}
+
+extension PlanImportTests {
+    func testDraftPurgeAndRevokedSessionCannotBeRecreatedByLateStop() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), draft = store(); data.rows[.aiPlans] = []
+        var allowed = true
+        let vm = PlanViewModel(dataService: data, cache: UserScopedCacheStore(), router: AppRouter(), aiService: ai, hasPremiumAccess: { true }, draftStore: draft, canPersistDraft: { _ in allowed })
+        await vm.start(for: user); vm.questionnaire = answers(); XCTAssertNotNil(draft.load(user: user.id))
+        allowed = false; draft.clear(user: user.id); vm.stop()
+        XCTAssertNil(draft.load(user: user.id))
+    }
+    func testBYOScopeAndIncompleteStructureCannotInventAnAcceptedPlan() throws {
+        var a = answers(); a.byoMealText = ""
+        XCTAssertThrowsError(try a.validated())
+        a.byoScope = "training"; XCTAssertNoThrow(try a.validated())
+        a.byoScope = "nutrition"; a.byoMealText = "Three meals"; a.byoWorkoutText = ""; a.equipment = ""
+        XCTAssertThrowsError(try a.validated()) // AI still needs training equipment for the missing side.
+        a.planType = "nutrition"
+        XCTAssertNoThrow(try a.validated())
+        XCTAssertThrowsError(try BYOPlan.validated(.object(["needs_clarification": .bool(false), "structured": .object([:])]), sides: ["workout"]))
+        XCTAssertThrowsError(try BYOPlan.questions(.object(["clarification": .object(["questions": .array([.object(["id": .string("bad"), "side": .string("another-account"), "label": .string("Question"), "options": .array([])])])])]), sides: ["workout"]))
+    }
+    func testAccountChangeDuringStructuringDoesNotPublishOrMakeTheSecondAICall() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(); data.rows[.aiPlans] = []
+        let vm = model(data, ai, store()); await vm.start(for: user); vm.questionnaire = answers()
+        ai.response = Self.structured(); ai.beforeReturn = { vm.stop() }
+        await vm.generateInitialPlan()
+        XCTAssertEqual(ai.requests.count, 1); XCTAssertNil(vm.revisedOverview); XCTAssertEqual(data.creates, 0)
+    }
+}
+
+extension PlanImportTests {
+    func testAccountCachePurgeRemovesTheDurableDraft() async throws {
+        let suite = "DraftPurge.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        let draft = PlanDraftStore(defaults: defaults), cache = UserScopedCacheStore(suiteName: suite)
+        try draft.save(PlanSetupDraft(answers: answers(), overview: nil, payload: nil, baseID: nil, basePayload: nil, savedAt: Date()), user: user.id)
+        await cache.activate(userID: user.id); await cache.purge(userID: user.id)
+        XCTAssertNil(draft.load(user: user.id))
     }
 }

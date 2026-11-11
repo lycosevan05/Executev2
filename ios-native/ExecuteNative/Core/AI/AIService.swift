@@ -6,6 +6,11 @@ struct LLMRequest: Encodable, Sendable {
     let maxOutputTokens: Int?
     let responseJSONSchema: JSONValue?
     let schemaName: String?
+    let inputFile: LLMInputFile?
+    init(prompt: String, fileURLs: [URL], maxOutputTokens: Int?, responseJSONSchema: JSONValue?, schemaName: String?, inputFile: LLMInputFile? = nil) {
+        self.prompt = prompt; self.fileURLs = fileURLs; self.maxOutputTokens = maxOutputTokens
+        self.responseJSONSchema = responseJSONSchema; self.schemaName = schemaName; self.inputFile = inputFile
+    }
 
     enum CodingKeys: String, CodingKey {
         case prompt
@@ -13,7 +18,14 @@ struct LLMRequest: Encodable, Sendable {
         case maxOutputTokens = "max_output_tokens"
         case responseJSONSchema = "response_json_schema"
         case schemaName = "schema_name"
+        case inputFile = "input_file"
     }
+}
+
+struct LLMInputFile: Encodable, Sendable {
+    let filename: String
+    let fileData: String
+    enum CodingKeys: String, CodingKey { case filename; case fileData = "file_data" }
 }
 
 struct LLMTextResponse: Decodable, Sendable {

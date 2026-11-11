@@ -1,26 +1,46 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PlanGenerationView: View {
     @ObservedObject var model: PlanViewModel
     let isPremium: Bool
     @FocusState private var focusedField: String?
+    @State private var importingPDF = false
+    @State private var importSide: PlanImportSide = .workout
+    @State private var confirmAI = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Build your performance plan").font(ExecuteTypography.title(20))
             Text("Tell Execute what you want to achieve. Review your first week before saving.")
                 .foregroundStyle(ExecuteColor.olive)
+            if model.draftRestored { Text("Draft restored on this device.").accessibilityIdentifier("plan.draftRestored") }
             if !isPremium {
                 Text("Personalized plans are included with Execute Premium.")
                 Button("View Premium options") { model.openBilling() }
             } else if model.revisedOverview != nil {
                 PlanOverviewPreview(model: model)
             } else {
-                questionnaire.disabled(model.isRefining || model.isSaving || model.isInitialLoading)
+                questionnaire.disabled(model.isRefining || model.isSaving || model.isImporting || model.isInitialLoading)
+                ForEach(Array(model.byoQuestions.enumerated()), id: \.offset) { _, question in
+                    if let id = question["id"]?.stringValue {
+                        Picker(question["label"]?.stringValue ?? "Clarify your plan", selection: Binding(get: { model.questionnaire.byoClarifications[id] ?? "" }, set: { model.questionnaire.byoClarifications[id] = $0 })) {
+                            Text("Choose").tag("")
+                            ForEach(Array((question["options"]?.recoveryArray ?? []).enumerated()), id: \.offset) { _, option in
+                                Text(option["label"]?.stringValue ?? "").tag(option["label"]?.stringValue ?? "")
+                            }
+                        }
+                    }
+                }
                 Button("Generate plan preview") { Task { await model.generateInitialPlan() } }
                     .buttonStyle(.borderedProminent).tint(ExecuteColor.chartreuseDark)
                     .disabled(!model.canGenerate).accessibilityIdentifier("plan.generate")
             }
+            if model.isImporting { ProgressView("Importing plan…") }
+            if let status = model.importStatus { Text(status).accessibilityIdentifier("plan.importStatus") }
+            if model.pdfNeedsAI { Button("Process PDF with AI") { confirmAI = true }.disabled(model.isImporting) }
+            Button("Discard setup draft") { model.discardSetupDraft() }.disabled(model.isSaving || model.isRefining || model.isImporting)
+            if model.plan != nil { Button("Keep draft and return to plan") { model.closeSetup() }.disabled(model.isSaving || model.isRefining || model.isImporting) }
             if model.isRefining || model.isSaving { ProgressView(model.isSaving ? "Saving plan…" : "Building your first week…") }
             if let error = model.editError { Text(error.message).foregroundStyle(ExecuteColor.destructive).accessibilityIdentifier("plan.generation.error") }
             if let status = model.editStatus { Text(status) }
@@ -30,12 +50,24 @@ struct PlanGenerationView: View {
         .background(ExecuteColor.parchmentLight)
         .clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.cardRadius))
         .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done") { focusedField = nil } } }
+        .fileImporter(isPresented: $importingPDF, allowedContentTypes: [.pdf]) { result in
+            if case .success(let url) = result { Task { await model.importPDF(url, side: importSide) } }
+        }
+        .confirmationDialog("Send this PDF to Execute's AI service to extract its text?", isPresented: $confirmAI, titleVisibility: .visible) {
+            Button("Process with AI") { Task { await model.processPendingPDFWithAI() } }
+            Button("Cancel", role: .cancel) { }
+        }
     }
 
     private var questionnaire: some View {
         VStack(alignment: .leading, spacing: 20) {
             Group {
-                picker("Plan focus", value: $model.questionnaire.planType, options: [("daily_performance", "Complete performance"), ("workout", "Training"), ("nutrition", "Nutrition")])
+                picker("Plan focus", value: $model.questionnaire.planType, options: [("daily_performance", "Complete performance"), ("workout", "Training"), ("nutrition", "Nutrition"), ("custom", "Input your own plan")])
+                if model.questionnaire.planType == "custom" {
+                    picker("Your supplied plan", value: $model.questionnaire.byoScope, options: [("training", "Training"), ("nutrition", "Nutrition"), ("both", "Both")])
+                    if model.questionnaire.byoTargets.contains("workout") { suppliedPlan("Your training plan", text: $model.questionnaire.byoWorkoutText, side: .workout) }
+                    if model.questionnaire.byoTargets.contains("nutrition") { suppliedPlan("Your nutrition plan", text: $model.questionnaire.byoMealText, side: .nutrition) }
+                }
                 picker("Primary goal", value: $model.questionnaire.goal, options: [("feel_better", "Feel better"), ("get_stronger", "Get stronger"), ("build_muscle", "Build muscle"), ("lose_fat", "Lose fat"), ("improve_flexibility", "Improve flexibility"), ("sport_specific", "Sport performance")])
                 picker("Approach", value: $model.questionnaire.optimize, options: [("balanced", "Balanced"), ("consistent", "Consistency"), ("injury_safe", "Low stress"), ("fastest", "Fastest progress")])
                 Text("Starting details").font(.headline)
@@ -45,7 +77,7 @@ struct PlanGenerationView: View {
                 field("Height (cm)", value: $model.questionnaire.heightCm, numeric: true)
                 picker("Current training", value: $model.questionnaire.currentTraining, options: [("never", "Never / rarely"), ("1_2_days", "1–2 days a week"), ("3_4_days", "3–4 days a week"), ("5_plus", "5+ days a week")])
             }
-            if model.questionnaire.planType != "nutrition" {
+            if model.questionnaire.planType != "nutrition" && !model.questionnaire.byoTargets.contains("workout") {
                 Group {
                     Text("Training & recovery").font(.headline)
                     picker("Target training days", value: $model.questionnaire.trainingDays, options: [("2_or_less", "2 or less"), ("3_5", "3–5"), ("5_7", "5–7")])
@@ -72,6 +104,15 @@ struct PlanGenerationView: View {
                 picker("Coaching style", value: $model.questionnaire.coachingStyle, options: [("supportive", "Supportive"), ("direct", "Direct"), ("educational", "Explain the why")])
                 field("Anything else? (optional)", value: $model.questionnaire.additionalNotes)
             }
+        }
+    }
+
+    private func suppliedPlan(_ title: String, text: Binding<String>, side: PlanImportSide) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            TextEditor(text: text).frame(minHeight: 140).accessibilityLabel(title)
+            Text("Paste up to 12,000 characters or import a PDF. Review imported text before generating.").font(.caption)
+            Button("Import \(side == .workout ? "training" : "nutrition") PDF") { importSide = side; importingPDF = true }
         }
     }
 

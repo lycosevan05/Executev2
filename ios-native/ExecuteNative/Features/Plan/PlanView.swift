@@ -1,34 +1,40 @@
 import SwiftUI
 
 struct PlanView: View {
+    var startInSetup = false
     @EnvironmentObject private var environment: AppEnvironment
 
     var body: some View {
-        PlanScreen(environment: environment)
+        PlanScreen(environment: environment, startInSetup: startInSetup)
     }
 }
 
 private struct PlanScreen: View {
     @ObservedObject private var appState: AppState
     @StateObject private var model: PlanViewModel
+    let startInSetup: Bool
+    @Environment(\.scenePhase) private var scenePhase
 
-    init(environment: AppEnvironment) {
+    init(environment: AppEnvironment, startInSetup: Bool) {
+        self.startInSetup = startInSetup
         _appState = ObservedObject(wrappedValue: environment.appState)
         _model = StateObject(wrappedValue: PlanViewModel(
             dataService: environment.dataService,
             cache: environment.cache,
             router: environment.router,
             aiService: environment.aiService,
-            hasPremiumAccess: { environment.appState.premiumState.isPremium }
+            hasPremiumAccess: { environment.appState.premiumState.isPremium },
+            canPersistDraft: { environment.appState.allowsDraftWrites(for: $0) }
         ))
     }
 
     var body: some View {
         PlanDashboardView(model: model, isPremium: appState.premiumState.isPremium)
             .task(id: signedInUser?.id) {
-                if let signedInUser { await model.start(for: signedInUser) }
+                if let signedInUser { await model.start(for: signedInUser); if startInSetup { await model.beginSetup() } }
             }
             .onDisappear { model.stop() }
+            .onChange(of: scenePhase) { phase in if phase != .active { model.persistSetupDraft() } }
     }
 
     private var signedInUser: ExecuteUser? {
@@ -67,10 +73,14 @@ struct PlanDashboardView: View {
 
                 if model.isInitialLoading && model.plan == nil {
                     PlanLoadingState()
+                } else if model.setupPresented {
+                    PlanGenerationView(model: model, isPremium: isPremium)
                 } else if let plan = model.plan {
                     if model.hasInitialPreview { PlanGenerationView(model: model, isPremium: isPremium) }
                     PlanFocusCard(plan: plan, today: model.today, openWorkout: model.openWorkout)
                     PlanSegmentedPicker(selection: $selectedTab)
+                    Button("Set up another plan or resume draft") { Task { await model.beginSetup() } }
+                        .disabled(model.isSaving || model.isRefining).accessibilityIdentifier("plan.setup")
 
                     switch selectedTab {
                     case .week:

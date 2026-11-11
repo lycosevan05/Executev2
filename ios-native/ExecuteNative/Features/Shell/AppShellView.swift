@@ -80,6 +80,8 @@ private struct AppShellContentView: View {
             RecoveryView(initialDate: date, source: source)
         case .billing:
             BillingView()
+        case .onboarding:
+            PlanView(startInSetup: true)
         case .privacy:
             LegalDocumentView(document: .privacy)
         case .terms:
