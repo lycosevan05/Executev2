@@ -76,6 +76,39 @@ struct RecoverySnapshot: Sendable {
     var context: [String: [BackendRow]] = [:]
 }
 
+/// Mirrors ensureDailyLogForDate's planning-only projection; tracked values are never patched.
+enum RecoveryDailyProjection {
+    static func patch(plan: BackendRow?, date: String, existing: BackendRow?) -> JSONValue? {
+        guard let plan,
+              let days = (plan.data["weekly_overview"] ?? plan.data["plan_payload"]?["weekly_overview"])?["days"]?.recoveryArray,
+              let day = days.first(where: { $0["date"]?.stringValue == date }) else { return nil }
+        func item(_ type: String, title: String, description: String) -> JSONValue {
+            .object(["id": .string("\(type):\(date)"), "type": .string(type), "title": .string(title), "description": .string(description), "status": .string("planned")])
+        }
+        let focus = day["recovery_focus"]?.stringValue ?? "Recovery focus"
+        var checklist: [JSONValue] = []
+        if day["workout_needed"]?.boolValue != false {
+            checklist.append(item("workout", title: day["session_title"]?.stringValue ?? "Complete workout", description: day["priority"]?.stringValue ?? "Complete today's workout"))
+        }
+        checklist.append(item("nutrition", title: "Hit nutrition target", description: day["nutrition_focus"]?.stringValue ?? "Stay aligned with your nutrition targets"))
+        checklist.append(item("recovery", title: "Recovery focus", description: focus))
+        let completed = existing?.data["plan_items_completed"]?.recoveryArray ?? []
+        let count = checklist.filter { completed.contains($0["id"] ?? .null) }.count
+        var patch: [String: JSONValue] = [
+            "date": .string(date), "source": .string(RecoverySelection.source(plan) ?? "plan_questionnaire_overview"),
+            "source_plan_id": .string(plan.id.uuidString.lowercased()), "generation_batch_id": plan.data["generation_batch_id"] ?? .string(""),
+            "planned_checklist_items": .array(checklist), "checklist_items": .array(checklist),
+            "planned_recovery_tasks": .array([.object(["id": .string("recovery_\(date)_1"), "type": .string("recovery"), "title": .string(focus), "description": .string(focus), "duration_minutes": .number(10), "status": .string("planned")])]),
+            "checklist_total_count": .number(Double(checklist.count)), "checklist_completed_count": .number(Double(count)),
+            "checklist_adherence_pct": .number(floor(Double(count) / Double(checklist.count) * 100 + 0.5)),
+            "daily_plan_source": .string("deterministic_from_ai_plan")]
+        if existing == nil { patch["plan_items_completed"] = .array([]) }
+        // Avoid a write on every reload when the deterministic projection already matches.
+        if let existing, patch.allSatisfy({ existing.data[$0.key] == $0.value }) { return nil }
+        return .object(patch)
+    }
+}
+
 enum RecoverySelection {
     static func sorted(_ rows: [BackendRow]) -> [BackendRow] {
         rows.sorted {

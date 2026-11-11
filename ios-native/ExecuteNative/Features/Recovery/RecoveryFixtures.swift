@@ -18,6 +18,7 @@ final class RecoveryFixtureRepository: RecoveryRepository {
     var readFailure = false
     var valid = true
     var writes = 0
+    var loseResponseTable: EntityTable?
     var beforeWrite: (() async -> Void)?
     func identity(for user: ExecuteUser) throws -> RecoveryIdentity { RecoveryIdentity(user: user, token: "synthetic-fixture") }
     func validate(_ identity: RecoveryIdentity) throws { if !valid { throw CancellationError() } }
@@ -39,6 +40,7 @@ final class RecoveryFixtureRepository: RecoveryRepository {
         records[table, default: []].removeAll { $0.id == row.id }
         records[table, default: []].append(row)
         writes += 1
+        if loseResponseTable == table { loseResponseTable = nil; throw AppError(title: "Response lost", message: "Fixture committed before disconnecting.") }
         return row
     }
     static func row(_ data: [String: JSONValue], id: UUID = UUID(), user: ExecuteUser? = nil) -> BackendRow {

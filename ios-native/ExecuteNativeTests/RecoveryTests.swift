@@ -416,3 +416,48 @@ final class RecoveryTests: XCTestCase {
         else { XCTFail("New account cache was removed") }
     }
 }
+
+extension RecoveryTests {
+    private func projectionPlan(date: String = "2026-10-31") -> BackendRow {
+        RecoveryFixtureRepository.row(["plan_type": .string("daily"), "status": .string("active"), "source": .string("plan_questionnaire_overview"),
+            "generation_batch_id": .string("projection_fixture"), "weekly_overview": .object(["days": .array([.object([
+                "date": .string(date), "day_type": .string("recovery"), "workout_needed": .bool(false),
+                "session_title": .string("Recovery day"), "recovery_focus": .string("Gentle evening mobility"), "nutrition_focus": .string("Regular meals")])])])])
+    }
+    func testDailyProjectionPreservesTrackedValuesCompletionsAndUpdatesSameRow() async {
+        let repo = RecoveryFixtureRepository(), plan = projectionPlan(), vm = model(repo)
+        let daily = RecoveryFixtureRepository.row(["date": .string("2026-10-31"), "sleep_hours": .number(8), "water_ml": .number(1200),
+            "plan_items_completed": .array([.string("nutrition:2026-10-31"), .string("legacy_meal")])])
+        repo.records[.aiPlans] = [plan]; repo.records[.dailyLogs] = [daily]
+        await vm.load(user: user)
+        XCTAssertTrue(vm.loaded); XCTAssertEqual(vm.tasks.count, 1)
+        XCTAssertEqual(vm.snapshot.dailyLog?.id, daily.id); XCTAssertEqual(repo.records[.dailyLogs]?.count, 1)
+        XCTAssertEqual(vm.snapshot.dailyLog?.data["sleep_hours"], .number(8)); XCTAssertEqual(vm.snapshot.dailyLog?.data["water_ml"], .number(1200))
+        XCTAssertTrue(vm.isCompleted("legacy_meal")); XCTAssertEqual(vm.snapshot.dailyLog?.data["checklist_adherence_pct"], .number(50))
+        await vm.toggleTask("recovery_2026-10-31_1")
+        XCTAssertTrue(vm.isCompleted("recovery_2026-10-31_1")); XCTAssertTrue(vm.isCompleted("legacy_meal"))
+        let writes = repo.writes
+        await vm.load(user: user)
+        XCTAssertTrue(vm.isCompleted("recovery_2026-10-31_1")); XCTAssertEqual(repo.writes, writes)
+        XCTAssertEqual(repo.records[.dailyLogs]?.count, 1)
+    }
+    func testProjectionCreateLostResponseRetryFindsCommittedDailyLog() async {
+        let repo = RecoveryFixtureRepository(), vm = model(repo)
+        repo.records[.aiPlans] = [projectionPlan()]; repo.loseResponseTable = .dailyLogs
+        await vm.load(user: user)
+        XCTAssertFalse(vm.loaded); XCTAssertNotNil(vm.error); XCTAssertEqual(repo.records[.dailyLogs]?.count, 1)
+        await vm.retry(user: user)
+        XCTAssertTrue(vm.loaded); XCTAssertEqual(repo.writes, 1); XCTAssertEqual(repo.records[.dailyLogs]?.count, 1)
+        XCTAssertEqual(vm.tasks.first?["title"], .string("Gentle evening mobility"))
+    }
+    func testProjectionNeverCreatesForAnUnscheduledDateOrStoppedIdentity() async {
+        let repo = RecoveryFixtureRepository(), vm = model(repo)
+        repo.records[.aiPlans] = [projectionPlan(date: "2026-11-01")]
+        await vm.load(user: user)
+        XCTAssertEqual(repo.writes, 0); XCTAssertTrue(vm.tasks.isEmpty)
+        repo.records[.aiPlans] = [projectionPlan()]
+        repo.beforeWrite = { vm.stop(); repo.valid = false }
+        await vm.load(user: user)
+        XCTAssertFalse(vm.loaded); XCTAssertEqual(repo.writes, 0); XCTAssertTrue(vm.tasks.isEmpty)
+    }
+}

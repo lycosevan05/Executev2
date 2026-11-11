@@ -100,8 +100,15 @@ final class RecoveryViewModel: ObservableObject {
             let profiles = try await repository.rows(.userProfiles, fields: [:], identity: identity)
             let nutrition = try await repository.rows(.nutritionProfiles, fields: [:], identity: identity)
             guard current(request, identity) else { return }
+            var selectedDaily = RecoverySelection.canonical(daily, plan: plan)
+            if let patch = RecoveryDailyProjection.patch(plan: plan, date: date, existing: selectedDaily) {
+                selectedDaily = try await repository.write(.dailyLogs, id: selectedDaily?.id, patch: patch, identity: identity)
+                guard current(request, identity) else { return }
+                await changed(identity, request: request)
+                guard current(request, identity) else { return }
+            }
             snapshot = RecoverySnapshot(checkIn: RecoverySelection.sorted(checkIns).first,
-                dailyLog: RecoverySelection.canonical(daily, plan: plan), masterPlan: plan, injuries: injuries,
+                dailyLog: selectedDaily, masterPlan: plan, injuries: injuries,
                 workout: workouts.sorted { ($0.data["completed_at"]?.stringValue ?? "") > ($1.data["completed_at"]?.stringValue ?? "") }.first,
                 userProfile: RecoverySelection.sorted(profiles).first?.data ?? .null,
                 nutritionProfile: RecoverySelection.sorted(nutrition).first?.data ?? .null)
