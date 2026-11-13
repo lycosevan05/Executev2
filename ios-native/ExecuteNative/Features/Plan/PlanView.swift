@@ -378,6 +378,14 @@ private struct PlanAdjustmentsSection: View {
                                     .font(ExecuteTypography.label(14))
                                 Text(day["priority"]?.stringValue ?? "")
                                     .font(ExecuteTypography.body(12))
+                                if let recovery = day["recovery_focus"]?.stringValue {
+                                    Label(recovery, systemImage: "leaf")
+                                        .font(ExecuteTypography.body(12))
+                                }
+                                if let nutrition = day["nutrition_focus"]?.stringValue {
+                                    Label(nutrition, systemImage: "fork.knife")
+                                        .font(ExecuteTypography.body(12))
+                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, ExecuteSpacing.xs)

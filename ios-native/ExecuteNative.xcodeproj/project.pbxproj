@@ -83,6 +83,9 @@
 		E10000000000000000000001 /* PlanGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000002 /* PlanGeneration.swift */; };
 		E20000000000000000000001 /* PlanGenerationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* PlanGenerationView.swift */; };
 		E30000000000000000000001 /* PlanImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000002 /* PlanImport.swift */; };
+		E40000000000000000000001 /* PerformanceDestinations.swift in Sources */ = {isa = PBXBuildFile; fileRef = E40000000000000000000002 /* PerformanceDestinations.swift */; };
+		E50000000000000000000001 /* PerformanceDestinationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50000000000000000000002 /* PerformanceDestinationView.swift */; };
+		E60000000000000000000001 /* PerformanceDestinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E60000000000000000000002 /* PerformanceDestinationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -176,6 +179,9 @@
 		E10000000000000000000002 /* PlanGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanGeneration.swift; sourceTree = "<group>"; };
 		E20000000000000000000002 /* PlanGenerationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanGenerationView.swift; sourceTree = "<group>"; };
 		E30000000000000000000002 /* PlanImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanImport.swift; sourceTree = "<group>"; };
+		E40000000000000000000002 /* PerformanceDestinations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceDestinations.swift; sourceTree = "<group>"; };
+		E50000000000000000000002 /* PerformanceDestinationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceDestinationView.swift; sourceTree = "<group>"; };
+		E60000000000000000000002 /* PerformanceDestinationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceDestinationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -290,6 +296,7 @@
 			isa = PBXGroup;
 			children = (
 				42F30ADD4AE865BF13490528 /* RecoveryTests.swift */,
+				E60000000000000000000002 /* PerformanceDestinationTests.swift */,
 				D10000000000000000000004 /* PlanRefinementTests.swift */,
 				DEAD00000000000000000002 /* RecoveryReadinessCases.json */,
 				A318512948BBB8B2878D0DBD /* JSONBCompatibilityTests.swift */,
@@ -485,6 +492,8 @@
 			children = (
 				86566F576D7100D2FE8DB318 /* PlanView.swift */,
 				6196C67B3E06966564038000 /* PlanViewModel.swift */,
+				E40000000000000000000002 /* PerformanceDestinations.swift */,
+				E50000000000000000000002 /* PerformanceDestinationView.swift */,
 				D10000000000000000000002 /* PlanRefinement.swift */,
 				E20000000000000000000002 /* PlanGenerationView.swift */,
 				E10000000000000000000002 /* PlanGeneration.swift */,
@@ -634,6 +643,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */,
+				E60000000000000000000001 /* PerformanceDestinationTests.swift in Sources */,
 				D10000000000000000000003 /* PlanRefinementTests.swift in Sources */,
 				72B41B9AFF16B3ADF192368A /* JSONBCompatibilityTests.swift in Sources */,
 				FA425AD5183C9FB5C5F5F38B /* StoreKitBillingTests.swift in Sources */,
@@ -679,6 +689,8 @@
 				744088A61AE3AF94A879D623 /* NutritionViewModel.swift in Sources */,
 				7F6BA815C4AD47E4D70769C0 /* PlanView.swift in Sources */,
 				7BAE005FA23C3F4C06AAC384 /* PlanViewModel.swift in Sources */,
+				E40000000000000000000001 /* PerformanceDestinations.swift in Sources */,
+				E50000000000000000000001 /* PerformanceDestinationView.swift in Sources */,
 				D10000000000000000000001 /* PlanRefinement.swift in Sources */,
 				E20000000000000000000001 /* PlanGenerationView.swift in Sources */,
 				E10000000000000000000001 /* PlanGeneration.swift in Sources */,

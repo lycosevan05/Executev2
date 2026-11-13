@@ -387,7 +387,7 @@ final class HomeViewModel: ObservableObject {
                 readiness: readinessValues.first { $0.payload.date == today }?.payload,
                 userProfile: profileRecords.first?.payload,
                 nutritionProfile: nutritionRecords.first?.payload,
-                goals: goalValues.map(\.payload).filter { $0.status != "completed" },
+                goals: goalValues.map(\.payload).filter { $0.status == nil || $0.status == "active" },
                 customChecklistItems: customValues.map { HomeCustomChecklistItem(id: $0.id, label: $0.payload.label, days: $0.payload.days, endsOn: $0.payload.endsOn, isActive: $0.payload.isActive) }.filter { $0.isActive != false }
             )
             await persistDashboard()

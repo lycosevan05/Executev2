@@ -82,6 +82,14 @@ private struct AppShellContentView: View {
             BillingView()
         case .onboarding:
             PlanView(startInSetup: true)
+        case .myWeek:
+            PerformanceDestinationView(destination: .week)
+        case .goals:
+            PerformanceDestinationView(destination: .goals)
+        case .progress(let goalID):
+            PerformanceDestinationView(destination: .progress(goalID))
+        case .insights:
+            PerformanceDestinationView(destination: .insights)
         case .privacy:
             LegalDocumentView(document: .privacy)
         case .terms:
