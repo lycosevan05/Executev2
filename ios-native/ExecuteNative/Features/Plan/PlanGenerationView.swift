@@ -38,7 +38,7 @@ struct PlanGenerationView: View {
             }
             if model.isImporting { ProgressView("Importing plan…") }
             if let status = model.importStatus { Text(status).accessibilityIdentifier("plan.importStatus") }
-            if model.pdfNeedsAI { Button("Process PDF with AI") { confirmAI = true }.disabled(model.isImporting) }
+            if model.pdfNeedsAI && model.revisedOverview == nil { Button("Process PDF with AI") { confirmAI = true }.disabled(model.isImporting || model.isRefining || model.isSaving || !isPremium) }
             Button("Discard setup draft") { model.discardSetupDraft() }.disabled(model.isSaving || model.isRefining || model.isImporting)
             if model.plan != nil { Button("Keep draft and return to plan") { model.closeSetup() }.disabled(model.isSaving || model.isRefining || model.isImporting) }
             if model.isRefining || model.isSaving { ProgressView(model.isSaving ? "Saving plan…" : "Building your first week…") }

@@ -451,6 +451,22 @@ final class PlanImportTests: XCTestCase {
         XCTAssertNotNil(data.rows[.aiPlans]?.first?.data["plan_payload"]?["byo_structured"])
         XCTAssertEqual(data.rows[.aiPlans]?.first?.data["plan_payload"]?["byo_meal_text"], .string(answers().byoMealText))
     }
+    func testBYORemappingReplacesContradictoryDayDescriptionsAndStaleSessions() throws {
+        let dates = ["2026-11-13", "2026-11-14", "2026-11-15"] // Friday, Saturday, Sunday
+        let overview: JSONValue = .object(["weekly_overview": .object(["days": .array(dates.map { date in
+            .object(["date": .string(date), "priority": .string("Train on Monday"),
+                     "recovery_focus": .string("Recover from Monday"), "byo_session": .object(["title": .string("Wrong session")])])
+        })])])
+        let structure = try BYOPlan.validated(Self.structured(), sides: ["workout", "nutrition"])
+        let days = try XCTUnwrap(BYOPlan.mapped(overview, structured: structure)["weekly_overview"]?["days"]?.recoveryArray)
+        XCTAssertEqual(days[0]["priority"], .string("Complete your supplied Supplied push-ups session."))
+        XCTAssertEqual(days[1]["day_type"], .string("rest"))
+        XCTAssertEqual(days[1]["priority"], .string("Rest from your supplied training routine."))
+        XCTAssertNil(days[1]["byo_session"])
+        XCTAssertEqual(days[1]["recovery_focus"], .string("Follow the rest day in your supplied routine."))
+        XCTAssertTrue(days.allSatisfy { $0["priority"]?.stringValue?.contains("Monday") == false && $0["recovery_focus"]?.stringValue?.contains("Monday") == false })
+        XCTAssertEqual(days[1]["nutrition_focus"], .string("Three supplied meals"))
+    }
     func testClarificationDoesNotSilentlyFallBackAndAnswersAreSentOnRetry() async {
         let data = PlanFixtureData(), ai = PlanFixtureAI(); data.rows[.aiPlans] = []
         let vm = model(data, ai, store()); await vm.start(for: user); vm.questionnaire = answers()
@@ -470,7 +486,17 @@ final class PlanImportTests: XCTestCase {
         vm.stop()
         let restored = model(data, ai, draft); await restored.start(for: user)
         XCTAssertTrue(restored.draftRestored); XCTAssertEqual(restored.questionnaire, answers())
-        restored.discardSetupDraft(); XCTAssertNil(draft.load(user: user.id))
+        restored.discardSetupDraft(); restored.stop(); XCTAssertNil(draft.load(user: user.id))
+    }
+    func testDiscardExistingPlanSetupClosesItAndCannotRestoreAfterNavigation() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), draft = store()
+        let vm = model(data, ai, draft); await vm.start(for: user); await vm.beginSetup(); vm.questionnaire = answers()
+        XCTAssertTrue(vm.setupPresented); XCTAssertNotNil(draft.load(user: user.id))
+        vm.discardSetupDraft(); XCTAssertFalse(vm.setupPresented); vm.stop()
+        XCTAssertNil(draft.load(user: user.id))
+        let restored = model(data, ai, draft); await restored.start(for: user)
+        XCTAssertFalse(restored.setupPresented); XCTAssertFalse(restored.draftRestored)
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
     }
     func testPendingPreviewAndLostCreateRetrySurviveRelaunchWithoutDuplicatePlan() async {
         let data = PlanFixtureData(), ai = PlanFixtureAI(), draft = store(); data.rows[.aiPlans] = []
@@ -522,13 +548,30 @@ final class PlanImportTests: XCTestCase {
         XCTAssertEqual(vm.questionnaire.byoMealText, ai.pdfText); XCTAssertFalse(vm.pdfNeedsAI)
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(draft.load(user: user.id)), as: UTF8.self).contains("base64"))
     }
+    func testPendingPDFCannotChangeAnswersAfterPreviewWasGenerated() async throws {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), draft = store(); data.rows[.aiPlans] = []
+        let vm = model(data, ai, draft); await vm.start(for: user); vm.questionnaire = answers()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("scan-\(UUID()).pdf")
+        try pdf(text: "").write(to: url); defer { try? FileManager.default.removeItem(at: url) }
+        await vm.importPDF(url, side: .nutrition)
+        XCTAssertTrue(vm.pdfNeedsAI)
+        ai.responses = [Self.structured(), PlanRefinementTests.overview()]
+        await vm.generateInitialPlan(); XCTAssertNotNil(vm.revisedOverview)
+        ai.pdfText = "Replacement nutrition text"
+        await vm.processPendingPDFWithAI()
+        XCTAssertTrue(ai.textRequests.isEmpty)
+        XCTAssertEqual(vm.questionnaire.byoMealText, answers().byoMealText)
+    }
     func testRotatingCadenceSkipsFixedRestWeekdaysAcrossTheWeekend() throws {
         var structured = try BYOPlan.validated(Self.structured(), sides: ["workout", "nutrition"]).objectValue!
         var w = structured["workout"]!.objectValue!
         w["cadence"] = .object(["type": .string("ab"), "advance": .string("training_days_only"), "rest_weekdays": .array([.number(0), .number(6)]),
             "cycle": .array([.object(["label": .string("A"), "exercises": .array([])]), .object(["label": .string("B"), "exercises": .array([])])])])
         structured["workout"] = .object(w)
-        let days = try XCTUnwrap(BYOPlan.mapped(PlanRefinementTests.overview(), structured: .object(structured))["weekly_overview"]?["days"]?.recoveryArray)
+        // Anchor Wednesday through Tuesday; this regression must not depend on today's weekday.
+        let dates = ["2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15", "2026-11-16", "2026-11-17"]
+        let overview: JSONValue = .object(["weekly_overview": .object(["days": .array(dates.map { .object(["date": .string($0)]) })])])
+        let days = try XCTUnwrap(BYOPlan.mapped(overview, structured: .object(structured))["weekly_overview"]?["days"]?.recoveryArray)
         XCTAssertEqual(days[0]["session_title"], .string("A")); XCTAssertEqual(days[5]["session_title"], .string("B")); XCTAssertEqual(days[3]["workout_needed"], .bool(false)); XCTAssertEqual(days[4]["workout_needed"], .bool(false))
     }
 }

@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "../../functions/_shared/records.ts": "./records_stub.ts"
+  }
+}

@@ -62,6 +62,26 @@ async function fetchOpenAIWithBackoff(
   return lastResponse as Response;
 }
 
+// Validate the opt-in PDF data URL before forwarding it; existing text/image paths are unchanged.
+function pdfInputContent(input: unknown): Array<Record<string, unknown>> {
+  if (input === undefined || input === null) return [];
+  const reject = () => { throw json({ error: 'Use a valid PDF data URL no larger than 8 MB.' }, 400); };
+  if (typeof input !== 'object' || Array.isArray(input)) return reject();
+  const file = input as Record<string, unknown>;
+  if (typeof file.file_data !== 'string') return reject();
+  const prefix = 'data:application/pdf;base64,';
+  if (!file.file_data.startsWith(prefix)) return reject();
+  const encoded = file.file_data.slice(prefix.length);
+  if (!encoded.length || encoded.length > 11184812 || encoded.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return reject();
+  let bytes: string;
+  try { bytes = atob(encoded); } catch { return reject(); }
+  if (bytes.length > 8 * 1024 * 1024 || !bytes.startsWith('%PDF-')) return reject();
+  const filename = typeof file.filename === 'string' && file.filename.toLowerCase().endsWith('.pdf')
+    ? file.filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120) : 'document.pdf';
+  return [{ type: 'input_file', filename, file_data: file.file_data }];
+}
+
 function extractOutputText(response: Record<string, unknown>) {
   if (typeof response.output_text === 'string') return response.output_text;
 
@@ -94,23 +114,9 @@ Deno.serve(async (req) => {
     const model = payload.model || Deno.env.get('OPENAI_MODEL') || 'gpt-4.1-mini';
     const maxOutputTokens = payload.max_output_tokens || payload.max_tokens || 4096;
 
-    // Opt-in PDF document path (BYO "Input your own plan"): the client sends a
-    // base64 data URL after client-side pdfjs extraction proved insufficient.
-    // `input_file` lets OpenAI read the PDF directly. Page/size capping is the
-    // caller's responsibility (extractPdfText) so cost stays bounded.
-    const inputFile = payload.input_file && typeof payload.input_file === 'object'
-      ? payload.input_file
-      : null;
-
     const content = [
       { type: 'input_text', text: prompt },
-      ...(inputFile && inputFile.file_data
-        ? [{
-            type: 'input_file',
-            filename: String(inputFile.filename || 'document.pdf'),
-            file_data: String(inputFile.file_data),
-          }]
-        : []),
+      ...pdfInputContent(payload.input_file),
       ...fileUrls.map((imageUrl: string) => ({
         type: 'input_image',
         image_url: imageUrl,

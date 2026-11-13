@@ -478,11 +478,13 @@ final class PlanViewModel: ObservableObject {
         draftStore.clear(user: user.id)
         restoringDraft = true; questionnaire = PlanQuestionnaireAnswers(); restoringDraft = false
         revisedOverview = nil; pendingPayload = nil; initialPreview = false; draftRestored = false; byoQuestions = []
-        importStatus = nil; pdfNeedsAI = false; pendingPDF = nil
+        importStatus = nil; pdfNeedsAI = false; pendingPDF = nil; editError = nil; editStatus = nil
+        setupPresented = activeRecord == nil
         setupBaseID = activeRecord?.id; setupBasePayload = activeRecord?.payload
     }
     func persistSetupDraft() {
-        guard !restoringDraft, !isInitialLoading, hasStarted, let user, canPersistDraft(user.id), setupPresented || activeRecord == nil || initialPreview else { return }
+        guard !restoringDraft, !isInitialLoading, hasStarted, let user, canPersistDraft(user.id), setupPresented || activeRecord == nil || initialPreview,
+              questionnaire != PlanQuestionnaireAnswers() || initialPreview else { return }
         do {
             try draftStore.save(PlanSetupDraft(answers: questionnaire, overview: initialPreview ? revisedOverview : nil,
                 payload: initialPreview ? pendingPayload : nil, baseID: setupBaseID, basePayload: setupBasePayload, savedAt: Date()), user: user.id)
@@ -525,7 +527,7 @@ final class PlanViewModel: ObservableObject {
         } catch { if request == generation { importStatus = AppError.from(error, title: "PDF import failed").message } }
     }
     func processPendingPDFWithAI() async {
-        guard let (data, side) = pendingPDF, hasPremiumAccess(), !isImporting, let aiService else { return }
+        guard let (data, side) = pendingPDF, hasStarted, user != nil, hasPremiumAccess(), !isImporting, !isSaving, !isRefining, revisedOverview == nil, let aiService else { return }
         let request = generation
         isImporting = true
         defer { if request == generation { isImporting = false } }

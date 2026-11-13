@@ -137,7 +137,17 @@ enum BYOPlan {
                 }
                 day["day_type"] = .string(session == nil ? "rest" : "training"); day["workout_needed"] = .bool(session != nil)
                 day["session_title"] = session?["title"] ?? .string("Recovery day"); day["training_type"] = session?["title"] ?? .string("Recovery")
-                if let session { day["byo_session"] = session }
+                // Remapping weekdays also invalidates model-written training/recovery prose.
+                // Derive it from the supplied session so a rest day cannot instruct a workout.
+                if let session {
+                    day["byo_session"] = session
+                    day["priority"] = .string("Complete your supplied \(session["title"]?.stringValue ?? "training") session.")
+                    day["recovery_focus"] = .string("Recover between your supplied training sessions.")
+                } else {
+                    day.removeValue(forKey: "byo_session")
+                    day["priority"] = .string("Rest from your supplied training routine.")
+                    day["recovery_focus"] = .string("Follow the rest day in your supplied routine.")
+                }
             }
             if let focus = structured["nutrition"]?["daily_focus"]?.recoveryArray, !focus.isEmpty {
                 let f = focus.first { $0["weekday"]?.doubleValue == Double(weekday) } ?? focus[index % focus.count]
