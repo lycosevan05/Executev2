@@ -66,9 +66,13 @@ struct NutritionFoodLog: Codable, Equatable, Sendable {
     let totalFiberG: Double?
     let timeLogged: String?
     let notes: String?
+    var sourceMealPlanID: String? = nil
+    var plannedMealKey: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case date, foods, notes
+        case sourceMealPlanID = "source_meal_plan_id"
+        case plannedMealKey = "planned_meal_key"
         case logMethod = "log_method"
         case mealType = "meal_type"
         case totalCalories = "total_calories"
@@ -238,6 +242,7 @@ struct NutritionSnapshot: Codable, Equatable, Sendable {
     var dailyLog: NutritionDailyLog?
     var mealPlan: NutritionMealPlan?
     var targets: NutritionTargets
+    var mealPlanID: UUID? = nil
 
     static func empty(date: String) -> NutritionSnapshot {
         NutritionSnapshot(
@@ -326,6 +331,17 @@ enum NutritionCalculations {
         return mealPlan.resolvedMeals.reduce(.zero) { totals, entry in
             completedSet.contains(entry.type.lowercased()) ? totals + entry.meal.totals : totals
         }
+    }
+
+    static func intake(logs: [NutritionFoodLogRecord], mealPlan: NutritionMealPlan?, planID: UUID?, completed: [String]) -> NutritionMacroTotals {
+        let linked = logs.filter { record in
+            guard let planID else { return false }
+            return DayPlanLogic.sameID(record.log.sourceMealPlanID, planID)
+        }
+        let linkedIDs = Set(linked.map(\.id))
+        let linkedTypes = Set(linked.compactMap { $0.log.plannedMealKey?.lowercased() })
+        let legacy = completed.filter { !linkedTypes.contains($0.lowercased()) }
+        return foodTotals(linked) + reconcile(foodTotals(logs.filter { !linkedIDs.contains($0.id) }), tickedTotals(mealPlan: mealPlan, completed: legacy))
     }
 
     static func reconcile(_ first: NutritionMacroTotals, _ second: NutritionMacroTotals) -> NutritionMacroTotals {

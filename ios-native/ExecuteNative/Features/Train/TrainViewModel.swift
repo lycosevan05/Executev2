@@ -159,6 +159,7 @@ final class WorkoutSessionViewModel: ObservableObject {
     private var profileWeightKg: Double = 75
     private var hasStarted = false
     private var pendingSave: Task<Void, Never>?
+    private var progressWrite: Task<Void, Never>?
 
     init(route: WorkoutSessionRoute, dataService: EntityDataServicing?, router: AppRouter) {
         self.route = route
@@ -214,6 +215,7 @@ final class WorkoutSessionViewModel: ObservableObject {
             }
             stage = .session
         } catch {
+            exercises = []
             fail(title: "Could not start workout", message: error.localizedDescription)
         }
     }
@@ -286,10 +288,11 @@ final class WorkoutSessionViewModel: ObservableObject {
     func returnToSession() { stage = .session }
 
     func complete(using checkIn: WorkoutSessionCheckIn) async {
-        guard checkIn.isComplete, let dataService, let logID, let user, let workout else { return }
+        guard !isCompleting, checkIn.isComplete, let dataService, let logID, let user, let workout else { return }
         isCompleting = true
         error = nil
         pendingSave?.cancel()
+        await progressWrite?.value
         defer { isCompleting = false }
 
         let now = Date()
@@ -328,7 +331,7 @@ final class WorkoutSessionViewModel: ObservableObject {
             patch["rating"] = .number(Double(Int((Double(checkIn.rpe) / 2).rounded())))
 
             let _: EntityRecord<WorkoutSessionLog> = try await dataService.update(.workoutLogs, id: logID, patch: .object(patch))
-            try? await synchronizeDailyLog(
+            try await synchronizeDailyLog(
                 dataService: dataService,
                 workout: workout,
                 duration: duration,
@@ -352,6 +355,7 @@ final class WorkoutSessionViewModel: ObservableObject {
     func saveAndClose() async {
         pendingSave?.cancel()
         await saveProgress()
+        guard error == nil else { return }
         router.dismissFullScreenRoute()
     }
 
@@ -367,15 +371,22 @@ final class WorkoutSessionViewModel: ObservableObject {
     }
 
     func saveProgress() async {
-        guard let dataService, let logID, stage != .loading, stage != .summary else { return }
-        isSaving = true
-        defer { isSaving = false }
-        do {
-            let patch = try progressPatch(exercisePosition: currentExerciseIndex)
-            let _: EntityRecord<WorkoutSessionLog> = try await dataService.update(.workoutLogs, id: logID, patch: .object(patch))
-        } catch {
-            self.error = AppError.from(error, title: "Progress is not saved")
+        guard !isCompleting, let dataService, let logID, stage != .loading, stage != .summary else { return }
+        let previousWrite = progressWrite
+        let write = Task { @MainActor in
+            await previousWrite?.value
+            self.isSaving = true
+            defer { self.isSaving = false }
+            do {
+                let patch = try self.progressPatch(exercisePosition: self.currentExerciseIndex)
+                let _: EntityRecord<WorkoutSessionLog> = try await dataService.update(.workoutLogs, id: logID, patch: .object(patch))
+                self.error = nil
+            } catch {
+                self.error = AppError.from(error, title: "Progress is not saved")
+            }
         }
+        progressWrite = write
+        await write.value
     }
 
     private func selectWorkout(from plans: [EntityRecord<TrainWorkoutPlan>]) -> EntityRecord<TrainWorkoutPlan>? {
@@ -394,16 +405,14 @@ final class WorkoutSessionViewModel: ObservableObject {
         from logs: [EntityRecord<WorkoutSessionLog>],
         workout: EntityRecord<TrainWorkoutPlan>
     ) -> EntityRecord<WorkoutSessionLog>? {
-        if let requested = route.logID, let exact = logs.first(where: { $0.id == requested }) { return exact }
-        let active = logs.filter { $0.payload.status?.lowercased() == "in_progress" }
-        if let exact = active.first(where: { sameID($0.payload.workoutPlanID, workout.id.uuidString) }) { return exact }
-        if let sourceID = workout.payload.sourcePlanID {
-            let linked = active.filter { sameID($0.payload.sourcePlanID, sourceID) }
-            if let batchID = workout.payload.generationBatchID,
-               let exactBatch = linked.first(where: { $0.payload.generationBatchID == batchID }) { return exactBatch }
-            if let first = linked.first { return first }
+        let active = logs.filter {
+            $0.payload.status?.lowercased() == "in_progress" &&
+            $0.payload.date == (workout.payload.date ?? HomeDate.todayString) &&
+            sameID($0.payload.workoutPlanID, workout.id.uuidString)
         }
-        return active.first { $0.payload.date == (workout.payload.date ?? HomeDate.todayString) }
+        if let requested = route.logID, let exact = active.first(where: { $0.id == requested }) { return exact }
+        if let exact = active.first(where: { sameID($0.payload.workoutPlanID, workout.id.uuidString) }) { return exact }
+        return nil
     }
 
     private func createLog(for workout: EntityRecord<TrainWorkoutPlan>, user: ExecuteUser) async throws {

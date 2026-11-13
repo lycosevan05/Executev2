@@ -72,6 +72,7 @@ struct NutritionDashboardView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var activeSheet: NutritionSheet?
     @State private var pendingDelete: NutritionFoodLogRecord?
+    @State private var pendingEdit: NutritionFoodLogRecord?
 
     var body: some View {
         ScrollView {
@@ -94,7 +95,9 @@ struct NutritionDashboardView: View {
                 if let mealPlan = model.snapshot.mealPlan, !mealPlan.resolvedMeals.isEmpty {
                     NutritionPlanCard(
                         meals: mealPlan.resolvedMeals,
-                        completed: model.snapshot.dailyLog?.mealsCompleted ?? []
+                        completed: model.snapshot.dailyLog?.mealsCompleted ?? [],
+                        isSaving: model.isSaving,
+                        log: { type in Task { await model.logPlannedMeal(type: type) } }
                     )
                 }
 
@@ -111,7 +114,8 @@ struct NutritionDashboardView: View {
                     logs: model.snapshot.foodLogs,
                     deletingIDs: model.deletingIDs,
                     dateLabel: model.dateLabel,
-                    delete: { pendingDelete = $0 }
+                    delete: { pendingDelete = $0 },
+                    edit: { pendingEdit = $0 }
                 )
             }
             .padding(.horizontal, ExecuteHomeStyle.screenInset)
@@ -136,6 +140,7 @@ struct NutritionDashboardView: View {
                 NutritionAIEntrySheet(model: model)
             }
         }
+        .sheet(item: $pendingEdit) { record in NutritionManualEntrySheet(model: model, editing: record) }
         .alert("Delete food entry?", isPresented: deleteAlertBinding, presenting: pendingDelete) { record in
             Button("Delete", role: .destructive) {
                 Task { await model.delete(record) }
@@ -365,8 +370,11 @@ private struct NutritionMacroCard: View {
 private struct NutritionPlanCard: View {
     let meals: [(type: String, meal: NutritionMeal)]
     let completed: [String]
+    let isSaving: Bool
+    let log: (String) -> Void
 
     var body: some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
         HStack(spacing: ExecuteSpacing.sm) {
             Image(systemName: "fork.knife.circle.fill")
                 .font(.system(size: 25, weight: .semibold))
@@ -388,6 +396,18 @@ private struct NutritionPlanCard: View {
                 .padding(.vertical, 5)
                 .background(ExecuteColor.chartreuse.opacity(0.14))
                 .clipShape(Capsule())
+        }
+            ForEach(Array(meals.enumerated()), id: \.offset) { _, entry in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(entry.meal.name ?? entry.type.capitalized).font(ExecuteTypography.label(12))
+                        Text("\(NutritionFormat.whole(entry.meal.totals.calories)) kcal · Estimated").font(ExecuteTypography.caption(9))
+                    }
+                    Spacer()
+                    Button(completed.contains(entry.type) ? "Logged" : "Log \(entry.type)") { log(entry.type) }
+                        .disabled(isSaving || completed.contains(entry.type))
+                }
+            }
         }
         .padding(ExecuteSpacing.md)
         .background(ExecuteColor.parchmentLight)
@@ -487,6 +507,7 @@ private struct NutritionLoggedSection: View {
     let deletingIDs: Set<UUID>
     let dateLabel: String
     let delete: (NutritionFoodLogRecord) -> Void
+    let edit: (NutritionFoodLogRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
@@ -531,7 +552,8 @@ private struct NutritionLoggedSection: View {
                     NutritionFoodRow(
                         record: record,
                         isDeleting: deletingIDs.contains(record.id),
-                        delete: { delete(record) }
+                        delete: { delete(record) },
+                        edit: { edit(record) }
                     )
                 }
             }
@@ -543,6 +565,7 @@ private struct NutritionFoodRow: View {
     let record: NutritionFoodLogRecord
     let isDeleting: Bool
     let delete: () -> Void
+    let edit: () -> Void
 
     var body: some View {
         HStack(spacing: ExecuteSpacing.sm) {
@@ -579,6 +602,9 @@ private struct NutritionFoodRow: View {
                     .font(ExecuteTypography.caption(8))
                     .foregroundStyle(ExecuteColor.mist)
             }
+            Button(action: edit) { Image(systemName: "pencil") }
+                .disabled(isDeleting)
+                .accessibilityLabel("Edit \(record.log.resolvedName)")
             Button(action: delete) {
                 Group {
                     if isDeleting { ProgressView().controlSize(.mini) }
@@ -614,6 +640,19 @@ private struct NutritionManualEntrySheet: View {
     @State private var carbs = ""
     @State private var fats = ""
     @FocusState private var focusedField: Field?
+
+    private let editing: NutritionFoodLogRecord?
+
+    init(model: NutritionViewModel, editing: NutritionFoodLogRecord? = nil) {
+        self.model = model
+        self.editing = editing
+        _name = State(initialValue: editing?.log.resolvedName ?? "")
+        _mealType = State(initialValue: editing?.log.resolvedMealType ?? .snack)
+        _calories = State(initialValue: editing.map { NutritionFormat.whole($0.log.totalCalories ?? 0) } ?? "")
+        _protein = State(initialValue: editing.map { NutritionFormat.whole($0.log.totalProteinG ?? 0) } ?? "")
+        _carbs = State(initialValue: editing.map { NutritionFormat.whole($0.log.totalCarbsG ?? 0) } ?? "")
+        _fats = State(initialValue: editing.map { NutritionFormat.whole($0.log.totalFatsG ?? 0) } ?? "")
+    }
 
     private enum Field { case name, calories, protein, carbs, fats }
 
@@ -653,7 +692,7 @@ private struct NutritionManualEntrySheet: View {
                 .padding(ExecuteSpacing.md)
             }
             .background(ExecuteColor.parchment)
-            .navigationTitle("Add Food Manually")
+            .navigationTitle(editing == nil ? "Add Food Manually" : "Correct Food")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -696,7 +735,10 @@ private struct NutritionManualEntrySheet: View {
 
     private func save() {
         Task {
-            if await model.add(draft) { dismiss() }
+            let saved: Bool
+            if let editing { saved = await model.edit(editing, draft: draft) }
+            else { saved = await model.add(draft) }
+            if saved { dismiss() }
         }
     }
 }

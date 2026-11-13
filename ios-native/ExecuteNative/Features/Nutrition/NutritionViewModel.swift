@@ -152,14 +152,10 @@ final class NutritionViewModel: ObservableObject {
     var isToday: Bool { Calendar.current.isDateInToday(selectedDate) }
 
     var totals: NutritionMacroTotals {
-        let food = NutritionCalculations.foodTotals(snapshot.foodLogs)
-        let logged = NutritionCalculations.reconcile(food, snapshot.dailyLog?.consumedTotals ?? .zero)
-        let completed = snapshot.dailyLog?.mealsCompleted ?? []
-        if snapshot.mealPlan == nil, !completed.isEmpty {
-            return logged
-        }
-        let ticked = NutritionCalculations.tickedTotals(mealPlan: snapshot.mealPlan, completed: completed)
-        return NutritionCalculations.reconcile(logged, ticked)
+        NutritionCalculations.reconcile(
+            NutritionCalculations.intake(logs: snapshot.foodLogs, mealPlan: snapshot.mealPlan, planID: snapshot.mealPlanID, completed: snapshot.dailyLog?.mealsCompleted ?? []),
+            snapshot.dailyLog?.consumedTotals ?? .zero
+        )
     }
 
     var remainingCalories: Double? {
@@ -182,6 +178,7 @@ final class NutritionViewModel: ObservableObject {
     }
 
     func add(_ drafts: [NutritionEntryDraft]) async -> Bool {
+        guard !isSaving, deletingIDs.isEmpty else { return false }
         let payloads = drafts.compactMap { NutritionEntryFactory.payload(from: $0, date: dateString) }
         guard !payloads.isEmpty, payloads.count == drafts.count else {
             error = AppError(
@@ -258,9 +255,12 @@ final class NutritionViewModel: ObservableObject {
     }
 
     func delete(_ record: NutritionFoodLogRecord) async {
-        guard !deletingIDs.contains(record.id) else { return }
+        guard !isSaving, deletingIDs.isEmpty else { return }
         let previous = snapshot
         snapshot.foodLogs.removeAll { $0.id == record.id }
+        if let planID = snapshot.mealPlanID, DayPlanLogic.sameID(record.log.sourceMealPlanID, planID), let key = record.log.plannedMealKey {
+            snapshot.dailyLog?.mealsCompleted?.removeAll { $0.lowercased() == key.lowercased() }
+        }
         applyLocalTotals()
         deletingIDs.insert(record.id)
         error = nil
@@ -281,6 +281,60 @@ final class NutritionViewModel: ObservableObject {
 
         if let mutationID { await cache.confirmOptimisticWrite(mutationID, for: cacheKey) }
         try? await cache.write(snapshot, for: cacheKey, ttl: 300)
+    }
+
+    func logPlannedMeal(type: String) async {
+        guard !isSaving, deletingIDs.isEmpty, let dataService, let user,
+              let planID = snapshot.mealPlanID,
+              let meal = snapshot.mealPlan?.resolvedMeals.first(where: { $0.type == type })?.meal,
+              let mealType = NutritionMealType(rawValue: type) else { return }
+        isSaving = true
+        error = nil
+        defer { isSaving = false }
+        do {
+            let records: [EntityRecord<NutritionFoodLog>] = try await dataService.list(.foodLogs, orderBy: "-created_date", limit: 300)
+            let existing = records.first { $0.payload.date == dateString && DayPlanLogic.sameID($0.payload.sourceMealPlanID, planID) && $0.payload.plannedMealKey == type }
+            if existing == nil {
+                let t = meal.totals
+                guard var payload = NutritionEntryFactory.payload(from: NutritionEntryDraft(name: meal.name ?? mealType.title, mealType: mealType, calories: t.calories, protein: t.protein, carbs: t.carbs, fats: t.fats, method: .manual), date: dateString) else { return }
+                payload.sourceMealPlanID = planID.uuidString.lowercased()
+                payload.plannedMealKey = type
+                let _: EntityRecord<NutritionFoodLog> = try await dataService.create(.foodLogs, payload: payload, user: user)
+            }
+            // Reload acknowledged records. A retry finds an already committed meal
+            // even when its original response was lost, preserving corrections.
+            let saved: [EntityRecord<NutritionFoodLog>] = try await dataService.list(.foodLogs, orderBy: "-created_date", limit: 300)
+            snapshot.foodLogs = saved.filter { $0.payload.date == dateString }.map { NutritionFoodLogRecord(id: $0.id, createdDate: $0.createdDate, log: $0.payload) }
+            if snapshot.dailyLog == nil { applyLocalTotals() }
+            var completed = Set(snapshot.dailyLog?.mealsCompleted ?? [])
+            completed.insert(type)
+            snapshot.dailyLog?.mealsCompleted = completed.sorted()
+            applyLocalTotals()
+            await persistDailyTotalsKeepingSavedFood()
+            try? await cache.write(snapshot, for: cacheKey, ttl: 300)
+        } catch { self.error = AppError.from(error, title: "Meal needs verification. Refresh before retrying") }
+    }
+
+    func edit(_ record: NutritionFoodLogRecord, draft: NutritionEntryDraft) async -> Bool {
+        guard !isSaving, deletingIDs.isEmpty, let dataService,
+              let payload = NutritionEntryFactory.payload(from: draft, date: dateString, time: record.log.timeLogged ?? NutritionDate.timeString(from: .now)) else { return false }
+        isSaving = true
+        error = nil
+        defer { isSaving = false }
+        do {
+            let rows: [EntityRecord<NutritionFoodLog>] = try await dataService.list(.foodLogs, orderBy: "-created_date", limit: 300)
+            guard rows.first(where: { $0.id == record.id })?.payload == record.log else {
+                throw AppError(title: "Food changed", message: "Refresh this entry before correcting it.")
+            }
+            let json = try JSONDecoder.execute.decode(JSONValue.self, from: JSONEncoder.execute.encode(payload))
+            // Optional provenance is absent in this patch, so shallow update retains it.
+            let saved: EntityRecord<NutritionFoodLog> = try await dataService.update(.foodLogs, id: record.id, patch: json)
+            snapshot.foodLogs = rows.filter { $0.payload.date == dateString }.map { $0.id == record.id ? NutritionFoodLogRecord(id: saved.id, createdDate: saved.createdDate, log: saved.payload) : NutritionFoodLogRecord(id: $0.id, createdDate: $0.createdDate, log: $0.payload) }
+            applyLocalTotals()
+            await persistDailyTotalsKeepingSavedFood()
+            try? await cache.write(snapshot, for: cacheKey, ttl: 300)
+            return error == nil
+        } catch { self.error = AppError.from(error, title: "Could not correct food"); return false }
     }
 
     func analyze(_ description: String) async {
@@ -370,7 +424,8 @@ final class NutritionViewModel: ObservableObject {
                     profile: profiles.first?.payload,
                     activePlan: activePlan?.payload,
                     mealPlan: mealPlan?.payload
-                )
+                ),
+                mealPlanID: mealPlan?.id
             )
             try? await cache.write(snapshot, for: cacheKey, ttl: 300)
         } catch {
@@ -423,13 +478,7 @@ final class NutritionViewModel: ObservableObject {
     }
 
     private func reconciledTotalsForWrite(daily: NutritionDailyLog) -> NutritionMacroTotals {
-        let food = NutritionCalculations.foodTotals(snapshot.foodLogs)
-        let completed = daily.mealsCompleted ?? []
-        if snapshot.mealPlan == nil, !completed.isEmpty {
-            return NutritionCalculations.reconcile(food, daily.consumedTotals)
-        }
-        let ticked = NutritionCalculations.tickedTotals(mealPlan: snapshot.mealPlan, completed: completed)
-        return NutritionCalculations.reconcile(food, ticked)
+        NutritionCalculations.intake(logs: snapshot.foodLogs, mealPlan: snapshot.mealPlan, planID: snapshot.mealPlanID, completed: daily.mealsCompleted ?? [])
     }
 
     private func persistDailyTotalsKeepingSavedFood() async {
@@ -453,11 +502,16 @@ final class NutritionViewModel: ObservableObject {
             "calories_consumed": .number(totals.calories),
             "protein_consumed_g": .number(totals.protein),
             "carbs_consumed_g": .number(totals.carbs),
-            "fats_consumed_g": .number(totals.fats)
+            "fats_consumed_g": .number(totals.fats),
+            "meals_completed": .array((daily.mealsCompleted ?? []).map(JSONValue.string))
         ])
 
         do {
             let record: EntityRecord<NutritionDailyLog>
+            if snapshot.dailyLogID == nil {
+                let existing: [EntityRecord<NutritionDailyLog>] = try await dataService.list(.dailyLogs, orderBy: "-updated_date", limit: 100)
+                snapshot.dailyLogID = existing.first { $0.payload.date == dateString }?.id
+            }
             if let dailyLogID = snapshot.dailyLogID {
                 record = try await dataService.update(.dailyLogs, id: dailyLogID, patch: patch)
             } else {

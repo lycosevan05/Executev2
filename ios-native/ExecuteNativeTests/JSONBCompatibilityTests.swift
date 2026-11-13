@@ -47,6 +47,28 @@ final class NutritionLogicTests: XCTestCase {
         XCTAssertEqual(payload.logMethod, "manual")
     }
 
+    func testCorrectedPlannedFoodUsesActualValuesAndKeepsUnrelatedSnack() throws {
+        let planID = UUID()
+        var planned = try XCTUnwrap(NutritionEntryFactory.payload(from: NutritionEntryDraft(name: "Corrected breakfast", mealType: .breakfast, calories: 600, protein: 30, carbs: 80, fats: 15, method: .manual), date: "2026-11-13"))
+        planned.sourceMealPlanID = planID.uuidString
+        planned.plannedMealKey = "breakfast"
+        let snack = try XCTUnwrap(NutritionEntryFactory.payload(from: NutritionEntryDraft(name: "Unrelated snack", mealType: .snack, calories: 100, protein: 5, carbs: 10, fats: 2, method: .manual), date: "2026-11-13"))
+        let mealJSON: JSONValue = .array([.object(["meal_type": .string("breakfast"), "name": .string("Original breakfast"), "calories": .number(700), "protein": .number(40), "carbs": .number(92), "fats": .number(20)])])
+        let plan = NutritionMealPlan(date: "2026-11-13", sourcePlanID: nil, generationBatchID: nil, meals: mealJSON, totalCalories: nil, totalProteinG: nil, totalCarbsG: nil, totalFatsG: nil)
+        let logs = [NutritionFoodLogRecord(id: UUID(), createdDate: nil, log: planned), NutritionFoodLogRecord(id: UUID(), createdDate: nil, log: snack)]
+        let corrected = NutritionCalculations.intake(logs: logs, mealPlan: plan, planID: planID, completed: ["breakfast"])
+        XCTAssertEqual(corrected, NutritionMacroTotals(calories: 700, protein: 35, carbs: 90, fats: 17))
+        let deleted = NutritionCalculations.intake(logs: [logs[1]], mealPlan: plan, planID: planID, completed: [])
+        XCTAssertEqual(deleted, NutritionMacroTotals(calories: 100, protein: 5, carbs: 10, fats: 2))
+    }
+
+    func testPlannedMealSourceSurvivesJSONRoundTrip() throws {
+        var food = try XCTUnwrap(NutritionEntryFactory.payload(from: NutritionEntryDraft(name: "Linked meal", mealType: .lunch, calories: 750, protein: 55, carbs: 80, fats: 24, method: .manual), date: "2026-11-13"))
+        food.sourceMealPlanID = UUID().uuidString
+        food.plannedMealKey = "lunch"
+        XCTAssertEqual(try JSONDecoder.execute.decode(NutritionFoodLog.self, from: JSONEncoder.execute.encode(food)), food)
+    }
+
     func testEmptyOrNutritionlessEntryIsRejected() {
         XCTAssertNil(NutritionEntryFactory.payload(from: .empty, date: "2026-09-04"))
 
@@ -740,4 +762,104 @@ extension StartupStateTests {
         try await state.deleteAccount()
         XCTAssertFalse(state.allowsDraftWrites(for: user.id))
     }
+}
+
+final class WorkoutTimestampCompatibilityTests: XCTestCase {
+    func testLivePostgrestTimestampAndExplicitZonesDecodeToSameInstant() throws {
+        let legacy = try JSONValue.object(["started_at": .string("2026-11-13T21:47:50.537")]).decoded(as: WorkoutSessionLog.self)
+        let utc = try JSONValue.object(["started_at": .string("2026-11-13T21:47:50.537Z")]).decoded(as: WorkoutSessionLog.self)
+        let offset = try JSONValue.object(["started_at": .string("2026-11-13T13:47:50.537-08:00")]).decoded(as: WorkoutSessionLog.self)
+        XCTAssertEqual(legacy.startedAt, utc.startedAt)
+        XCTAssertEqual(offset.startedAt, utc.startedAt)
+        XCTAssertNotNil(legacy.startedAt)
+    }
+
+    func testNewNestedDatesRetainZoneThroughSDKEncoding() throws {
+        let date = Date(timeIntervalSince1970: 1_794_604_070)
+        let payload = WorkoutSessionLog(startedAt: date, timerStartedAt: date)
+        let json = try JSONDecoder.execute.decode(JSONValue.self, from: JSONEncoder.execute.encode(payload))
+        let wire = try PostgrestClient.Configuration.jsonEncoder.encode(json)
+        let roundTrip = try JSONDecoder.execute.decode(WorkoutSessionLog.self, from: wire)
+        XCTAssertEqual(roundTrip.startedAt, date)
+        XCTAssertTrue(try XCTUnwrap(json["started_at"]?.stringValue).hasSuffix("Z"))
+    }
+
+    func testMalformedTimestampIsRejected() {
+        XCTAssertThrowsError(try JSONValue.object(["started_at": .string("yesterday")]).decoded(as: WorkoutSessionLog.self))
+    }
+}
+
+@MainActor
+final class DailyUseWorkflowTests: XCTestCase {
+    let workoutID = UUID(), masterID = UUID()
+    let user = ExecuteUser(id: UUID(), email: "disposable-fixture@example.invalid", displayName: "Fixture")
+
+    private func model(_ data: DailyUseData) -> WorkoutSessionViewModel {
+        WorkoutSessionViewModel(route: WorkoutSessionRoute(workoutID: workoutID, logID: nil, startedAt: nil, sourcePlanID: masterID, generationBatchID: "fixture", weeklyPlanID: nil, isResuming: true), dataService: data, router: AppRouter())
+    }
+    private func setup(_ data: DailyUseData) {
+        data.rows[.workoutPlans] = [DailyUseData.row(.object(["date": .string("2026-11-13"), "name": .string("Synthetic C"), "source_plan_id": .string(masterID.uuidString), "generation_batch_id": .string("fixture"), "exercises": .array([.object(["name": .string("Push-ups"), "sets": .number(3), "reps": .string("10")])])]), id: workoutID)]
+    }
+    func testResumeUsesExactWorkoutAndDateInsteadOfSharedMaster() async throws {
+        let data = DailyUseData(); setup(data)
+        let other = DailyUseData.row(.object(["date": .string("2026-11-12"), "status": .string("in_progress"), "source_plan_id": .string(masterID.uuidString), "generation_batch_id": .string("fixture"), "workout_plan_id": .string(UUID().uuidString)]))
+        data.rows[.workoutLogs] = [other]
+        let session = model(data); await session.start(for: user)
+        XCTAssertNil(session.error)
+        XCTAssertEqual(data.rows[.workoutLogs]?.count, 2)
+        XCTAssertEqual(data.rows[.workoutLogs]?.first?.data, other.data)
+    }
+    func testLostCreateAcknowledgmentRetryReusesOneLog() async {
+        let data = DailyUseData(); setup(data); data.loseCreate = true
+        let session = model(data); await session.start(for: user)
+        XCTAssertNotNil(session.error)
+        XCTAssertTrue(session.exercises.isEmpty)
+        await session.retry()
+        XCTAssertNil(session.error)
+        XCTAssertEqual(data.rows[.workoutLogs]?.count, 1)
+        session.toggleSet(0); await session.saveProgress()
+        XCTAssertEqual(data.rows[.workoutLogs]?.first?.data["sets_completed"], .number(1))
+    }
+    func testDailySyncFailureDoesNotClaimSuccessfulCompletion() async {
+        let data = DailyUseData(); setup(data)
+        let session = model(data); await session.start(for: user)
+        session.toggleSet(0); session.presentCheckIn()
+        data.failDaily = true
+        await session.complete(using: WorkoutSessionCheckIn(exertionLevel: "Moderate", feeling: "Good", pain: "None", performance: "As expected"))
+        XCTAssertEqual(session.stage, .checkIn)
+        XCTAssertNotNil(session.error)
+        XCTAssertNil(session.summary)
+        data.failDaily = false
+        await session.complete(using: WorkoutSessionCheckIn(exertionLevel: "Moderate", feeling: "Good", pain: "None", performance: "As expected"))
+        XCTAssertEqual(session.stage, .summary)
+        XCTAssertEqual(data.rows[.workoutLogs]?.count, 1)
+        XCTAssertEqual(data.rows[.dailyLogs]?.count, 1)
+    }
+}
+
+@MainActor
+private final class DailyUseData: EntityDataServicing {
+    var rows: [EntityTable: [BackendRow]] = [:]
+    var loseCreate = false, failDaily = false
+    static func row(_ data: JSONValue, id: UUID = UUID()) -> BackendRow {
+        BackendRow(id: id, ownerID: nil, ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: .now, updatedDate: .now, data: data)
+    }
+    func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>] {
+        if table == .dailyLogs && failDaily { throw URLError(.notConnectedToInternet) }
+        return try (rows[table] ?? []).prefix(limit).map { try EntityRecord(row: $0) }
+    }
+    func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload> {
+        let row = Self.row(try JSONDecoder.execute.decode(JSONValue.self, from: JSONEncoder.execute.encode(payload)))
+        rows[table, default: []].append(row)
+        if loseCreate { loseCreate = false; throw URLError(.networkConnectionLost) }
+        return try EntityRecord(row: row)
+    }
+    func update<Payload: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<Payload> {
+        let index = try XCTUnwrap(rows[table]?.firstIndex { $0.id == id })
+        var object = rows[table]![index].data.objectValue!
+        object.merge(patch.objectValue!) { _, new in new }
+        let row = Self.row(.object(object), id: id); rows[table]![index] = row
+        return try EntityRecord(row: row)
+    }
+    func delete(_ table: EntityTable, id: UUID) async throws { rows[table]?.removeAll { $0.id == id } }
 }

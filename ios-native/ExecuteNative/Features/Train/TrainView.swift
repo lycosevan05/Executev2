@@ -392,6 +392,7 @@ struct WorkoutSessionView: View {
 }
 
 private struct WorkoutSessionScreen: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var appState: AppState
     @StateObject private var model: WorkoutSessionViewModel
 
@@ -421,6 +422,9 @@ private struct WorkoutSessionScreen: View {
         .preferredColorScheme(.dark)
         .task(id: signedInUser?.id) {
             if let signedInUser { await model.start(for: signedInUser) }
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase != .active { Task { await model.saveProgress() } }
         }
     }
 

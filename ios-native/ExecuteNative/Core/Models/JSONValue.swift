@@ -48,7 +48,19 @@ enum JSONValue: Codable, Equatable, Sendable {
 extension JSONDecoder {
     static let execute: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let value = try decoder.singleValueContainer().decode(String.self)
+            // PostgREST's default encoder historically wrote UTC payload dates
+            // without a zone, including fractional seconds. Keep those rows readable.
+            let normalized = value.range(of: #"[zZ]|[+-]\d{2}:?\d{2}$"#, options: .regularExpression) == nil
+                ? value + "Z" : value
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = fractional.date(from: normalized) ?? ISO8601DateFormatter().date(from: normalized) {
+                return date
+            }
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid ISO8601 timestamp"))
+        }
         return decoder
     }()
 }

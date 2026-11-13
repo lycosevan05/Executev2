@@ -114,7 +114,9 @@ final class SupabaseDataService: EntityDataServicing {
             ownerEmail: user.email,
             createdBy: user.email,
             userEmail: user.email,
-            data: payload,
+            // Encode nested dates consistently with patch_record payloads rather
+            // than inheriting the SDK's zone-less database date representation.
+            data: try JSONDecoder.execute.decode(JSONValue.self, from: JSONEncoder.execute.encode(payload)),
             createdDate: now,
             updatedDate: now
         )

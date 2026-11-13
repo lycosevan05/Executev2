@@ -53,6 +53,12 @@ The foundation includes typed auth, generic entity CRUD, `patch_record`, Edge Fu
 
 The existing Capacitor behavior remains the reference contract while each vertical slice is migrated.
 
+### Daily-use acceptance checkpoint
+
+Native planned-meal logging and same-record food correction are implemented. Source links distinguish actual intake from planned estimates and avoid counting a linked meal twice. Workout persistence accepts historical SDK timestamps and writes new payload dates with explicit UTC zones; exact-workout/date resume and visible DailyLog synchronization errors replace loose parent-plan matching and silent completion errors.
+
+The November13 daily-use run independently verified the saved QA baseline and one in-progress workout with two saved sets after full termination. Full relaunch/resume, completion, planned meal logging/correction/deletion, cross-screen consistency and physical-device acceptance remain pending. The generated workout duration45minutes differs from the supplied approximately30minutes and remains recorded for follow-up. These implementation changes do not establish complete migration acceptance.
+
 ### On-demand daily plans
 
 Home build actions, Train, Nutrition and My Week open the date-specific workout/meal builder. Opening a destination reads saved data; **Generate preview** uses the existing authenticated `invoke-llm` boundary. **Save** creates only the requested daily child plan, preserving the master plan and tracked/completed data. Rest days do not offer workout generation. Existing usable children must belong to the active master; archived, incomplete or other-master rows cannot shadow the current day.
