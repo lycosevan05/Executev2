@@ -106,7 +106,8 @@ private struct PerformanceScreen: View {
                 ExecuteSecondaryButton(title: "Recovery and daily tasks") {
                     router.navigate(to: .recovery(date: Self.date(resolvedDate), source: "my_week"))
                 }
-                ExecuteSecondaryButton(title: "Open training") { router.select(.workouts) }
+                ExecuteSecondaryButton(title: "Open workout for this day") { router.navigate(to: .dayPlan(kind: .workout, date: resolvedDate)) }
+                ExecuteSecondaryButton(title: "Build or view meals for this day") { router.navigate(to: .dayPlan(kind: .meals, date: resolvedDate)) }
                 ExecuteSecondaryButton(title: "Log food for this day") { router.navigate(to: .logFood(date: Self.date(resolvedDate))) }
                 let daily = PerformanceCalculations.canonical(model.dailyLogs)[resolvedDate]
                 if case .array(let tasks) = daily?["planned_checklist_items"], !tasks.isEmpty {

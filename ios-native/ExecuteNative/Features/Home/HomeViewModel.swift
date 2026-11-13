@@ -203,6 +203,10 @@ final class HomeViewModel: ObservableObject {
     }
 
     func toggleChecklistItem(_ item: HomeChecklistItem) async {
+        if item.source == "placeholder", ["workout", "nutrition"].contains(item.type) {
+            router.navigate(to: .dayPlan(kind: item.type == "workout" ? .workout : .meals, date: HomeDate.todayString))
+            return
+        }
         var updated = checklistItems
         guard let index = updated.firstIndex(where: { $0.id == item.id }) else { return }
         updated[index].completed.toggle()
@@ -339,8 +343,14 @@ final class HomeViewModel: ObservableObject {
     }
 
     func openPlan() { router.select(.plan) }
-    func openWorkout() { router.select(.workouts) }
-    func openNutrition() { router.select(.nutrition) }
+    func openWorkout() {
+        if snapshot.workoutPlan == nil { router.navigate(to: .dayPlan(kind: .workout, date: HomeDate.todayString)) }
+        else { router.select(.workouts) }
+    }
+    func openNutrition() {
+        if snapshot.mealPlan == nil { router.navigate(to: .dayPlan(kind: .meals, date: HomeDate.todayString)) }
+        else { router.select(.nutrition) }
+    }
     func openLogFood() { router.navigate(to: .logFood(date: Date())) }
     func openRecovery() { router.navigate(to: .recovery(date: Date(), source: "home")) }
     func openProgress() { router.navigate(to: .progress(goalID: nil)) }
@@ -483,10 +493,8 @@ final class HomeViewModel: ObservableObject {
     }
 
     private func selectActivePlan(_ records: [EntityRecord<HomeAIPlan>]) -> EntityRecord<HomeAIPlan>? {
-        let active = records.filter { $0.payload.planType == "daily" && $0.payload.status == "active" }
-        return active.first { $0.payload.source == "plan_questionnaire_overview" }
-            ?? active.first { $0.payload.source == "plan_questionnaire_initial" }
-            ?? active.first
+        records.filter { $0.payload.planType == "daily" && $0.payload.status == "active" }
+            .max { ($0.createdDate ?? .distantPast) < ($1.createdDate ?? .distantPast) }
     }
 
     private func selectLinked<Payload>(
@@ -495,11 +503,11 @@ final class HomeViewModel: ObservableObject {
         activePlan: EntityRecord<HomeAIPlan>?,
         plannedID: String?
     ) -> EntityRecord<Payload>? where Payload: HomeDatedPlanPayload {
-        let onDate = records.filter { $0.payload.date == date }
-        if let plannedID, let planned = onDate.first(where: { $0.id.uuidString == plannedID }) { return planned }
-        guard let activePlan else { return onDate.first }
-        return onDate.first { $0.payload.sourcePlanID == activePlan.id.uuidString && $0.payload.generationBatchID == activePlan.payload.generationBatchID }
-            ?? onDate.first { $0.payload.sourcePlanID == activePlan.id.uuidString }
+        guard let activePlan else { return nil }
+        let kind: DayPlanKind = Payload.self == HomeWorkoutPlan.self ? .workout : .meals
+        let onDate = records.filter { $0.payload.date == date && $0.metadata.data["status"] != .string("archived") && DayPlanLogic.sameID($0.payload.sourcePlanID, activePlan.id) && DayPlanLogic.usable($0.metadata.data, kind: kind) }
+        if let plannedID, let planned = onDate.first(where: { DayPlanLogic.sameID(plannedID, $0.id) }) { return planned }
+        return onDate.first { $0.payload.generationBatchID == activePlan.payload.generationBatchID }
             ?? onDate.first
     }
 

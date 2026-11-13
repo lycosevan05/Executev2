@@ -58,6 +58,7 @@ enum AppRoute: Hashable, Sendable {
     case profile(section: String?)
     case billing
     case onboarding
+    case dayPlan(kind: DayPlanKind, date: String)
     case privacy
     case terms
     case workoutSession(WorkoutSessionRoute)

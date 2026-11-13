@@ -13,6 +13,8 @@ final class TrainViewModel: ObservableObject {
     private let router: AppRouter
     private var user: ExecuteUser?
     private var hasStarted = false
+    private var activePlanID: UUID?
+    private var generation = UUID()
 
     init(dataService: EntityDataServicing?, router: AppRouter) {
         self.dataService = dataService
@@ -40,16 +42,18 @@ final class TrainViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
+        generation = UUID(); activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = []; isInitialLoading = true
         self.user = user
         hasStarted = true
         await reload()
     }
 
-    func stop() { hasStarted = false }
+    func stop() { hasStarted = false; generation = UUID(); user = nil; activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = [] }
 
     func refresh() async { await reload(isRefresh: true) }
 
     func openPlan() { router.select(.plan) }
+    func openDay(_ date: String = HomeDate.todayString) { router.navigate(to: .dayPlan(kind: .workout, date: date)) }
 
     func startWorkout(_ record: EntityRecord<TrainWorkoutPlan>) {
         router.navigate(to: .workoutSession(WorkoutSessionRoute(
@@ -77,12 +81,11 @@ final class TrainViewModel: ObservableObject {
 
     func workout(for day: HomeOverviewDay) -> EntityRecord<TrainWorkoutPlan>? {
         guard let date = day.date else { return nil }
-        let dated = workoutPlans.filter { $0.payload.date == date && $0.payload.status?.lowercased() != "archived" }
+        guard let activePlanID else { return nil }
+        let dated = workoutPlans.filter { $0.payload.date == date && $0.payload.status?.lowercased() != "archived" && DayPlanLogic.sameID($0.payload.sourcePlanID, activePlanID) && !($0.payload.exercises ?? []).isEmpty }
+            .sorted { ($0.updatedDate ?? $0.createdDate ?? .distantPast) > ($1.updatedDate ?? $1.createdDate ?? .distantPast) }
         if let batchID = activePlan?.generationBatchID {
             return dated.first { $0.payload.generationBatchID == batchID } ?? dated.first
-        }
-        if let activeSource = activePlan?.source {
-            return dated.first { $0.payload.source == activeSource } ?? dated.first
         }
         return dated.first
     }
@@ -94,32 +97,31 @@ final class TrainViewModel: ObservableObject {
         }
 
         if isRefresh { isRefreshing = true }
+        let request = generation
         error = nil
         defer {
-            isInitialLoading = false
-            isRefreshing = false
+            if request == generation { isInitialLoading = false; isRefreshing = false }
         }
 
         do {
             // EntityDataServicing is main-actor isolated; keep these reads on the
             // actor rather than sending the service through child tasks.
-            let planRecords: [EntityRecord<HomeAIPlan>] = try await dataService.list(.aiPlans, orderBy: "-updated_date", limit: 50)
-            let workoutRecords: [EntityRecord<TrainWorkoutPlan>] = try await dataService.list(.workoutPlans, orderBy: "-updated_date", limit: 100)
+            let planRecords: [EntityRecord<HomeAIPlan>] = try await dataService.listAll(.aiPlans, isCurrent: { request == self.generation })
+            let workoutRecords: [EntityRecord<TrainWorkoutPlan>] = try await dataService.listAll(.workoutPlans, isCurrent: { request == self.generation })
             let logRecords: [EntityRecord<TrainWorkoutLog>] = try await dataService.list(.workoutLogs, orderBy: "-updated_date", limit: 50)
+            guard request == generation, !Task.isCancelled else { return }
+            activePlanID = selectActivePlan(planRecords)?.id
             activePlan = selectActivePlan(planRecords)?.payload
             workoutPlans = workoutRecords
             workoutHistory = logRecords.filter { $0.payload.status?.lowercased() == "completed" || $0.payload.completedAt != nil }
         } catch {
-            if activePlan == nil { self.error = AppError.from(error, title: "Could not load training") }
+            if request == generation { self.error = AppError.from(error, title: "Could not load training") }
         }
     }
 
     private func selectActivePlan(_ records: [EntityRecord<HomeAIPlan>]) -> EntityRecord<HomeAIPlan>? {
-        let daily = records.filter { $0.payload.planType?.lowercased() == "daily" }
-        return daily.first { $0.payload.status?.lowercased() == "active" }
-            ?? records.first { $0.payload.status?.lowercased() == "active" }
-            ?? daily.first
-            ?? records.first
+        records.filter { $0.payload.planType == "daily" && $0.payload.status == "active" }
+            .max { ($0.createdDate ?? .distantPast) < ($1.createdDate ?? .distantPast) }
     }
 }
 

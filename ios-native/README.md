@@ -46,12 +46,20 @@ The foundation includes typed auth, generic entity CRUD, `patch_record`, Edge Fu
 - Home is implemented as a native dashboard.
 - Track is implemented as a native daily-vitals flow, including optimistic Supabase writes, realtime refresh, user-scoped caching, configurable metrics, and 30-day history.
 - Nutrition and Log Food are implemented for date-based summaries, manual entries, secure AI text estimates, deletion, optimistic Supabase writes, realtime refresh, and delete-safe reconciliation with completed planned meals.
-- Train and Plan have native read-only dashboards backed by existing plan and workout data.
+- Plan supports questionnaire/BYO setup, PDF import, durable previews and refinement. Train supports saved workout sessions and on-demand single-date generation; Nutrition supports on-demand daily meal plans. Generation is explicit, previews are reviewed before Save, and saved daily plans are reused. My Week, Goals, Progress and Insights have native destinations; automatic goal tracking and richer Insights parity remain open.
 - Profile and Settings include display-name and unit preferences, subscription status, legal content, sign out, and permanent account deletion.
 - Billing is implemented from Profile and Nutrition: localized monthly/annual offerings, purchase, restore, App Store subscription management, legal disclosures, and shared premium gates. Account switches and stale responses are isolated by session; backend subscription records are read-only.
 - Nutrition camera/barcode capture, full meal-plan editing, and storage upload call sites are still deferred.
 
 The existing Capacitor behavior remains the reference contract while each vertical slice is migrated.
+
+### On-demand daily plans
+
+Home build actions, Train, Nutrition and My Week open the date-specific workout/meal builder. Opening a destination reads saved data; **Generate preview** uses the existing authenticated `invoke-llm` boundary. **Save** creates only the requested daily child plan, preserving the master plan and tracked/completed data. Rest days do not offer workout generation. Existing usable children must belong to the active master; archived, incomplete or other-master rows cannot shadow the current day.
+
+BYO workouts retain the supplied exercise count/order/names/sets/reps; daily meal names and structure remain authoritative. Missing details are filled from current profiles/restrictions, readiness and the selected date. Manual nutrition targets override plan targets. Meal totals are computed from model-provided per-meal estimates and checked against targets; ingredients are not independently nutrient-calibrated. One validation correction is allowed, while network errors and clarification requests stop. Preview/save attempts persist locally per account/date/type under the deletion-purge prefix, use stable tokens, and revalidate the current plan/context before a new write. New saves require a preview no older than30minutes; acknowledged retry reconciliation remains available. Client checks do not supply server-enforced cross-device uniqueness.
+
+Scoped simulator acceptance is recorded in `docs/DECISIONS.md` and the Execute Document. It does not establish independent SQL/count verification, billing-provider acceptance, real account deletion, physical-device or release parity. Camera/barcode, meal editing and storage call sites remain separate work.
 
 ## RevenueCat development setup
 

@@ -120,7 +120,7 @@ struct TrainDashboardView: View {
         } else if let day = model.today, let workout = model.workout(for: day) {
             TrainWorkoutCard(record: workout) { model.startWorkout(workout) }
         } else {
-            TrainNeedsBuildCard(day: model.today, openPlan: model.openPlan)
+            TrainNeedsBuildCard(day: model.today, openPlan: { model.openDay() })
         }
 
         if let summary = model.activePlan?.resolvedPlanSummary?.primaryGoal {
@@ -135,6 +135,9 @@ struct TrainDashboardView: View {
         } else {
             ForEach(Array(model.upcomingDays.enumerated()), id: \.offset) { index, day in
                 TrainSplitRow(day: day, index: index, workout: model.workout(for: day))
+                if let date = day.date, !HomeCalculations.isRestDay(day) {
+                    Button("Open workout for \(date)") { model.openDay(date) }
+                }
             }
         }
     }
@@ -321,7 +324,7 @@ private struct TrainNeedsBuildCard: View {
     let day: HomeOverviewDay?
     let openPlan: () -> Void
     var body: some View {
-        TrainContextCard(title: day?.priority ?? "Today's workout is ready to build", text: "Your native Train dashboard is connected to the weekly plan. Workout generation and session logging are the next training slice.", symbol: "sparkles", actionTitle: "Review plan", action: openPlan)
+        TrainContextCard(title: day?.priority ?? "Today's workout is ready to build", text: "Build one session from your performance plan. Review its exercises before saving.", symbol: "sparkles", actionTitle: "Build workout", action: openPlan)
     }
 }
 

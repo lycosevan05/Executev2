@@ -327,6 +327,7 @@ final class NutritionViewModel: ObservableObject {
     func clearAIEstimate() { aiEstimate = nil }
     func clearError() { error = nil }
     func openBilling() { router.navigate(to: .billing) }
+    func openMealPlan() { router.navigate(to: .dayPlan(kind: .meals, date: dateString)) }
 
     private var cacheKey: CacheKey { CacheKey("nutrition", dateString) }
 
@@ -471,10 +472,8 @@ final class NutritionViewModel: ObservableObject {
     }
 
     private func selectActivePlan(_ records: [EntityRecord<HomeAIPlan>]) -> EntityRecord<HomeAIPlan>? {
-        let active = records.filter { $0.payload.planType == "daily" && $0.payload.status == "active" }
-        return active.first { $0.payload.source == "plan_questionnaire_overview" }
-            ?? active.first { $0.payload.source == "plan_questionnaire_initial" }
-            ?? active.first
+        records.filter { $0.payload.planType == "daily" && $0.payload.status == "active" }
+            .max { ($0.createdDate ?? .distantPast) < ($1.createdDate ?? .distantPast) }
     }
 
     private func selectDailyLog(
@@ -485,8 +484,7 @@ final class NutritionViewModel: ObservableObject {
         let onDate = records.filter { $0.payload.date == date }
         guard let activePlan else { return onDate.first }
         return onDate.first {
-            $0.payload.sourcePlanID == activePlan.id.uuidString
-                && $0.payload.generationBatchID == activePlan.payload.generationBatchID
+            DayPlanLogic.sameID($0.payload.sourcePlanID, activePlan.id) && $0.payload.generationBatchID == activePlan.payload.generationBatchID
         } ?? onDate.first { $0.payload.sourcePlanID == activePlan.id.uuidString }
             ?? onDate.first
     }
@@ -496,11 +494,10 @@ final class NutritionViewModel: ObservableObject {
         date: String,
         activePlan: EntityRecord<HomeAIPlan>?
     ) -> EntityRecord<NutritionMealPlan>? {
-        let onDate = records.filter { $0.payload.date == date }
-        guard let activePlan else { return onDate.first }
+        guard let activePlan else { return nil }
+        let onDate = records.filter { $0.payload.date == date && $0.metadata.data["status"] != .string("archived") && DayPlanLogic.sameID($0.payload.sourcePlanID, activePlan.id) && !$0.payload.resolvedMeals.isEmpty }
         return onDate.first {
-            $0.payload.sourcePlanID == activePlan.id.uuidString
-                && $0.payload.generationBatchID == activePlan.payload.generationBatchID
+            $0.payload.generationBatchID == activePlan.payload.generationBatchID
         } ?? onDate.first { $0.payload.sourcePlanID == activePlan.id.uuidString }
             ?? onDate.first
     }

@@ -87,6 +87,10 @@ struct NutritionDashboardView: View {
 
                 NutritionSummaryCard(model: model)
 
+                ExecuteSecondaryButton(title: model.snapshot.mealPlan == nil ? "Build meals for this day" : "View meal plan details") {
+                    model.openMealPlan()
+                }
+
                 if let mealPlan = model.snapshot.mealPlan, !mealPlan.resolvedMeals.isEmpty {
                     NutritionPlanCard(
                         meals: mealPlan.resolvedMeals,

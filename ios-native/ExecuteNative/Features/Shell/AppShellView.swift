@@ -84,6 +84,8 @@ private struct AppShellContentView: View {
             PlanView(startInSetup: true)
         case .myWeek:
             PerformanceDestinationView(destination: .week)
+        case .dayPlan(let kind, let date):
+            DayPlanView(kind: kind, date: date)
         case .goals:
             PerformanceDestinationView(destination: .goals)
         case .progress(let goalID):
