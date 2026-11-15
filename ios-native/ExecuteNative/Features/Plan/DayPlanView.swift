@@ -11,12 +11,15 @@ private struct DayPlanScreen: View {
     @ObservedObject private var appState: AppState
     @StateObject private var model: DayPlanViewModel
     private let router: AppRouter
+    private let editEnvironment: AppEnvironment
+    @State private var editingMeal: MealPlanEditSelection?
 
     init(kind: DayPlanKind, date: String, environment: AppEnvironment) {
         _appState = ObservedObject(wrappedValue: environment.appState)
         _model = StateObject(wrappedValue: DayPlanViewModel(kind: kind, date: date, data: environment.dataService, ai: environment.aiService,
             cache: environment.cache, premium: { environment.appState.premiumState.isPremium }, canWrite: { environment.appState.allowsDraftWrites(for: $0) }))
         router = environment.router
+        editEnvironment = environment
     }
 
     var body: some View {
@@ -70,6 +73,9 @@ private struct DayPlanScreen: View {
                 .accessibilityLabel("Refresh daily plan")
         } }
         .task(id: signedInUser?.id) { if let user = signedInUser { await model.start(for: user) } else { model.stop() } }
+        .sheet(item: $editingMeal) { selection in
+            MealPlanEditorSheet(selection: selection, environment: editEnvironment) { Task { await model.refresh() } }
+        }
         .onDisappear { model.stop() }
         .executeScreen()
     }
@@ -117,6 +123,10 @@ private struct DayPlanScreen: View {
                 if let instructions = meal["instructions"]?.stringValue { Text(instructions) }
                 if let prep = meal["prep_time_minutes"]?.doubleValue { Text("Prep: \(prep.formatted()) minutes").font(ExecuteTypography.caption(12)) }
                 if let notes = meal["notes"]?.stringValue, !notes.isEmpty { Text(notes) }
+                if model.preview == nil, let saved = model.saved, let type = meal["meal_type"]?.stringValue {
+                    Button("Edit planned \(type)") { editingMeal = MealPlanEditSelection(planID: saved.id, date: model.date, type: type.lowercased()) }
+                        .accessibilityIdentifier("meal-plan.edit.\(type)")
+                }
             }
         }
         if let items = payload["grocery_items"]?.recoveryArray, !items.isEmpty {
