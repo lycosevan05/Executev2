@@ -13,6 +13,7 @@ private struct DayPlanScreen: View {
     private let router: AppRouter
     private let editEnvironment: AppEnvironment
     @State private var editingMeal: MealPlanEditSelection?
+    @State private var cookbookMeal: CookbookMealSource?
 
     init(kind: DayPlanKind, date: String, environment: AppEnvironment) {
         _appState = ObservedObject(wrappedValue: environment.appState)
@@ -76,6 +77,7 @@ private struct DayPlanScreen: View {
         .sheet(item: $editingMeal) { selection in
             MealPlanEditorSheet(selection: selection, environment: editEnvironment) { Task { await model.refresh() } }
         }
+        .sheet(item: $cookbookMeal) { source in RecipeLibrarySheet(environment: editEnvironment, initialMeal: source) }
         .onDisappear { model.stop() }
         .executeScreen()
     }
@@ -126,6 +128,13 @@ private struct DayPlanScreen: View {
                 if model.preview == nil, let saved = model.saved, let type = (meal["meal_type"] ?? meal["type"])?.stringValue {
                     Button("Edit planned \(type)") { editingMeal = MealPlanEditSelection(planID: saved.id, date: model.date, type: type.lowercased()) }
                         .accessibilityIdentifier("meal-plan.edit.\(type)")
+                    if let masterID = saved.payload["source_plan_id"]?.stringValue.flatMap(UUID.init(uuidString:)),
+                       let original = try? MealPlanEditing.items(saved.payload).first(where: { $0.0 == type.lowercased() })?.1 {
+                        Button("Save \(type.lowercased()) to cookbook") {
+                            cookbookMeal = CookbookMealSource(planID: saved.id, masterID: masterID, date: model.date, type: type.lowercased(),
+                                batch: saved.payload["generation_batch_id"], meal: original)
+                        }.accessibilityIdentifier("meal-plan.cookbook.\(type)")
+                    }
                 }
             }
         }

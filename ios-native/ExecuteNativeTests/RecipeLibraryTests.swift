@@ -12,6 +12,7 @@ import XCTest
         return d
     }
     private func expect(_ actual: Bool, _ expected: Bool, file: StaticString = #filePath, line: UInt = #line) { XCTAssertEqual(actual, expected, file: file, line: line) }
+    private func expectNil<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) { XCTAssertNil(value, file: file, line: line) }
     func testOptionalTypedLegacyFieldsAndUnsupportedStructures() throws {
         let legacy = try JSONValue.object(["name": .string("Legacy")]).decoded(as: SavedRecipePayload.self)
         XCTAssertEqual(legacy.name, "Legacy"); XCTAssertNil(legacy.calories)
@@ -124,6 +125,91 @@ import XCTest
         let corrupt = model(data, defaults: defaults); await corrupt.start(user: user); XCTAssertTrue(corrupt.hasAttempt)
         expect(await corrupt.save(try draft(), original: nil), false); corrupt.discardRetry(); XCTAssertFalse(corrupt.hasAttempt)
     }
+    private func sourceData() throws -> (RecipeData, CookbookMealSource) {
+        let data = RecipeData(), masterID = UUID(), planID = UUID()
+        var meal = try draft().patch().objectValue!; meal["type"] = meal.removeValue(forKey: "meal_type")
+        meal["fat"] = meal.removeValue(forKey: "fats"); meal["prep_time_minutes"] = meal.removeValue(forKey: "prep_time_min")
+        meal["custom_meal"] = .string("retained source snapshot")
+        let source = CookbookMealSource(planID: planID, masterID: masterID, date: "2026-11-15", type: "breakfast", batch: .string("batch"), meal: .object(meal))
+        data.sourceRows[.aiPlans] = [data.identified(masterID, fields: ["status": .string("active"), "plan_type": .string("daily")])]
+        let meals = [source.meal] + ["lunch", "dinner"].map { type -> JSONValue in
+            var other = meal; other["type"] = .string(type); return .object(other)
+        }
+        data.sourceRows[.mealPlans] = [data.identified(planID, fields: ["source_plan_id": .string(masterID.uuidString), "date": .string(source.date), "generation_batch_id": source.batch!, "meals": .array(meals)])]
+        return (data, source)
+    }
+    func testCopySavedMealNormalizesAliasesRetainsProvenanceAndNeverWritesPlans() async throws {
+        let (data, source) = try sourceData(), model = model(data), originalPlans = data.sourceRows
+        await model.start(user: user); var reviewed = try source.draft(); reviewed.meal.name = "Reviewed synthetic oats"
+        expect(await model.save(reviewed, original: nil, source: source), true)
+        XCTAssertEqual(data.writes, 1); XCTAssertEqual(data.sourceRows, originalPlans)
+        let saved = try XCTUnwrap(data.rows.first)
+        XCTAssertEqual(saved.data["native_recipe_source_key"], .string(source.id)); XCTAssertEqual(saved.data["source_meal_snapshot"], source.meal)
+        XCTAssertEqual(saved.data["source_meal_plan_id"], .string(source.planID.uuidString)); XCTAssertEqual(saved.data["source_plan_id"], .string(source.masterID.uuidString))
+        XCTAssertEqual(saved.data["source_generation_batch_id"], source.batch); XCTAssertEqual(saved.data["is_liked"], .bool(true))
+        XCTAssertEqual(saved.data["source"], .string("ai_generated")); XCTAssertEqual(saved.data["fats"], .number(9)); XCTAssertEqual(saved.data["prep_time_min"], .number(5))
+    }
+    func testRepeatedCopyAndLostAcknowledgmentRecreationReuseSameRecipe() async throws {
+        let (data, source) = try sourceData(), defaults = UserDefaults(suiteName: "RecipeCopy.\(UUID())")!, first = model(data, defaults: defaults)
+        await first.start(user: user); data.loseAck = true
+        expect(await first.save(try source.draft(), original: nil, source: source), false)
+        let retry = model(data, defaults: defaults); await retry.start(user: user); expect(await retry.retry(), true)
+        var revised = try source.draft(); revised.meal.calories = 999
+        expect(await retry.save(revised, original: nil, source: source), true)
+        XCTAssertEqual(data.rows.count, 1); XCTAssertEqual(data.writes, 1); XCTAssertEqual(data.rows[0].data["calories"], .number(300))
+        XCTAssertNotNil(retry.notice)
+    }
+    func testChangedOrArchivedSourceMasterAndForeignRowsPreventCopy() async throws {
+        for kind in 0..<5 {
+            let (data, source) = try sourceData(), model = model(data); await model.start(user: user)
+            let old = data.sourceRows[.mealPlans]![0]; var fields = old.data.objectValue!
+            if kind == 0 { fields["meals"] = .array([]) }
+            if kind == 1 { fields["status"] = .string("archived") }
+            if kind == 2 { fields["generation_batch_id"] = .string("new batch") }
+            data.sourceRows[.mealPlans] = [data.identified(old.id, fields: fields, owner: kind == 3 ? UUID() : nil)]
+            if kind == 4 { data.sourceRows[.aiPlans] = [] }
+            expect(await model.save(try source.draft(), original: nil, source: source), false); XCTAssertEqual(data.writes, 0)
+        }
+    }
+    func testDuplicateSourceRecipesFailClosed() async throws {
+        let (data, source) = try sourceData(), model = model(data); await model.start(user: user)
+        expect(await model.save(try source.draft(), original: nil, source: source), true)
+        let saved = try XCTUnwrap(data.rows.first); data.rows.append(data.row(saved.data.objectValue!))
+        expect(await model.save(try source.draft(), original: nil, source: source), false); XCTAssertEqual(data.writes, 1)
+    }
+    func testAIRequestAndPreviewAreExplicitCompleteAndNeverSaveAutomatically() async throws {
+        let ai = RecipeAIStub(), data = RecipeData(), model = RecipeLibraryModel(data: data, ai: ai, premium: { true }, canWrite: { _ in true })
+        await model.start(user: user); let generated = await model.fill(name: "Synthetic oats", type: .snack); let preview = try XCTUnwrap(generated)
+        XCTAssertTrue(preview.aiFilled); XCTAssertEqual(preview.type, .snack); XCTAssertEqual(preview.meal.name, "Synthetic oats")
+        XCTAssertEqual(data.writes, 0); XCTAssertTrue(data.rows.isEmpty); XCTAssertEqual(ai.requests.count, 1)
+        let request = try XCTUnwrap(ai.requests.first)
+        XCTAssertEqual(request.schemaName, "execute_recipe_fill"); XCTAssertTrue(request.fileURLs.isEmpty)
+        XCTAssertTrue(request.prompt.contains("FULL listed recipe")); XCTAssertEqual(request.responseJSONSchema?["additionalProperties"], .bool(false))
+        expect(await model.save(preview, original: nil), true)
+        XCTAssertEqual(data.rows[0].data["source"], .string("ai_generated")); XCTAssertEqual(data.rows[0].data["native_ai_filled"], .bool(true))
+    }
+    func testAIIncompleteMalformedAndOutOfRangeResponsesFailWithoutSaving() async throws {
+        for key in ["protein", "ingredients", "instructions", "prep_time_min", "tags"] {
+            let ai = RecipeAIStub(); var fields = ai.response.objectValue!; fields.removeValue(forKey: key); ai.response = .object(fields)
+            let data = RecipeData(), model = RecipeLibraryModel(data: data, ai: ai, premium: { true }, canWrite: { _ in true })
+            await model.start(user: user); let result = await model.fill(name: "Synthetic", type: .dinner)
+            XCTAssertNil(result); XCTAssertNotNil(model.error); XCTAssertEqual(data.writes, 0)
+        }
+        let ai = RecipeAIStub(); var fields = ai.response.objectValue!; fields["calories"] = .number(-1); ai.response = .object(fields)
+        XCTAssertThrowsError(try RecipeAI.draft(ai.response, name: "Synthetic", type: .snack))
+        fields["calories"] = .number(100); fields["ingredients"] = .array([.object(["amount": .number(1)])])
+        XCTAssertThrowsError(try RecipeAI.draft(.object(fields), name: "Synthetic", type: .snack))
+    }
+    func testAIPremiumDeletionPendingSaveAndLateSessionResponsesAreGated() async throws {
+        let ai = RecipeAIStub(), data = RecipeData(); var paid = false, allowed = true
+        let model = RecipeLibraryModel(data: data, ai: ai, premium: { paid }, canWrite: { _ in allowed })
+        await model.start(user: user); expectNil(await model.fill(name: "Synthetic", type: .snack)); XCTAssertTrue(ai.requests.isEmpty)
+        paid = true; allowed = false; expectNil(await model.fill(name: "Synthetic", type: .snack)); XCTAssertTrue(ai.requests.isEmpty)
+        allowed = true; ai.beforeReply = { paid = false }; expectNil(await model.fill(name: "Synthetic", type: .snack))
+        paid = true; ai.beforeReply = { model.stop() }; expectNil(await model.fill(name: "Synthetic", type: .snack))
+        await model.start(user: user); data.loseAck = true; expect(await model.save(try draft(), original: nil), false)
+        let count = ai.requests.count; expectNil(await model.fill(name: "Synthetic", type: .snack)); XCTAssertEqual(ai.requests.count, count)
+    }
 }
 
 @MainActor private final class RecipeData: EntityDataServicing {
@@ -131,6 +217,10 @@ import XCTest
     var writes = 0, reads = 0
     var loseAck = false, wrongAck = false, failRead = false, noopDelete = false
     var beforeCreateAck: (() -> Void)?
+    var sourceRows: [EntityTable: [BackendRow]] = [:]
+    func identified(_ id: UUID, fields: [String: JSONValue], owner: UUID? = nil) -> BackendRow {
+        BackendRow(id: id, ownerID: owner, ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: .now, updatedDate: .now, data: .object(fields))
+    }
     func row(_ fields: [String: JSONValue], owner: UUID? = nil) -> BackendRow {
         BackendRow(id: UUID(), ownerID: owner, ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: .now, updatedDate: .now, data: .object(fields))
     }
@@ -141,9 +231,9 @@ import XCTest
     }
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>] { try await listPage(table, orderBy: orderBy, limit: limit, offset: 0) }
     func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
-        XCTAssertEqual(table, .savedRecipes); reads += 1
+        XCTAssertTrue([EntityTable.savedRecipes, .aiPlans, .mealPlans].contains(table)); reads += 1
         if failRead { throw URLError(.notConnectedToInternet) }
-        return try rows.dropFirst(offset).prefix(limit).map { try EntityRecord(row: $0) }
+        return try (table == .savedRecipes ? rows : sourceRows[table] ?? []).dropFirst(offset).prefix(limit).map { try EntityRecord(row: $0) }
     }
     func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload> {
         XCTAssertEqual(table, .savedRecipes)
@@ -160,4 +250,16 @@ import XCTest
         XCTAssertEqual(table, .savedRecipes); if !noopDelete { rows.removeAll { $0.id == id } }; writes += 1; try checkAck()
     }
     private func checkAck() throws { if loseAck { loseAck = false; throw URLError(.networkConnectionLost) } }
+}
+
+@MainActor private final class RecipeAIStub: AIResponding {
+    var requests: [LLMRequest] = []
+    var beforeReply: (() -> Void)?
+    var response: JSONValue = .object(["calories": .number(300), "protein": .number(15), "carbs": .number(40), "fats": .number(9),
+        "prep_time_min": .number(5), "cook_time_min": .number(2), "ingredients": .array([.string("40 g synthetic oats")]),
+        "instructions": .string("Mix."), "notes": .string("Synthetic only"), "tags": .array([.string("quick")])])
+    func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
+        requests.append(request); beforeReply?(); return try response.decoded(as: type)
+    }
+    func textResponse(_ request: LLMRequest) async throws -> String { XCTFail("Recipe generation uses the structured gateway"); throw CancellationError() }
 }

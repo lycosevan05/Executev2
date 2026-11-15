@@ -4,6 +4,7 @@ private struct RecipeSelection: Identifiable {
     let id = UUID()
     let row: EntityRecord<JSONValue>?
     let draft: RecipeDraft
+    var source: CookbookMealSource? = nil
 }
 
 struct RecipeLibrarySheet: View {
@@ -18,10 +19,13 @@ struct RecipeLibrarySheet: View {
     @State private var pendingDelete: EntityRecord<JSONValue>?
     @State private var confirmDiscard = false
     @State private var editorError: String?
+    private let initialMeal: CookbookMealSource?
 
-    init(environment: AppEnvironment) {
+    init(environment: AppEnvironment, initialMeal: CookbookMealSource? = nil) {
+        self.initialMeal = initialMeal
         _appState = ObservedObject(wrappedValue: environment.appState)
-        _model = StateObject(wrappedValue: RecipeLibraryModel(data: environment.dataService,
+        _model = StateObject(wrappedValue: RecipeLibraryModel(data: environment.dataService, ai: environment.aiService,
+            premium: { environment.appState.premiumState.isPremium },
             canWrite: { environment.appState.allowsDraftWrites(for: $0) }))
     }
     private var user: ExecuteUser? { guard case .signedIn(let user) = appState.launchState else { return nil }; return user }
@@ -37,6 +41,7 @@ struct RecipeLibrarySheet: View {
                     }
                 }
                 if let error = model.error { Section { Text(error.message).foregroundStyle(ExecuteColor.destructive) } }
+                if let notice = model.notice { Section { Text(notice) } }
                 if let editorError { Section { Text(editorError).foregroundStyle(ExecuteColor.destructive) } }
                 if model.hasAttempt {
                     Section("Previous change") {
@@ -45,7 +50,7 @@ struct RecipeLibrarySheet: View {
                         Button("Discard local recipe retry", role: .destructive) { confirmDiscard = true }
                     }.disabled(model.busy)
                 }
-                Section("\(model.rows.count) saved recipes") {
+                Section("\(model.rows.count) \(model.rows.count == 1 ? "saved recipe" : "saved recipes")") {
                     if model.busy { ProgressView("Checking recipes…") }
                     let visible = model.filtered(search: search, type: type, liked: liked)
                     if visible.isEmpty && !model.busy { Text(model.rows.isEmpty ? "Your cookbook is empty. Add a recipe to get started." : "No recipes match these filters.") }
@@ -70,7 +75,16 @@ struct RecipeLibrarySheet: View {
             } message: { Text("This does not undo a change already saved to your cookbook. Review the refreshed library before making another change.") }
         }
         .interactiveDismissDisabled(model.busy)
-        .task(id: user?.id) { if let user { await model.start(user: user) } else { model.stop(); dismiss() } }
+        .task(id: user?.id) {
+            if let user {
+                await model.start(user: user)
+                guard self.user?.id == user.id else { return }
+                if let initialMeal, !model.hasAttempt {
+                    do { selection = RecipeSelection(row: nil, draft: try initialMeal.draft(), source: initialMeal) }
+                    catch { editorError = AppError.from(error).message }
+                }
+            } else { model.stop(); dismiss() }
+        }
         .onChange(of: scenePhase) { phase in if phase == .active { Task { await model.refresh() } } }
         .onDisappear { model.stop() }
     }
@@ -126,6 +140,7 @@ private struct RecipeEditorSheet: View {
     @State private var instructions: String
     @State private var notes: String
     @State private var tags: String
+    @State private var aiFilled: Bool
     init(model: RecipeLibraryModel, selection: RecipeSelection) {
         self.model = model; self.selection = selection
         let d = selection.draft
@@ -136,16 +151,27 @@ private struct RecipeEditorSheet: View {
         _prep = State(initialValue: display(d.prepTime)); _cook = State(initialValue: display(d.cookTime))
         _ingredients = State(initialValue: d.meal.ingredients.joined(separator: "\n")); _instructions = State(initialValue: d.meal.instructions)
         _notes = State(initialValue: d.meal.notes); _tags = State(initialValue: d.tags.joined(separator: "\n"))
+        _aiFilled = State(initialValue: d.aiFilled)
     }
     var body: some View {
         NavigationStack {
             Form {
                 if let error = model.error { Section { Text(error.message).foregroundStyle(ExecuteColor.destructive) } }
                 if model.hasAttempt { Section { Text("Close this editor and verify the previous recipe change in your cookbook.") } }
+                if model.isGenerating { Section { ProgressView("Generating recipe preview…") } }
+                if selection.source != nil {
+                    Section { Text("Review this copy before saving it to your cookbook. The saved meal plan and recorded intake stay unchanged.").font(.footnote) }
+                }
                 Group {
                     Section("Full recipe") {
                         TextField("Recipe name", text: $name).accessibilityLabel("Recipe name")
                         Picker("Recipe meal type", selection: $type) { ForEach(NutritionMealType.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
+                        if selection.source == nil {
+                            Button("AI Fill recipe preview") { Task { if let generated = await model.fill(name: name, type: type) { apply(generated) } } }
+                                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Text("AI Fill replaces recipe details with estimates for review. It does not save. Check ingredients, dietary needs and nutrition before Save. Requires Premium.").font(.footnote)
+                        }
+                        if aiFilled { Text("AI-assisted recipe · review estimates before saving").font(.footnote).foregroundStyle(ExecuteColor.olive) }
                         number("Recipe calories", value: $calories); number("Recipe protein", value: $protein)
                         number("Recipe carbs", value: $carbs); number("Recipe fats", value: $fats)
                         Text("Review nutrition for the full recipe when ingredients or amounts change.").font(.footnote)
@@ -157,7 +183,7 @@ private struct RecipeEditorSheet: View {
                     Section("Tags · one per line") { TextEditor(text: $tags).frame(minHeight: 60).accessibilityLabel("Recipe tags") }
                 }.disabled(model.busy || model.hasAttempt)
                 Section {
-                    Button("Save recipe") { if let draft { Task { if await model.save(draft, original: selection.row) { dismiss() } } } }
+                    Button("Save recipe") { if let draft { Task { if await model.save(draft, original: selection.row, source: selection.source) { dismiss() } } } }
                         .disabled(model.busy || model.hasAttempt || draft == nil)
                 }
             }
@@ -169,6 +195,12 @@ private struct RecipeEditorSheet: View {
     private func number(_ label: String, value: Binding<String>) -> some View {
         HStack { Text(label); TextField(label, text: value).keyboardType(.decimalPad).multilineTextAlignment(.trailing).accessibilityLabel(label) }
     }
+    private func apply(_ value: RecipeDraft) {
+        name = value.meal.name; type = value.type; calories = String(value.meal.calories); protein = String(value.meal.protein)
+        carbs = String(value.meal.carbs); fats = String(value.meal.fats); prep = String(value.prepTime); cook = String(value.cookTime)
+        ingredients = value.meal.ingredients.joined(separator: "\n"); instructions = value.meal.instructions
+        notes = value.meal.notes; tags = value.tags.joined(separator: "\n"); aiFilled = value.aiFilled
+    }
     private var draft: RecipeDraft? {
         func n(_ s: String) -> Double? { Double(s.replacingOccurrences(of: ",", with: ".")) }
         guard let c = n(calories), let p = n(protein), let cb = n(carbs), let f = n(fats), let pr = n(prep), let co = n(cook) else { return nil }
@@ -177,6 +209,7 @@ private struct RecipeEditorSheet: View {
         d.type = type; d.prepTime = pr; d.cookTime = co
         d.meal.ingredients = ingredients.components(separatedBy: .newlines).filter { !$0.isEmpty }
         d.meal.instructions = instructions; d.meal.notes = notes; d.tags = tags.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        d.aiFilled = aiFilled
         return (try? d.patch()) == nil ? nil : d
     }
 }
