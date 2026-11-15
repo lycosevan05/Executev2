@@ -53,8 +53,11 @@ enum PerformanceCalculations {
     static func canonical(_ rows: [EntityRecord<JSONValue>]) -> [String: JSONValue] {
         var result: [String: JSONValue] = [:]
         // Keep the newest row for each local date; duplicate records must not inflate totals.
-        for row in rows.sorted(by: { ($0.updatedDate ?? $0.createdDate ?? .distantPast) > ($1.updatedDate ?? $1.createdDate ?? .distantPast) }) {
-            if let date = row.payload["date"]?.stringValue, result[date] == nil { result[date] = row.payload }
+        for row in rows.sorted(by: {
+            let a = $0.updatedDate ?? $0.createdDate ?? .distantPast, b = $1.updatedDate ?? $1.createdDate ?? .distantPast
+            return a == b ? $0.id.uuidString < $1.id.uuidString : a > b
+        }) {
+            if let date = row.payload["date"]?.stringValue, DayPlanLogic.date(date) != nil, result[date] == nil { result[date] = row.payload }
         }
         return result
     }
@@ -63,6 +66,7 @@ enum PerformanceCalculations {
         let formatter = DateFormatter()
         formatter.calendar = calendar; formatter.timeZone = calendar.timeZone
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
+        guard count > 0 else { return [] }
         return (0..<count).reversed().compactMap { offset in
             calendar.date(byAdding: .day, value: -offset, to: now).map(formatter.string)
         }
@@ -74,6 +78,74 @@ enum PerformanceCalculations {
             guard let value = values[date]?[field]?.doubleValue, value.isFinite, value >= 0 else { return nil }
             return PerformancePoint(date: date, value: value)
         }
+    }
+}
+
+
+struct InsightMetricSummary {
+    let title: String
+    let unit: String
+    let points: [PerformancePoint]
+    let previous: [PerformancePoint]
+    let showsTotal: Bool
+    var total: Double { points.reduce(0) { $0 + $1.value } }
+    var average: Double? { points.isEmpty ? nil : total / Double(points.count) }
+    var previousAverage: Double? { previous.isEmpty ? nil : previous.reduce(0) { $0 + $1.value } / Double(previous.count) }
+    var averageChange: Double? { guard let average, let previousAverage else { return nil }; return average - previousAverage }
+}
+
+struct InsightHistory {
+    let dates: [String]
+    let previousDates: [String]
+    let sessions: [PerformancePoint]
+    let previousSessionCount: Int
+    let metrics: [InsightMetricSummary]
+    var sessionCount: Int { Int(sessions.reduce(0) { $0 + $1.value }) }
+
+    init(daily: [EntityRecord<JSONValue>], workouts: [EntityRecord<JSONValue>], readiness: [EntityRecord<JSONValue>],
+         now: Date = Date(), count: Int = 7, calendar: Calendar = .current) {
+        let size = [7, 30, 90].contains(count) ? count : 7
+        let currentDates = PerformanceCalculations.recentDates(now: now, count: size, calendar: calendar)
+        let priorDates = Array(PerformanceCalculations.recentDates(now: now, count: size * 2, calendar: calendar).prefix(size))
+        dates = currentDates; previousDates = priorDates
+        let dailyValues = PerformanceCalculations.canonical(daily), checks = PerformanceCalculations.canonical(readiness)
+        // A newer row represents correction/removal. Never resurrect an older non-null field.
+        func values(_ field: String, dates: [String], fallback: String? = nil, energy: Bool = false, upper: Double? = nil) -> [PerformancePoint] {
+            dates.compactMap { date in
+                let raw = dailyValues[date]?[field] ?? fallback.flatMap { checks[date]?[$0] }
+                // Explicit null may fall back to a same-date readiness check-in; invalid values do not.
+                let number = raw?.doubleValue ?? (raw == .null ? fallback.flatMap { checks[date]?[$0]?.doubleValue } : nil)
+                guard let number, number.isFinite, number >= 0, upper.map({ number <= $0 }) ?? true,
+                      field != "weight_kg" || number > 0 else { return nil }
+                let value = energy && number <= 10 ? number * 10 : number
+                return PerformancePoint(date: date, value: value)
+            }
+        }
+        let definitions: [(String, String, String, Bool, String?, Bool, Double?)] = [
+            ("Steps", "steps", "steps", true, nil, false, nil),
+            ("Sleep", "sleep_hours", "hours", false, nil, false, 24),
+            ("Water", "water_liters", "L", false, nil, false, nil),
+            ("Energy", "energy", "/ 100", false, "energy", true, 100),
+            ("Recovery", "recovery_score", "/ 100", false, "readiness_score", false, 100),
+            ("Calories logged", "calories_consumed", "kcal", true, nil, false, nil),
+            ("Protein logged", "protein_consumed_g", "g", false, nil, false, nil),
+            ("Body weight", "weight_kg", "kg", false, nil, false, nil)]
+        metrics = definitions.map { title, field, unit, total, fallback, energy, upper in
+            InsightMetricSummary(title: title, unit: unit,
+                points: values(field, dates: currentDates, fallback: fallback, energy: energy, upper: upper),
+                previous: values(field, dates: priorDates, fallback: fallback, energy: energy, upper: upper), showsTotal: total)
+        }
+        // Deduplicate transport repeats by ID, while distinct completed sessions on one day still count.
+        var seen = Set<UUID>()
+        let unique = workouts.sorted {
+            let a = $0.updatedDate ?? $0.createdDate ?? .distantPast, b = $1.updatedDate ?? $1.createdDate ?? .distantPast
+            return a == b ? $0.id.uuidString < $1.id.uuidString : a > b
+        }.filter { seen.insert($0.id).inserted }
+        func sessionCount(_ date: String) -> Double {
+            Double(unique.filter { $0.payload["date"] == .string(date) && $0.payload["status"] == .string("completed") }.count)
+        }
+        sessions = currentDates.map { PerformancePoint(date: $0, value: sessionCount($0)) }
+        previousSessionCount = Int(priorDates.reduce(0) { $0 + sessionCount($1) })
     }
 }
 
@@ -131,7 +203,7 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func refresh() async {
-        guard let data, user != nil, !isSaving, !refreshing else { return }
+        guard let data, let loadingUser = user, !isSaving, !refreshing else { return }
         let request = generation
         refreshing = true
         isLoading = true; error = nil
@@ -159,6 +231,9 @@ final class PerformanceDestinationModel: ObservableObject {
                 let sessions: [EntityRecord<JSONValue>] = try await data.listAll(.workoutLogs, isCurrent: { request == self.generation })
                 let checkIns: [EntityRecord<JSONValue>] = try await data.listAll(.readinessCheckIns, isCurrent: { request == self.generation })
                 guard request == generation, !Task.isCancelled else { return }
+                guard (logs + sessions + checkIns).allSatisfy({ $0.ownerID == nil || $0.ownerID == loadingUser.id }) else {
+                    throw AppError(title: "Insights could not load", message: "The loaded records do not belong to the current account.")
+                }
                 dailyLogs = logs; workouts = sessions; readiness = checkIns
             }
         } catch {

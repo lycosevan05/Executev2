@@ -377,3 +377,107 @@ extension PerformanceDestinationTests {
         XCTAssertEqual(data.rows[.goalProgressEntries], [legacy])
     }
 }
+
+extension PerformanceDestinationTests {
+    private func insightRecords(_ rows: [BackendRow]) throws -> [EntityRecord<JSONValue>] { try rows.map { try EntityRecord<JSONValue>(row: $0) } }
+    private var insightNow: Date { ISO8601DateFormatter().date(from: "2026-11-15T20:00:00Z")! }
+    private var insightCalendar: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(secondsFromGMT: 0)!; return c }
+
+    func testInsightsObservedAveragesZeroMissingAndPreviousWindow() throws {
+        let rows = try insightRecords([
+            PerformanceData.row(["date": .string("2026-11-15"), "steps": .number(0), "sleep_hours": .number(0)]),
+            PerformanceData.row(["date": .string("2026-11-14"), "steps": .number(100), "sleep_hours": .number(8)]),
+            PerformanceData.row(["date": .string("2026-11-13")]),
+            PerformanceData.row(["date": .string("2026-11-08"), "steps": .number(25)]),
+            PerformanceData.row(["date": .string("2026-11-16"), "steps": .number(9000)])])
+        let history = InsightHistory(daily: rows, workouts: [], readiness: [], now: insightNow, calendar: insightCalendar)
+        XCTAssertEqual(history.dates, ["2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15"])
+        let steps = try XCTUnwrap(history.metrics.first { $0.title == "Steps" })
+        XCTAssertEqual(steps.total, 100); XCTAssertEqual(steps.average, 50); XCTAssertEqual(steps.averageChange, 25)
+        XCTAssertEqual(steps.points.count, 2); XCTAssertEqual(steps.previous.count, 1)
+        XCTAssertEqual(history.metrics.first { $0.title == "Sleep" }?.average, 4)
+        XCTAssertNil(history.metrics.first { $0.title == "Water" }?.average)
+    }
+
+    func testInsightsCorrectionDeletionAndDeterministicNewestRow() throws {
+        let idA = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, idB = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let older = PerformanceData.row(["date": .string("2026-11-15"), "protein_consumed_g": .number(110)], stamp: Date(timeIntervalSince1970: 1))
+        let latest = PerformanceData.row(["date": .string("2026-11-15"), "protein_consumed_g": .number(100)], id: idA, stamp: Date(timeIntervalSince1970: 2))
+        let tie = PerformanceData.row(["date": .string("2026-11-15"), "protein_consumed_g": .number(105)], id: idB, stamp: Date(timeIntervalSince1970: 2))
+        func protein(_ rows: [BackendRow]) throws -> InsightMetricSummary {
+            try XCTUnwrap(InsightHistory(daily: insightRecords(rows), workouts: [], readiness: [], now: insightNow, calendar: insightCalendar).metrics.first { $0.title == "Protein logged" })
+        }
+        XCTAssertEqual(try protein([older, tie, latest]).average, 100)
+        XCTAssertEqual(try protein([latest, older, tie]).average, 100)
+        let removed = PerformanceData.row(["date": .string("2026-11-15")], stamp: Date(timeIntervalSince1970: 3))
+        XCTAssertNil(try protein([older, latest, removed]).average)
+        XCTAssertNil(try protein([]).average)
+    }
+
+    func testInsightsEnergyFallbackIsSameDateAndRespectsInvalidAndZero() throws {
+        let daily = try insightRecords([
+            PerformanceData.row(["date": .string("2026-11-15"), "energy": .number(0)]),
+            PerformanceData.row(["date": .string("2026-11-14"), "energy": .number(101)]),
+            PerformanceData.row(["date": .string("2026-11-13"), "energy": .null]),
+            PerformanceData.row(["date": .string("2026-11-12"), "energy": .number(9)])])
+        let checks = try insightRecords([
+            PerformanceData.row(["date": .string("2026-11-15"), "energy": .number(8)]),
+            PerformanceData.row(["date": .string("2026-11-14"), "energy": .number(7)]),
+            PerformanceData.row(["date": .string("2026-11-13"), "energy": .number(80), "readiness_score": .number(75)]),
+            PerformanceData.row(["date": .string("2026-11-08"), "energy": .number(10)])])
+        let h = InsightHistory(daily: daily, workouts: [], readiness: checks, now: insightNow, calendar: insightCalendar)
+        XCTAssertEqual(h.metrics.first { $0.title == "Energy" }?.points, [PerformancePoint(date: "2026-11-12", value: 90), PerformancePoint(date: "2026-11-13", value: 80), PerformancePoint(date: "2026-11-15", value: 0)])
+        XCTAssertEqual(h.metrics.first { $0.title == "Recovery" }?.points, [PerformancePoint(date: "2026-11-13", value: 75)])
+    }
+
+    func testInsightsWorkoutsCountIDsAndSavedDateOnly() throws {
+        let id = UUID()
+        let done = PerformanceData.row(["date": .string("2026-11-13"), "status": .string("completed")], id: id)
+        let rows = [done, done,
+            PerformanceData.row(["date": .string("2026-11-13"), "status": .string("completed")]),
+            PerformanceData.row(["date": .string("2026-11-15"), "status": .string("in_progress")]),
+            PerformanceData.row(["date": .string("2026-11-16"), "status": .string("completed")]),
+            PerformanceData.row(["date": .string("2026-11-08"), "status": .string("completed")])]
+        let h = InsightHistory(daily: [], workouts: try insightRecords(rows), readiness: [], now: insightNow, calendar: insightCalendar)
+        XCTAssertEqual(h.sessionCount, 2); XCTAssertEqual(h.previousSessionCount, 1)
+        XCTAssertEqual(h.sessions.first { $0.date == "2026-11-15" }?.value, 0)
+        let corrected = PerformanceData.row(["date": .string("2026-11-13"), "status": .string("in_progress")], id: id, stamp: Date.distantFuture)
+        XCTAssertEqual(InsightHistory(daily: [], workouts: try insightRecords(rows + [corrected]), readiness: [], now: insightNow, calendar: insightCalendar).sessionCount, 1)
+    }
+
+    func testInsightsRolloverDSTAndRanges() {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let before = ISO8601DateFormatter().date(from: "2026-11-02T07:59:00Z")!, after = before.addingTimeInterval(120)
+        let first = InsightHistory(daily: [], workouts: [], readiness: [], now: before, count: 30, calendar: calendar)
+        let next = InsightHistory(daily: [], workouts: [], readiness: [], now: after, count: 30, calendar: calendar)
+        XCTAssertEqual(first.dates.last, "2026-11-01"); XCTAssertEqual(next.dates.last, "2026-11-02")
+        XCTAssertEqual(Set(first.dates).count, 30); XCTAssertEqual(first.previousDates.count, 30)
+        XCTAssertTrue(Set(first.dates).isDisjoint(with: Set(first.previousDates)))
+        XCTAssertEqual(InsightHistory(daily: [], workouts: [], readiness: [], count: 90).dates.count, 90)
+        XCTAssertEqual(PerformanceCalculations.recentDates(count: 0), [])
+    }
+
+    func testInsightsRejectInvalidDatesAndOutOfDomainMetrics() throws {
+        let rows = try insightRecords([
+            PerformanceData.row(["date": .string("2026-11-15"), "sleep_hours": .number(25), "weight_kg": .number(0), "calories_consumed": .number(-1)]),
+            PerformanceData.row(["date": .string("2026-02-30"), "steps": .number(999)]),
+            PerformanceData.row(["date": .string("2026-11-15T00:00:00Z"), "steps": .number(999)])])
+        XCTAssertTrue(InsightHistory(daily: rows, workouts: [], readiness: [], now: insightNow, calendar: insightCalendar).metrics.allSatisfy { $0.points.isEmpty })
+        XCTAssertEqual(PerformanceCalculations.canonical(rows).keys.sorted(), ["2026-11-15"])
+    }
+
+    func testInsightsRefreshRestoresCorrectionWithoutWritingAndRejectsForeignOwner() async throws {
+        let data = PerformanceData(), first = model(data, destination: .insights)
+        data.rows[.dailyLogs] = [PerformanceData.row(["date": .string("2026-11-15"), "protein_consumed_g": .number(110)])]
+        await first.start(for: user)
+        data.rows[.dailyLogs] = [PerformanceData.row(["date": .string("2026-11-15"), "protein_consumed_g": .number(100)])]
+        await first.refresh()
+        XCTAssertEqual(first.dailyLogs.first?.payload["protein_consumed_g"], .number(100))
+        first.stop(); await first.start(for: user)
+        XCTAssertEqual(first.dailyLogs.first?.payload["protein_consumed_g"], .number(100))
+        let row = PerformanceData.row(["date": .string("2026-11-15")])
+        data.rows[.dailyLogs] = [BackendRow(id: row.id, ownerID: UUID(), ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: row.createdDate, updatedDate: row.updatedDate, data: row.data)]
+        await first.refresh(); XCTAssertNotNil(first.error)
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+}

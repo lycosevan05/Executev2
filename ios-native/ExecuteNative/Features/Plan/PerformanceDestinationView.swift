@@ -11,6 +11,7 @@ struct PerformanceDestinationView: View {
 }
 
 private struct PerformanceScreen: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var appState: AppState
     @StateObject private var model: PerformanceDestinationModel
     private let router: AppRouter
@@ -19,12 +20,14 @@ private struct PerformanceScreen: View {
     @State private var showPaused = false
     @State private var range = 30
     @State private var selectedDate: String?
+    @State private var insightsNow = Date()
 
     init(destination: PerformanceDestination, environment: AppEnvironment) {
         _appState = ObservedObject(wrappedValue: environment.appState)
         _model = StateObject(wrappedValue: PerformanceDestinationModel(destination: destination, data: environment.dataService, cache: environment.cache,
             canWrite: { environment.appState.allowsDraftWrites(for: $0) }))
         router = environment.router
+        _range = State(initialValue: destination == .insights ? 7 : 30)
     }
 
     var body: some View {
@@ -66,6 +69,12 @@ private struct PerformanceScreen: View {
             if let user = signedInUser { await model.start(for: user) } else { model.stop() }
         }
         .onDisappear { model.stop() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { insightsNow = Date(); Task { await model.refresh() } }
+        }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { date in
+            if model.destination == .insights { insightsNow = date }
+        }
         .sheet(isPresented: $showCreate) { GoalEntrySheet(model: model, goal: nil) }
         .sheet(item: $loggingGoal) { goal in GoalEntrySheet(model: model, goal: goal) }
         .executeScreen()
@@ -185,42 +194,58 @@ private struct PerformanceScreen: View {
         }
     }
 
-    @ViewBuilder private var insights: some View {
-        let dates = PerformanceCalculations.recentDates()
-        Text("Your last seven days").font(ExecuteTypography.title(20))
-        Text("Based on your saved logs. Days without a value remain unlogged.").font(ExecuteTypography.body(13))
-        let completed = model.workouts.filter { dates.contains($0.payload["date"]?.stringValue ?? "") && $0.payload["status"]?.stringValue == "completed" }.count
-        ExecuteStatCard(title: "Completed sessions", value: "\(completed)", symbol: "dumbbell")
-        insightMetric(title: "Steps", field: "steps", unit: "steps", dates: dates, average: false)
-        insightMetric(title: "Sleep", field: "sleep_hours", unit: "hours", dates: dates, average: true)
-        insightMetric(title: "Water", field: "water_liters", unit: "L", dates: dates, average: true)
-        let daily = PerformanceCalculations.canonical(model.dailyLogs)
-        let readiness = PerformanceCalculations.canonical(model.readiness)
-        let energy = dates.compactMap { date -> PerformancePoint? in
-            guard let value = daily[date]?["energy"]?.doubleValue ?? readiness[date]?["energy"]?.doubleValue, value.isFinite, value >= 0 else { return nil }
-            return PerformancePoint(date: date, value: value <= 10 ? value * 10 : value)
-        }
+    private var insights: some View {
+        insightHistory(now: insightsNow)
+    }
+
+    @ViewBuilder private func insightHistory(now: Date) -> some View {
+        let history = InsightHistory(daily: model.dailyLogs, workouts: model.workouts, readiness: model.readiness, now: now, count: range)
+        Picker("Insights history range", selection: $range) {
+            Text("7 days").tag(7); Text("30 days").tag(30); Text("90 days").tag(90)
+        }.pickerStyle(.segmented)
+        Text("Your last \(range) days").font(ExecuteTypography.title(20))
+        Text("\(history.dates.first ?? "") – \(history.dates.last ?? "") · includes today")
+            .font(ExecuteTypography.caption(12))
+        Text("Based on saved activity dates. Missing values stay unlogged. Averages use logged days, including explicit zeros. Nutrition reflects logged intake estimates.")
+            .font(ExecuteTypography.body(13))
         performanceCard {
-            Text("Energy").font(ExecuteTypography.title(18))
-            if energy.isEmpty { Text("No energy logged yet.") }
-            else { pointChart(energy, unit: "/ 100", dates: dates) }
+            Text("Completed sessions").font(ExecuteTypography.title(18))
+            Text("\(history.sessionCount)").font(ExecuteTypography.title(24))
+            Text("Previous \(range) days: \(history.previousSessionCount) sessions")
+            Text("Completed workout logs only. Future and unfinished sessions are excluded.")
+                .font(ExecuteTypography.caption(12))
+            Chart(history.sessions) { point in
+                if let date = Self.date(point.date) {
+                    BarMark(x: .value("Date", date, unit: .day), y: .value("Sessions", point.value))
+                        .foregroundStyle(ExecuteColor.chartreuseDark)
+                        .accessibilityLabel(Text(point.date))
+                        .accessibilityValue(Text("\(Int(point.value)) sessions"))
+                }
+            }.frame(height: 120)
+        }
+        ForEach(history.metrics, id: \.title) { metric in
+            performanceCard {
+                Text(metric.title).font(ExecuteTypography.title(18))
+                if let average = metric.average {
+                    if metric.showsTotal { Text("Total: \(formatted(metric.total)) \(metric.unit)") }
+                    Text("Logged-day average: \(formatted(average)) \(metric.unit)")
+                    Text("\(metric.points.count) of \(range) days logged").font(ExecuteTypography.caption(12))
+                    if let previous = metric.previousAverage, let change = metric.averageChange {
+                        Text("Previous logged-day average: \(formatted(previous)) \(metric.unit) · \(metric.previous.count) of \(range) days")
+                            .font(ExecuteTypography.caption(12))
+                        Text("Change in average: \(change > 0 ? "+" : "")\(formatted(change)) \(metric.unit)")
+                            .font(ExecuteTypography.caption(12))
+                    } else { Text("No logged values in the previous \(range) days to compare.").font(ExecuteTypography.caption(12)) }
+                    pointChart(metric.points, unit: metric.unit, dates: history.dates)
+                } else { Text("No \(metric.title.lowercased()) logged in this range.") }
+            }
         }
         ExecuteSecondaryButton(title: "Log daily vitals") { router.select(.track) }
         ExecuteSecondaryButton(title: "View goal progress") { router.navigate(to: .progress(goalID: nil)) }
     }
 
-    private func insightMetric(title: String, field: String, unit: String, dates: [String], average: Bool) -> some View {
-        let points = PerformanceCalculations.points(model.dailyLogs, field: field, dates: dates)
-        let total = points.reduce(0) { $0 + $1.value }
-        return performanceCard {
-            Text(title).font(ExecuteTypography.title(18))
-            if points.isEmpty { Text("No \(title.lowercased()) logged yet.") }
-            else {
-                Text("\(average ? "Average" : "Total"): \((average ? total / Double(points.count) : total).formatted(.number.precision(.fractionLength(0...1)))) \(unit)")
-                Text("\(points.count) of 7 days logged").font(ExecuteTypography.caption(12))
-                pointChart(points, unit: unit, dates: dates)
-            }
-        }
+    private func formatted(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1)))
     }
 
     private func goalSummary(_ goal: EntityRecord<PerformanceGoal>) -> some View {
