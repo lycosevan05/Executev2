@@ -256,7 +256,7 @@ struct NutritionSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-struct NutritionEntryDraft: Equatable, Sendable {
+struct NutritionEntryDraft: Codable, Equatable, Sendable {
     var name: String
     var mealType: NutritionMealType
     var calories: Double
@@ -264,6 +264,7 @@ struct NutritionEntryDraft: Equatable, Sendable {
     var carbs: Double
     var fats: Double
     var method: NutritionLogMethod
+    var portion: String? = nil
 
     static let empty = NutritionEntryDraft(
         name: "",
@@ -296,7 +297,7 @@ enum NutritionEntryFactory {
             mealType: draft.mealType.rawValue,
             foods: [NutritionFoodItem(
                 name: name,
-                portion: nil,
+                portion: draft.portion,
                 calories: draft.calories,
                 protein: draft.protein,
                 carbs: draft.carbs,

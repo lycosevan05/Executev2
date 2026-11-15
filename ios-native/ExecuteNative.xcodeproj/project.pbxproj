@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EC1500000000000000000005 /* FoodCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC1500000000000000000006 /* FoodCaptureTests.swift */; };
+		EC1500000000000000000003 /* FoodCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC1500000000000000000004 /* FoodCaptureView.swift */; };
+		EC1500000000000000000001 /* FoodCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC1500000000000000000002 /* FoodCapture.swift */; };
 		A10000000000000000000001 /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* AccountService.swift */; };
 		B10000000000000000000001 /* LegalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* LegalView.swift */; };
 		C10000000000000000000001 /* ProfileModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* ProfileModels.swift */; };
@@ -104,6 +107,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		EC1500000000000000000006 /* FoodCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodCaptureTests.swift; sourceTree = "<group>"; };
+		EC1500000000000000000004 /* FoodCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodCaptureView.swift; sourceTree = "<group>"; };
+		EC1500000000000000000002 /* FoodCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodCapture.swift; sourceTree = "<group>"; };
 		A10000000000000000000002 /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountService.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* LegalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegalView.swift; sourceTree = "<group>"; };
 		C10000000000000000000002 /* ProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileModels.swift; sourceTree = "<group>"; };
@@ -311,6 +317,7 @@
 				D10000000000000000000004 /* PlanRefinementTests.swift */,
 				DEAD00000000000000000002 /* RecoveryReadinessCases.json */,
 				A318512948BBB8B2878D0DBD /* JSONBCompatibilityTests.swift */,
+				EC1500000000000000000006 /* FoodCaptureTests.swift */,
 				D61B264331AA8E656EFE1C72 /* Billing.storekit */,
 				65821EF16E26038A1077D0FC /* StoreKitBillingTests.swift */,
 				FD84EE39999D6F3BD946C565 /* BillingTests.swift */,
@@ -521,6 +528,8 @@
 			isa = PBXGroup;
 			children = (
 				F9D0D858E531A26440720885 /* NutritionModels.swift */,
+				EC1500000000000000000004 /* FoodCaptureView.swift */,
+				EC1500000000000000000002 /* FoodCapture.swift */,
 				AE25C4639242FD157DEA0F44 /* NutritionView.swift */,
 				7B8E33740661EED9D3E9B610 /* NutritionViewModel.swift */,
 			);
@@ -662,6 +671,7 @@
 				EA0000000000000000000001 /* DayPlanTests.swift in Sources */,
 				D10000000000000000000003 /* PlanRefinementTests.swift in Sources */,
 				72B41B9AFF16B3ADF192368A /* JSONBCompatibilityTests.swift in Sources */,
+				EC1500000000000000000005 /* FoodCaptureTests.swift in Sources */,
 				FA425AD5183C9FB5C5F5F38B /* StoreKitBillingTests.swift in Sources */,
 				10BCE687A619405436A3616D /* BillingTests.swift in Sources */,
 			);
@@ -701,6 +711,8 @@
 				B10000000000000000000001 /* LegalView.swift in Sources */,
 				00C1CA52B1519CF664D97CE9 /* MockAuthService.swift in Sources */,
 				D3B53D88233B250FA1963563 /* NutritionModels.swift in Sources */,
+				EC1500000000000000000003 /* FoodCaptureView.swift in Sources */,
+				EC1500000000000000000001 /* FoodCapture.swift in Sources */,
 				9DF757D899E32B28B11C4445 /* NutritionView.swift in Sources */,
 				744088A61AE3AF94A879D623 /* NutritionViewModel.swift in Sources */,
 				7F6BA815C4AD47E4D70769C0 /* PlanView.swift in Sources */,

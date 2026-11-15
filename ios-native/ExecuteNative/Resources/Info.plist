@@ -51,6 +51,8 @@
     <string>$(REVENUECAT_ANNUAL_PRODUCT_ID)</string>
     <key>AuthCallbackScheme</key>
     <string>$(AUTH_CALLBACK_SCHEME)</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Use the camera to photograph your food or scan a product barcode when you choose.</string>
     <key>UIAppFonts</key>
     <array>
         <string>Inter-Light.ttf</string>

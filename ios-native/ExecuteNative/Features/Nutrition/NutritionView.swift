@@ -26,6 +26,7 @@ private struct NutritionScreen: View {
     @ObservedObject private var appState: AppState
     @StateObject private var model: NutritionViewModel
     private let presentation: NutritionPresentation
+    private let captureEnvironment: AppEnvironment
 
     init(environment: AppEnvironment, initialDate: Date, presentation: NutritionPresentation) {
         _appState = ObservedObject(wrappedValue: environment.appState)
@@ -38,13 +39,15 @@ private struct NutritionScreen: View {
             initialDate: initialDate
         ))
         self.presentation = presentation
+        self.captureEnvironment = environment
     }
 
     var body: some View {
         NutritionDashboardView(
             model: model,
             presentation: presentation,
-            isPremium: appState.premiumState.isPremium
+            isPremium: appState.premiumState.isPremium,
+            captureContent: { kind in AnyView(FoodCaptureSheet(kind: kind, nutrition: model, environment: captureEnvironment)) }
         )
         .task(id: signedInUser?.id) {
             if let signedInUser { await model.start(for: signedInUser) }
@@ -61,6 +64,8 @@ private struct NutritionScreen: View {
 private enum NutritionSheet: String, Identifiable {
     case manual
     case ai
+    case photo
+    case barcode
     var id: String { rawValue }
 }
 
@@ -68,6 +73,7 @@ struct NutritionDashboardView: View {
     @ObservedObject var model: NutritionViewModel
     let presentation: NutritionPresentation
     let isPremium: Bool
+    var captureContent: ((FoodCaptureKind) -> AnyView)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var activeSheet: NutritionSheet?
@@ -107,7 +113,9 @@ struct NutritionDashboardView: View {
                         if isPremium { activeSheet = .ai }
                         else { model.openBilling() }
                     },
-                    openManual: { activeSheet = .manual }
+                    openManual: { activeSheet = .manual },
+                    openPhoto: { if isPremium { activeSheet = .photo } else { model.openBilling() } },
+                    openBarcode: { activeSheet = .barcode }
                 )
 
                 NutritionLoggedSection(
@@ -138,6 +146,9 @@ struct NutritionDashboardView: View {
                 NutritionManualEntrySheet(model: model)
             case .ai:
                 NutritionAIEntrySheet(model: model)
+            case .photo, .barcode:
+                if let captureContent { captureContent(sheet == .photo ? .photo : .barcode) }
+                else { Text("Food capture is unavailable in this preview.") }
             }
         }
         .sheet(item: $pendingEdit) { record in NutritionManualEntrySheet(model: model, editing: record) }
@@ -428,6 +439,8 @@ private struct NutritionLoggingActions: View {
     let isPremium: Bool
     let openAI: () -> Void
     let openManual: () -> Void
+    let openPhoto: () -> Void
+    let openBarcode: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
@@ -435,6 +448,11 @@ private struct NutritionLoggingActions: View {
                 .font(ExecuteTypography.caption(9).weight(.bold))
                 .tracking(0.7)
                 .foregroundStyle(ExecuteColor.mist)
+
+            ExecuteSecondaryButton(title: isPremium ? "Scan food with camera or photo" : "Photo food estimate · Premium", action: openPhoto)
+                .accessibilityIdentifier("nutrition.photoLog")
+            ExecuteSecondaryButton(title: "Scan packaged food barcode", action: openBarcode)
+                .accessibilityIdentifier("nutrition.barcodeLog")
 
             Button(action: openAI) {
                 HStack(spacing: ExecuteSpacing.sm) {
@@ -726,7 +744,8 @@ private struct NutritionManualEntrySheet: View {
             protein: NutritionFormat.number(protein),
             carbs: NutritionFormat.number(carbs),
             fats: NutritionFormat.number(fats),
-            method: .manual
+            method: editing?.log.resolvedMethod ?? .manual,
+            portion: editing?.log.foods?.first?.portion
         )
     }
 

@@ -481,8 +481,48 @@ final class NutritionViewModel: ObservableObject {
         NutritionCalculations.intake(logs: snapshot.foodLogs, mealPlan: snapshot.mealPlan, planID: snapshot.mealPlanID, completed: daily.mealsCompleted ?? [])
     }
 
-    private func persistDailyTotalsKeepingSavedFood() async {
-        guard let dataService, let savingUser = user else { return }
+    func synchronizeCapturedFood(ownerID: UUID, date: String, canWrite: () -> Bool) async -> Bool {
+        guard let dataService, user?.id == ownerID, dateString == date, !isSaving, canWrite() else { return false }
+        await reload(isRefresh: true)
+        guard error == nil, user?.id == ownerID, dateString == date, canWrite() else { return false }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            // Capture retries must also work on dates outside the dashboard's recent-record pages.
+            let foods: [EntityRecord<NutritionFoodLog>] = try await dataService.listAll(.foodLogs, isCurrent: { self.user?.id == ownerID && self.dateString == date && canWrite() })
+            let daily: [EntityRecord<NutritionDailyLog>] = try await dataService.listAll(.dailyLogs, isCurrent: { self.user?.id == ownerID && self.dateString == date && canWrite() })
+            guard user?.id == ownerID, dateString == date, canWrite() else { return false }
+            guard foods.allSatisfy({ $0.ownerID == nil || $0.ownerID == ownerID }), daily.allSatisfy({ $0.ownerID == nil || $0.ownerID == ownerID }) else {
+                throw AppError(title: "Daily totals need verification", message: "The loaded records do not belong to the current account.")
+            }
+            snapshot.foodLogs = foods.filter { $0.payload.date == date }.sorted {
+                let a = $0.createdDate ?? .distantPast, b = $1.createdDate ?? .distantPast
+                return a == b ? $0.id.uuidString < $1.id.uuidString : a > b
+            }.map { NutritionFoodLogRecord(id: $0.id, createdDate: $0.createdDate, log: $0.payload) }
+            let existing = daily.filter { $0.payload.date == date }.sorted {
+                let a = $0.updatedDate ?? $0.createdDate ?? .distantPast, b = $1.updatedDate ?? $1.createdDate ?? .distantPast
+                return a == b ? $0.id.uuidString < $1.id.uuidString : a > b
+            }.first
+            snapshot.dailyLogID = existing?.id; snapshot.dailyLog = existing?.payload
+            if let existing {
+                let previous = existing.payload.consumedTotals, known = reconciledTotalsForWrite(daily: existing.payload)
+                let priorValues = [previous.calories, previous.protein, previous.carbs, previous.fats]
+                guard priorValues.allSatisfy({ $0.isFinite && $0 >= 0 }),
+                      !zip(priorValues, [known.calories, known.protein, known.carbs, known.fats]).contains(where: { $0.0 > $0.1 + 0.01 }) else {
+                    throw AppError(title: "Older intake totals need review", message: "The food was saved. Existing daily totals include intake that is not represented by the loaded food and meal records, so they were preserved.")
+                }
+            }
+        } catch {
+            if user?.id == ownerID, canWrite() { self.error = AppError.from(error, title: "Food saved; daily totals need verification") }
+            return false
+        }
+        await persistDailyTotalsKeepingSavedFood(canWrite: canWrite)
+        await cache.invalidate(CacheKey("home", "dashboard"), userID: ownerID)
+        return error == nil && user?.id == ownerID && dateString == date && canWrite()
+    }
+
+    private func persistDailyTotalsKeepingSavedFood(canWrite: () -> Bool = { true }) async {
+        guard let dataService, let savingUser = user, canWrite() else { return }
         var daily = snapshot.dailyLog ?? NutritionDailyLog(
             date: dateString,
             source: activePlanSource ?? "manual",
@@ -508,8 +548,8 @@ final class NutritionViewModel: ObservableObject {
 
         do {
             let record: EntityRecord<NutritionDailyLog>
-            let existing: [EntityRecord<NutritionDailyLog>] = try await dataService.list(.dailyLogs, orderBy: "-updated_date", limit: 100)
-            guard user?.id == savingUser.id else { return }
+            let existing: [EntityRecord<NutritionDailyLog>] = try await dataService.listAll(.dailyLogs, isCurrent: { self.user?.id == savingUser.id && canWrite() })
+            guard user?.id == savingUser.id, canWrite() else { return }
             let latest = existing.first { $0.id == snapshot.dailyLogID && $0.payload.date == dateString }
                 ?? existing.first { $0.payload.date == dateString }
             let plannedTypes = Set(snapshot.mealPlan?.resolvedMeals.map { $0.type.lowercased() } ?? [])
@@ -528,7 +568,7 @@ final class NutritionViewModel: ObservableObject {
                 let created: EntityRecord<JSONValue> = try await dataService.create(.dailyLogs, payload: .object(fields), user: savingUser)
                 record = try EntityRecord(row: created.metadata)
             }
-            guard user?.id == savingUser.id else { return }
+            guard user?.id == savingUser.id, canWrite() else { return }
             snapshot.dailyLogID = record.id
             snapshot.dailyLog = record.payload
         } catch {
