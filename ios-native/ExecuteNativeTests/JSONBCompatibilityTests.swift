@@ -800,6 +800,47 @@ final class DailyUseWorkflowTests: XCTestCase {
     private func setup(_ data: DailyUseData) {
         data.rows[.workoutPlans] = [DailyUseData.row(.object(["date": .string("2026-11-13"), "name": .string("Synthetic C"), "source_plan_id": .string(masterID.uuidString), "generation_batch_id": .string("fixture"), "exercises": .array([.object(["name": .string("Push-ups"), "sets": .number(3), "reps": .string("10")])])]), id: workoutID)]
     }
+    func testPlannedMealLostAcknowledgmentCorrectionAndDeletionPreserveOtherRecords() async throws {
+        let data = DailyUseData(), mealID = UUID(), dailyID = UUID()
+        let master = DailyUseData.row(.object(["plan_type": .string("daily"), "status": .string("active")]), id: masterID)
+        data.rows[.aiPlans] = [master]
+        data.rows[.mealPlans] = [DailyUseData.row(.object(["date": .string("2026-11-13"), "source_plan_id": .string(masterID.uuidString), "status": .string("active"), "meals": .array([.object(["meal_type": .string("breakfast"), "name": .string("Supplied breakfast"), "calories": .number(700), "protein": .number(40), "carbs": .number(92), "fats": .number(20)])])]), id: mealID)]
+        let task: JSONValue = .object(["id": .string("nutrition:2026-11-13"), "type": .string("nutrition"), "title": .string("Build today's meals"), "source": .string("placeholder"), "completed": .bool(false), "future_task_field": .string("keep")])
+        data.rows[.dailyLogs] = [DailyUseData.row(.object(["date": .string("2026-11-13"), "workout_done": .bool(true), "calories_burned": .number(166), "future_daily_field": .string("keep"), "checklist_items": .array([task]), "planned_checklist_items": .array([task])]), id: dailyID)]
+        let snackPayload = try XCTUnwrap(NutritionEntryFactory.payload(from: NutritionEntryDraft(name: "Unrelated snack", mealType: .snack, calories: 100, protein: 5, carbs: 10, fats: 2, method: .manual), date: "2026-11-13"))
+        let snack = DailyUseData.row(try WorkoutSessionLogic.jsonValue(from: snackPayload))
+        data.rows[.foodLogs] = [snack]
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
+        let model = NutritionViewModel(dataService: data, aiService: nil, cache: UserScopedCacheStore(suiteName: "DailyUse.\(UUID())"), realtimeService: nil, router: AppRouter(), initialDate: try XCTUnwrap(formatter.date(from: "2026-11-13")))
+        await model.start(for: user)
+        data.loseCreate = true
+        await model.logPlannedMeal(type: "breakfast")
+        XCTAssertNotNil(model.error)
+        XCTAssertEqual(data.rows[.foodLogs]?.count, 2)
+        await model.logPlannedMeal(type: "breakfast")
+        XCTAssertNil(model.error)
+        XCTAssertEqual(data.rows[.foodLogs]?.count, 2)
+        XCTAssertEqual(model.snapshot.dailyLog?.mealsCompleted, ["breakfast"])
+        XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["checklist_completed_count"], .number(1))
+        let planned = try XCTUnwrap(model.snapshot.foodLogs.first { $0.log.plannedMealKey == "breakfast" })
+        let corrected = await model.edit(planned, draft: NutritionEntryDraft(name: "Supplied breakfast", mealType: .breakfast, calories: 600, protein: 30, carbs: 80, fats: 15, method: .manual))
+        XCTAssertTrue(corrected)
+        XCTAssertEqual(model.totals.calories, 700)
+        XCTAssertEqual(data.rows[.foodLogs]?.count, 2)
+        let edited = try XCTUnwrap(model.snapshot.foodLogs.first { $0.id == planned.id })
+        XCTAssertEqual(edited.log.sourceMealPlanID, mealID.uuidString.lowercased())
+        await model.delete(edited)
+        XCTAssertEqual(data.rows[.foodLogs]?.count, 1)
+        XCTAssertEqual(data.rows[.foodLogs]?.first?.data, snack.data)
+        XCTAssertEqual(model.totals.calories, 100)
+        XCTAssertEqual(model.snapshot.dailyLog?.mealsCompleted, [])
+        XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["checklist_completed_count"], .number(0))
+        XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["workout_done"], .bool(true))
+        XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["calories_burned"], .number(166))
+        XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["future_daily_field"], .string("keep"))
+        XCTAssertEqual(data.rows[.aiPlans]?.first?.data, master.data)
+    }
+
     func testResumeUsesExactWorkoutAndDateInsteadOfSharedMaster() async throws {
         let data = DailyUseData(); setup(data)
         let other = DailyUseData.row(.object(["date": .string("2026-11-12"), "status": .string("in_progress"), "source_plan_id": .string(masterID.uuidString), "generation_batch_id": .string("fixture"), "workout_plan_id": .string(UUID().uuidString)]))
@@ -862,4 +903,39 @@ private final class DailyUseData: EntityDataServicing {
         return try EntityRecord(row: row)
     }
     func delete(_ table: EntityTable, id: UUID) async throws { rows[table]?.removeAll { $0.id == id } }
+}
+
+final class DailyActivityChecklistTests: XCTestCase {
+    func testActivityCompletionAndDeletionPreserveCustomTasksAndUnknownFields() throws {
+        let items: [JSONValue] = [
+            .object(["id": .string("workout:d"), "type": .string("workout"), "title": .string("Build today's workout"), "source": .string("placeholder"), "completed": .bool(false)]),
+            .object(["id": .string("nutrition:d"), "type": .string("nutrition"), "title": .string("Build today's meals"), "source": .string("placeholder"), "completed": .bool(false), "future": .number(9)]),
+            .object(["id": .string("custom:d"), "type": .string("custom"), "title": .string("Unrelated"), "completed": .bool(true)])]
+        let daily: JSONValue = .object(["checklist_items": .array(items), "planned_checklist_items": .array(items), "plan_items_completed": .array([.string("custom:d"), .string("external:keep")]), "future_daily": .string("keep")])
+        let done = DailyActivityChecklist.patch(daily: daily, workoutDone: true, nutritionDone: true, workoutTitle: "Synthetic C")
+        XCTAssertEqual(done["checklist_completed_count"], .number(3))
+        XCTAssertEqual(done["checklist_adherence_pct"], .number(100))
+        XCTAssertNil(done["future_daily"])
+        let updated = try XCTUnwrap(done["checklist_items"]?.recoveryArray)
+        XCTAssertEqual(updated[1]["future"], .number(9))
+        XCTAssertEqual(updated[2], items[2])
+        var merged = daily.objectValue!; merged.merge(done) { _, new in new }
+        let removed = DailyActivityChecklist.patch(daily: .object(merged), nutritionDone: false)
+        XCTAssertEqual(removed["checklist_completed_count"], .number(2))
+        let ids = try XCTUnwrap(removed["plan_items_completed"]?.recoveryArray)
+        XCTAssertTrue(ids.contains(.string("workout:d")))
+        XCTAssertTrue(ids.contains(.string("custom:d")))
+        XCTAssertTrue(ids.contains(.string("external:keep")))
+        XCTAssertFalse(ids.contains(.string("nutrition:d")))
+    }
+
+    func testNoChecklistDoesNotInventTasks() {
+        XCTAssertTrue(DailyActivityChecklist.patch(daily: .object(["workout_done": .bool(true)]), workoutDone: true, nutritionDone: true).isEmpty)
+    }
+
+    func testHistoryUsesActivityDateWhenCompletionCrossesMidnight() throws {
+        let log = try JSONValue.object(["date": .string("2026-11-13"), "completed_at": .string("2026-11-15T06:57:20Z")]).decoded(as: TrainWorkoutLog.self)
+        XCTAssertTrue(log.activityDateLabel.contains("13"))
+        XCTAssertFalse(log.activityDateLabel.contains("15"))
+    }
 }

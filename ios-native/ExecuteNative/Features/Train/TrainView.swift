@@ -301,7 +301,7 @@ private struct TrainHistoryRow: View {
             Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(ExecuteColor.chartreuseDark).frame(width: 34, height: 34).background(ExecuteHomeStyle.accentWash).clipShape(Circle())
             VStack(alignment: .leading, spacing: 2) {
                 Text(log.workoutName ?? "Workout").font(ExecuteTypography.label(14).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
-                Text(log.completedAt.map { $0.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) } ?? log.date ?? "Completed session").font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.olive)
+                Text(log.activityDateLabel).font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.olive)
             }
             Spacer()
             Text(log.durationMinutes.map { "\(Int($0)) min" } ?? "Done").font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.chartreuseDark)

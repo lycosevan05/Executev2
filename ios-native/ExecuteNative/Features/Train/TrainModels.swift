@@ -73,6 +73,21 @@ struct TrainWorkoutLog: Codable, Sendable {
     }
 }
 
+extension TrainWorkoutLog {
+    var activityDateLabel: String {
+        if let date {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            if let parsed = formatter.date(from: date) {
+                return parsed.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+            }
+            return date
+        }
+        return completedAt?.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) ?? "Completed session"
+    }
+}
+
 struct WorkoutSessionExerciseLog: Codable, Equatable, Sendable {
     let exIdx: Int
     let name: String

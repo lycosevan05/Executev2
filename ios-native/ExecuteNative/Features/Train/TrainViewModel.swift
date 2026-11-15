@@ -484,7 +484,7 @@ final class WorkoutSessionViewModel: ObservableObject {
             (workout.payload.sourcePlanID == nil || sameID($0.payload.sourcePlanID, workout.payload.sourcePlanID)) &&
             (workout.payload.generationBatchID == nil || $0.payload.generationBatchID == workout.payload.generationBatchID)
         } ?? records.first { $0.payload.date == date }
-        let values: [String: JSONValue] = [
+        var values: [String: JSONValue] = [
             "workout_done": .bool(true),
             "workout_duration_min": .number(Double(duration)),
             "workout_type": .string(workout.payload.name ?? "Workout"),
@@ -492,6 +492,7 @@ final class WorkoutSessionViewModel: ObservableObject {
         ]
 
         if let linked {
+            values.merge(DailyActivityChecklist.patch(daily: linked.metadata.data, workoutDone: true, workoutTitle: workout.payload.name)) { _, new in new }
             let _: EntityRecord<WorkoutSessionDailyLog> = try await dataService.update(.dailyLogs, id: linked.id, patch: .object(values))
         } else {
             let payload = WorkoutSessionDailyLog(

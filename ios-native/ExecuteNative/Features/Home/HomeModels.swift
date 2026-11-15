@@ -496,3 +496,51 @@ extension JSONValue {
         try? decoded(as: type)
     }
 }
+
+
+/// Reconcile activity-backed task completion without rewriting unrelated DailyLog fields.
+enum DailyActivityChecklist {
+    static func patch(daily: JSONValue, workoutDone: Bool? = nil, nutritionDone: Bool? = nil, workoutTitle: String? = nil, now: Date = .now) -> [String: JSONValue] {
+        let flags = ["workout": workoutDone, "nutrition": nutritionDone]
+        var result: [String: JSONValue] = [:]
+        var completed = Set(array(daily["plan_items_completed"]).compactMap(\.stringValue))
+        for key in ["checklist_items", "planned_checklist_items"] {
+            guard case .array(let items) = daily[key] else { continue }
+            result[key] = .array(items.map { item in
+                guard var object = item.objectValue,
+                      let type = object["type"]?.stringValue,
+                      let flag = flags[type] ?? nil else { return item }
+                object["completed"] = .bool(flag)
+                if object["status"] != nil { object["status"] = .string(flag ? "completed" : "planned") }
+                if flag {
+                    object["completed_at"] = object["completed_at"] ?? .string(ISO8601DateFormatter().string(from: now))
+                } else { object.removeValue(forKey: "completed_at") }
+                if let id = object["id"]?.stringValue {
+                    if flag { completed.insert(id) } else { completed.remove(id) }
+                }
+                if object["source"] == .string("placeholder") {
+                    if type == "workout", let workoutTitle {
+                        object["title"] = .string(workoutTitle); object["source"] = .string("workout_plan")
+                    } else if type == "nutrition" {
+                        object["title"] = .string("Planned meals"); object["source"] = .string("meal_plan")
+                    }
+                }
+                return .object(object)
+            })
+        }
+        let checklist = array(result["checklist_items"] ?? result["planned_checklist_items"])
+        guard !checklist.isEmpty else { return result }
+        let count = checklist.filter { item in
+            item["completed"] == .bool(true) || item["id"]?.stringValue.map { completed.contains($0) } == true
+        }.count
+        result["plan_items_completed"] = .array(completed.sorted().map(JSONValue.string))
+        result["checklist_total_count"] = .number(Double(checklist.count))
+        result["checklist_completed_count"] = .number(Double(count))
+        result["checklist_adherence_pct"] = .number(Double(count) / Double(checklist.count) * 100)
+        return result
+    }
+
+    private static func array(_ value: JSONValue?) -> [JSONValue] {
+        if case .array(let items) = value { return items }; return []
+    }
+}

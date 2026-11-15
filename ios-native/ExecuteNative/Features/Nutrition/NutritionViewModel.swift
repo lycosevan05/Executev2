@@ -498,22 +498,28 @@ final class NutritionViewModel: ObservableObject {
         daily.setConsumedTotals(totals)
         snapshot.dailyLog = daily
 
-        let patch: JSONValue = .object([
+        var values: [String: JSONValue] = [
             "calories_consumed": .number(totals.calories),
             "protein_consumed_g": .number(totals.protein),
             "carbs_consumed_g": .number(totals.carbs),
             "fats_consumed_g": .number(totals.fats),
             "meals_completed": .array((daily.mealsCompleted ?? []).map(JSONValue.string))
-        ])
+        ]
 
         do {
             let record: EntityRecord<NutritionDailyLog>
-            if snapshot.dailyLogID == nil {
-                let existing: [EntityRecord<NutritionDailyLog>] = try await dataService.list(.dailyLogs, orderBy: "-updated_date", limit: 100)
-                snapshot.dailyLogID = existing.first { $0.payload.date == dateString }?.id
-            }
-            if let dailyLogID = snapshot.dailyLogID {
-                record = try await dataService.update(.dailyLogs, id: dailyLogID, patch: patch)
+            let existing: [EntityRecord<NutritionDailyLog>] = try await dataService.list(.dailyLogs, orderBy: "-updated_date", limit: 100)
+            guard user?.id == savingUser.id else { return }
+            let latest = existing.first { $0.id == snapshot.dailyLogID && $0.payload.date == dateString }
+                ?? existing.first { $0.payload.date == dateString }
+            if let latest {
+                let plannedTypes = Set(snapshot.mealPlan?.resolvedMeals.map { $0.type.lowercased() } ?? [])
+                let completedTypes = Set((daily.mealsCompleted ?? []).map { $0.lowercased() })
+                values.merge(DailyActivityChecklist.patch(daily: latest.metadata.data,
+                    workoutDone: latest.metadata.data["workout_done"]?.boolValue,
+                    nutritionDone: plannedTypes.isEmpty ? nil : plannedTypes.isSubset(of: completedTypes),
+                    workoutTitle: latest.metadata.data["workout_type"]?.stringValue)) { _, new in new }
+                record = try await dataService.update(.dailyLogs, id: latest.id, patch: .object(values))
             } else {
                 record = try await dataService.create(.dailyLogs, payload: daily, user: savingUser)
             }

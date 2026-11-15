@@ -714,6 +714,7 @@ private struct NutritionManualEntrySheet: View {
                 .keyboardType(.decimalPad)
                 .focused($focusedField, equals: field)
                 .nutritionField()
+                .accessibilityLabel(title)
         }
     }
 
