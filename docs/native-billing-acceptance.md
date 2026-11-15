@@ -1,6 +1,6 @@
 # Native billing acceptance
 
-This is the remaining acceptance runbook for `com.executelabs.execute.native-dev`.
+Current scope/status is authoritative in [the native completion checklist](native-parity-audit.md), W11–W15/G06. This file retains dated billing evidence and case procedures for `com.executelabs.execute.native-dev`; older blocker statements are historical. Local StoreKit Code3 was resolved by the four-case November9 pass below. Physical alternate-device provisioning is a separate current G02 gate; do not restart the closed Code3 investigation.
 The dated evidence in [the parity audit](native-parity-audit.md) remains the record
 of completed physical tests. A fixture pass does not establish a sandbox pass.
 

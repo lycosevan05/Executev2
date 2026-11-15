@@ -1,5 +1,7 @@
 # Execute → Native SwiftUI Migration Assessment
 
+> Historical architecture/cost assessment, not current completion status. Use the [authoritative 45-workflow completion checklist](native-parity-audit.md) for retained scope, acceptance and release gates.
+
 > Scope: replace the entire web frontend + Capacitor shell with a native SwiftUI app while
 > **keeping the Supabase backend, edge functions, and RevenueCat project unchanged**.
 > Every claim below is grounded in a file actually present in this repo.

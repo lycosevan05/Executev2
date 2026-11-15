@@ -41,6 +41,8 @@ These arguments are compiled out of Release behavior and must not be used as an 
 
 ## Native migration status
 
+**Authoritative definition of done:** [Native migration completion checklist](../docs/native-parity-audit.md). Version1 fixes45 required workflows:16 functionally accepted,29 open, plus9 separate release gates. Counts are workflows, not test methods; no completion percentages. The ledger distinguishes implementation, fixtures, normal simulator/provider/database and physical evidence, and replaces stale “missing destination”/next-step claims. Historical notes below remain evidence only.
+
 The foundation includes typed auth, generic entity CRUD, `patch_record`, Edge Function invocation, cache consistency, AI response normalization, typed navigation, and RevenueCat entitlement state.
 
 - Home is implemented as a native dashboard.
@@ -57,7 +59,7 @@ The existing Capacitor behavior remains the reference contract while each vertic
 
 Native planned-meal logging and same-record food correction are implemented. Source links distinguish actual intake from planned estimates and avoid counting a linked meal twice. Workout persistence accepts historical SDK timestamps and writes new payload dates with explicit UTC zones; exact-workout/date resume and visible DailyLog synchronization errors replace loose parent-plan matching and silent completion errors.
 
-The November15 continuation verified normal signed simulator workout resumption/completion, planned meal logging, same-record correction, deletion/relogging, unrelated-food preservation and full relaunch restoration. Independent SELECTs confirmed one completed workout, four intended food entries and the same DailyLog, with unchanged master/child-plan, goal, profile and older-log payload checksums. Activity-backed checklist IDs, arrays and counters now agree across screens; history uses the saved activity date. Automatic goal tracking remains pending. Physical daily-use acceptance is now verified as described below. The pre-existing generated workout duration45minutes differs from the supplied approximately30minutes; it remains recorded for follow-up. This scoped acceptance does not establish complete migration or release parity.
+The November15 continuation verified normal signed simulator workout resumption/completion, planned meal logging, same-record correction, deletion/relogging, unrelated-food preservation and full relaunch restoration. Independent SELECTs confirmed one completed workout, four intended food entries and the same DailyLog, with unchanged master/child-plan, goal, profile and older-log payload checksums. Activity-backed checklist IDs, arrays and counters now agree across screens; history uses the saved activity date. Foreground automatic tracking is now scoped accepted; plan-derived/legacy tracking remains W43. Physical daily-use acceptance is now verified as described below. The pre-existing generated workout duration45minutes differs from the supplied approximately30minutes; it remains recorded for follow-up. This scoped acceptance does not establish complete migration or release parity.
 
 The subsequent physical iPhone repeat used normal signing and distinct synthetic dates: Nov16 workout A and Nov15 meals, preserving the simulator Nov13 records. Two recorded sets survived backgrounding and full termination/relaunch; completion reused the same log (6sets,2exercises,3estimated minutes/108estimated kcal). Three planned meals were logged, breakfast corrected on its same record, an unrelated snack retained and lunch deleted. Full relaunch restored1450kcal/100P/170C/35F and2of3planned meals.
 
@@ -69,7 +71,7 @@ Home build actions, Train, Nutrition and My Week open the date-specific workout/
 
 BYO workouts retain the supplied exercise count/order/names/sets/reps; daily meal names and structure remain authoritative. Missing details are filled from current profiles/restrictions, readiness and the selected date. Manual nutrition targets override plan targets. Meal totals are computed from model-provided per-meal estimates and checked against targets; ingredients are not independently nutrient-calibrated. One validation correction is allowed, while network errors and clarification requests stop. Preview/save attempts persist locally per account/date/type under the deletion-purge prefix, use stable tokens, and revalidate the current plan/context before a new write. New saves require a preview no older than30minutes; acknowledged retry reconciliation remains available. Client checks do not supply server-enforced cross-device uniqueness.
 
-Scoped simulator acceptance is recorded in `docs/DECISIONS.md` and the Execute Document. It does not establish independent SQL/count verification, billing-provider acceptance, real account deletion, physical-device or release parity. Camera/barcode, meal editing and storage call sites remain separate work.
+Current acceptance and remaining cases are in the authoritative checklist W19–W20, W27–W34 and release gates. Later independent SQL and physical readback supersede this initial slice status; historical fixture/provider evidence is not full release acceptance. Persistent photo transport/storage is not an additional user workflow without a retained action.
 
 ## RevenueCat development setup
 
