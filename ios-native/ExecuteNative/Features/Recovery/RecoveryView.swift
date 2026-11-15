@@ -214,7 +214,8 @@ struct RecoveryDashboardView: View {
                                     .accessibilityIdentifier("recovery.task.\(id)")
                             } else { Text(task["title"]?.stringValue ?? "Recovery task").font(.headline) }
                             if let text = task["description"]?.stringValue { Text(text) }
-                            if let minutes = task["duration_minutes"] { Text("\(minutes.recoveryText) min").font(.caption) }
+                            if let duration = task["duration_text"]?.stringValue { Text(duration).font(.caption) }
+                            else if let minutes = task["duration_minutes"], minutes != .null { Text("\(minutes.recoveryText) min").font(.caption) }
                         }
                     }
                 }

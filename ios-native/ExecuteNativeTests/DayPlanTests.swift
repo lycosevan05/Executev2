@@ -11,6 +11,65 @@ final class DayPlanTests: XCTestCase {
             defaults: defaults ?? UserDefaults(suiteName: "DayDraft.\(UUID())")!, premium: premium, canWrite: canWrite)
     }
 
+    func testExplicitDurationKeepsApproximationRangesAndDoesNotGuessFromRest() throws {
+        XCTAssertEqual(StatedPlanDuration.explicit(in: "gentle five-minute evening mobility")?.minutes, 5)
+        XCTAssertEqual(StatedPlanDuration.explicit(in: "about thirty minutes"), StatedPlanDuration(text: "about thirty minutes", minutes: 30))
+        XCTAssertEqual(StatedPlanDuration.explicit(in: "1.5 hours")?.minutes, 90)
+        XCTAssertEqual(StatedPlanDuration.explicit(in: "20–30 minutes")?.text, "20–30 minutes")
+        XCTAssertNil(StatedPlanDuration.explicit(in: "20–30 minutes")?.minutes)
+        for text in ["no duration", "0 minutes", "-5 minutes", "5 minutes warmup and 20 minutes training", "3000 minutes", "30 to 20 minutes", "one hundred thirty minutes", "two thousand five minutes", "- 5 minutes"] {
+            XCTAssertNil(StatedPlanDuration.explicit(in: text), text)
+        }
+        XCTAssertNil(StatedPlanDuration.globalSession(in: "Rest sixty seconds. Finish with five minutes of mobility."))
+        XCTAssertEqual(StatedPlanDuration.globalSession(in: "Each session lasts about thirty minutes at a comfortable effort. Rest sixty seconds.")?.minutes, 30)
+    }
+
+    private func durationMaster() -> JSONValue {
+        let exercise: JSONValue = .object(["name": .string("Squat"), "sets": .number(3), "reps": .string("8")])
+        return .object(["plan_type": .string("daily"), "status": .string("active"), "date_range_start": .string(date),
+            "training_split": .object(["session_length_minutes": .number(45)]),
+            "plan_payload": .object(["byo_workout_text": .string("Each session lasts about thirty minutes at a comfortable effort. Finish with five minutes of mobility."),
+                "questionnaire": .object(["sessionLength": .string("45")]),
+                "byo_structured": .object(["workout": .object(["cadence": .object(["type": .string("weekly")]),
+                    "weekly_sessions": .array([.object(["weekday": .number(5), "title": .string("Supplied"), "exercises": .array([exercise])])])])])])])
+    }
+
+    func testLegacySuppliedDurationOverridesDefaultWithoutChangingMaster() throws {
+        let master = durationMaster()
+        let supplied = try XCTUnwrap(DayPlanLogic.supplied(master, date: date, kind: .workout))
+        XCTAssertEqual(supplied["duration"], .string("about thirty minutes"))
+        var raw = Self.workout().objectValue!; raw["exercises"] = .array([Self.exercise("Squat")]); raw["duration"] = .string("45 minutes")
+        let result = try DayPlanLogic.validated(.object(raw), kind: .workout, date: date, master: master)
+        XCTAssertEqual(result["duration"], .string("about thirty minutes"))
+        XCTAssertEqual(master["training_split"]?["session_length_minutes"], .number(45))
+        let prompt = try DayPlanLogic.request(kind: .workout, date: date, master: master, context: .object([:])).prompt
+        XCTAssertTrue(prompt.contains("about thirty minutes")); XCTAssertTrue(prompt.contains("overrides questionnaire"))
+    }
+
+    func testPerSessionAndWeekdayOverrideDurationsBeatGlobalForRotatingCadence() throws {
+        var master = durationMaster().objectValue!
+        master["byo_structured"] = .object(["workout": .object(["session_duration": .string("30 minutes"),
+            "cadence": .object(["type": .string("rotating"), "advance": .string("daily"), "cycle": .array([
+                .object(["label": .string("Long"), "duration": .string("40–50 minutes"), "exercises": .array([Self.exercise("Squat")])])])])])])
+        XCTAssertEqual(try DayPlanLogic.supplied(.object(master), date: date, kind: .workout)?["duration"], .string("40–50 minutes"))
+        master["split_overrides"] = .object(["Friday": .object(["label": .string("Short"), "day_type": .string("training"), "duration": .string("15 minutes"), "exercises": .array([Self.exercise("Squat")])])])
+        XCTAssertEqual(try DayPlanLogic.supplied(.object(master), date: date, kind: .workout)?["duration"], .string("15 minutes"))
+    }
+
+    func testRestoredOldDurationPreviewCannotCreateButAcknowledgedSaveStillLoads() async throws {
+        let data = DayData(), ai = DayAI(), defaults = UserDefaults(suiteName: "DurationDraft.\(UUID())")!
+        let master = durationMaster(); data.rows[.aiPlans] = [DayData.row(master, id: data.masterID)]
+        var payload = Self.workout().objectValue!; payload["duration"] = .string("45 minutes")
+        payload["date"] = .string(date); payload["source_plan_id"] = .string(data.masterID.uuidString); payload["native_mutation_id"] = .string("old-preview")
+        let draft = DayPlanDraft(masterID: data.masterID, master: master, context: .object([:]), payload: .object(payload), generatedAt: Date())
+        defaults.set(try JSONEncoder().encode(draft), forKey: "execute.cache.\(user.id.uuidString).day-plan.workout.\(date)")
+        let model = model(data, ai, defaults: defaults); await model.start(for: user); await model.save()
+        XCTAssertEqual(data.creates, 0); XCTAssertNotNil(model.error); XCTAssertNotNil(model.preview)
+        data.rows[.workoutPlans] = [DayData.row(.object(payload))]
+        await model.save()
+        XCTAssertEqual(data.creates, 0); XCTAssertNotNil(model.saved); XCTAssertNil(model.preview)
+    }
+
     func testPreviewNeverWritesAndSaveOnlyCreatesRequestedChild() async {
         for kind in [DayPlanKind.workout, .meals] {
             let data = DayData(), ai = DayAI(), model = model(data, ai, kind: kind)

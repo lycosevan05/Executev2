@@ -615,3 +615,24 @@ extension PlanImportTests {
         XCTAssertNil(draft.load(user: user.id))
     }
 }
+
+
+extension PlanImportTests {
+    func testBYONormalizationAndMappingPreserveGlobalAndPerSessionDuration() throws {
+        let normalized = try BYOPlan.validated(Self.structured(), sides: ["workout"], workoutText: "Each session lasts about thirty minutes. Rest sixty seconds.")
+        XCTAssertEqual(normalized["workout"]?["session_duration"], .string("about thirty minutes"))
+        let dates = ["2026-11-13", "2026-11-14", "2026-11-15"]
+        let overview: JSONValue = .object(["training_split": .object(["session_length_minutes": .number(45)]), "weekly_overview": .object(["days": .array(dates.map { .object(["date": .string($0)]) })])])
+        let mapped = BYOPlan.mapped(overview, structured: normalized)
+        XCTAssertEqual(mapped["training_split"]?["session_length_minutes"], .number(30))
+        XCTAssertEqual(mapped["weekly_overview"]?["days"]?.recoveryArray?.first?["byo_session"]?["duration"], .string("about thirty minutes"))
+        var workout = normalized["workout"]!.objectValue!, sessions = workout["weekly_sessions"]!.recoveryArray!
+        var first = sessions[0].objectValue!; first["duration"] = .string("20–25 minutes"); sessions[0] = .object(first)
+        workout["weekly_sessions"] = .array(sessions)
+        let varied = BYOPlan.mapped(overview, structured: .object(["workout": .object(workout)]))
+        XCTAssertNil(varied["training_split"]?["session_length_minutes"])
+        XCTAssertEqual(varied["weekly_overview"]?["days"]?.recoveryArray?.last?["byo_session"]?["duration"], .string("20–25 minutes"))
+        let request = try BYOPlan.request(.object([:]))
+        XCTAssertNotNil(request.responseJSONSchema?["properties"]?["structured"]?["properties"]?["workout"]?["properties"]?["session_duration"])
+    }
+}

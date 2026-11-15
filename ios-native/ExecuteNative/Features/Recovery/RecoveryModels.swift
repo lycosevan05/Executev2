@@ -122,7 +122,7 @@ enum RecoveryDailyProjection {
             "date": .string(date), "source": .string(RecoverySelection.source(plan) ?? "plan_questionnaire_overview"),
             "source_plan_id": .string(plan.id.uuidString.lowercased()), "generation_batch_id": plan.data["generation_batch_id"] ?? .string(""),
             "planned_checklist_items": .array(checklist), "checklist_items": .array(checklist),
-            "planned_recovery_tasks": existing?.data["planned_recovery_tasks"] ?? .array([.object(["id": .string("recovery_\(date)_1"), "type": .string("recovery"), "title": .string(focus), "description": .string(focus), "duration_minutes": .number(10), "status": .string("planned")])]),
+            "planned_recovery_tasks": recoveryTasks(focus: focus, date: date, existing: existing),
             "checklist_total_count": .number(Double(checklist.count)), "checklist_completed_count": .number(Double(count)),
             "checklist_adherence_pct": .number(floor(Double(count) / Double(checklist.count) * 100 + 0.5)),
             "daily_plan_source": .string("deterministic_from_ai_plan")]
@@ -130,6 +130,35 @@ enum RecoveryDailyProjection {
         // Avoid a write on every reload when the deterministic projection already matches.
         if let existing, patch.allSatisfy({ existing.data[$0.key] == $0.value }) { return nil }
         return .object(patch)
+    }
+    private static func recoveryTasks(focus: String, date: String, existing: BackendRow?) -> JSONValue {
+        let id = "recovery_\(date)_1"
+        let duration = StatedPlanDuration.explicit(in: focus)
+        func applyDuration(_ fields: [String: JSONValue]) -> JSONValue {
+            var fields = fields
+            fields.removeValue(forKey: "duration_minutes")
+            fields.removeValue(forKey: "duration_text")
+            if let duration {
+                fields["duration_text"] = .string(duration.text)
+                if let minutes = duration.minutes { fields["duration_minutes"] = .number(minutes) }
+            }
+            fields["duration_source"] = .string(duration == nil ? "unspecified" : "plan_text")
+            return .object(fields)
+        }
+        if let tasks = existing?.data["planned_recovery_tasks"]?.recoveryArray {
+            let completed = existing?.data["plan_items_completed"]?.recoveryArray ?? []
+            return .array(tasks.map { task in
+                // Repair only the recognizable old projection default; preserve custom/completed tasks.
+                guard existing?.data["daily_plan_source"] == .string("deterministic_from_ai_plan"),
+                      task["id"] == .string(id), task["title"] == .string(focus), task["description"] == .string(focus),
+                      task["duration_minutes"] == .number(10), task["duration_source"] == nil,
+                      task["status"] == .string("planned"), task["completed"] != .bool(true),
+                      !completed.contains(.string(id)), let fields = task.objectValue else { return task }
+                return applyDuration(fields)
+            })
+        }
+        return .array([applyDuration(["id": .string(id), "type": .string("recovery"),
+            "title": .string(focus), "description": .string(focus), "status": .string("planned")])])
     }
 }
 

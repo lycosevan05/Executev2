@@ -504,3 +504,35 @@ extension RecoveryTests {
         XCTAssertTrue(final["plan_items_completed"]!.recoveryArray!.contains(.number(99)))
     }
 }
+
+
+extension RecoveryTests {
+    func testRecoveryDurationUsesExplicitFocusAndLeavesUnknownDurationAbsent() throws {
+        for (focus, minutes) in [("Gentle five-minute evening mobility", Optional(5.0)), ("Gentle mobility", nil), ("Gentle 5–10 minute mobility", nil)] {
+            let plan = RecoveryFixtureRepository.row(["weekly_overview": .object(["days": .array([.object(["date": .string("2026-10-31"), "workout_needed": .bool(false), "recovery_focus": .string(focus)])])])])
+            let patch = try XCTUnwrap(RecoveryDailyProjection.patch(plan: plan, date: "2026-10-31", existing: nil))
+            let task = try XCTUnwrap(patch["planned_recovery_tasks"]?.recoveryArray?.first)
+            XCTAssertEqual(task["duration_minutes"]?.doubleValue, minutes)
+            if focus.contains("5–10") { XCTAssertEqual(task["duration_text"], .string("5–10 minute")) }
+            if focus == "Gentle mobility" { XCTAssertNil(task["duration_text"]) }
+        }
+    }
+
+    func testRecoveryRepairsOnlyPendingLegacyDefaultAndPreservesCustomCompletedTasks() throws {
+        let date = "2026-10-31", focus = "Gentle five-minute evening mobility"
+        let plan = RecoveryFixtureRepository.row(["weekly_overview": .object(["days": .array([.object(["date": .string(date), "workout_needed": .bool(false), "recovery_focus": .string(focus)])])])])
+        let task: JSONValue = .object(["id": .string("recovery_\(date)_1"), "title": .string(focus), "description": .string(focus), "duration_minutes": .number(10), "status": .string("planned"), "unknown": .string("keep")])
+        let custom: JSONValue = .object(["id": .string("custom"), "duration_minutes": .number(7)])
+        for completed in [false, true] {
+            var fields: [String: JSONValue] = ["date": .string(date), "daily_plan_source": .string("deterministic_from_ai_plan"), "water_ml": .number(1200),
+                "planned_recovery_tasks": .array([task, custom]), "plan_items_completed": .array(completed ? [.string("recovery_\(date)_1")] : [])]
+            let patch = try XCTUnwrap(RecoveryDailyProjection.patch(plan: plan, date: date, existing: RecoveryFixtureRepository.row(fields)))
+            let tasks = try XCTUnwrap(patch["planned_recovery_tasks"]?.recoveryArray)
+            XCTAssertEqual(tasks[0]["duration_minutes"], .number(completed ? 10 : 5))
+            XCTAssertEqual(tasks[0]["unknown"], .string("keep")); XCTAssertEqual(tasks[1], custom)
+            XCTAssertNil(patch["water_ml"])
+            fields.merge(patch.objectValue!) { _, new in new }
+            XCTAssertNil(RecoveryDailyProjection.patch(plan: plan, date: date, existing: RecoveryFixtureRepository.row(fields)))
+        }
+    }
+}

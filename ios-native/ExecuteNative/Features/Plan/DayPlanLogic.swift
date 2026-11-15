@@ -6,6 +6,57 @@ enum DayPlanKind: String, Codable, Hashable, Sendable {
     var table: EntityTable { self == .workout ? .workoutPlans : .mealPlans }
 }
 
+
+/// Reads explicit duration statements only; never estimates from exercise counts or unrelated timing.
+struct StatedPlanDuration: Equatable {
+    let text: String
+    let minutes: Double?
+
+    static func explicit(in text: String) -> Self? {
+        let ones = "one|two|three|four|five|six|seven|eight|nine"
+        let words = "(?:\(ones)|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[ -](?:\(ones)))?)"
+        let number = "(?:[0-9]+(?:\\.[0-9]+)?|\(words))"
+        let pattern = "(?i)(?<![\\w.−-])(?:(?:about|approximately|around|roughly)\\s+)?(\(number))(?:\\s*(?:-|–|to)\\s*(\(number)))?\\s*[-–]?\\s*(minutes?|mins?|hours?|hrs?)\\b"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        guard matches.count == 1, let match = matches.first, let full = Range(match.range, in: text),
+              let first = Range(match.range(at: 1), in: text), let unit = Range(match.range(at: 3), in: text) else { return nil }
+        // Reject a supported suffix of an unsupported quantity ("one hundred thirty")
+        // and separated negative signs rather than silently turning either into a shorter duration.
+        let prefix = text[..<full.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let previous = prefix.split(whereSeparator: { !$0.isLetter }).last.map(String.init)
+        guard !prefix.hasSuffix("-"), !prefix.hasSuffix("−"),
+              !["hundred", "thousand", "million", "and"].contains(previous ?? "") else { return nil }
+        func value(_ word: String) -> Double? {
+            if let number = Double(word) { return number }
+            let formatter = NumberFormatter(); formatter.locale = Locale(identifier: "en_US"); formatter.numberStyle = .spellOut
+            return formatter.number(from: word.lowercased().replacingOccurrences(of: "-", with: " "))?.doubleValue
+        }
+        let factor = text[unit].lowercased().hasPrefix("h") ? 60.0 : 1.0
+        guard let start = value(String(text[first])), start > 0, start * factor <= 1440 else { return nil }
+        if let end = Range(match.range(at: 2), in: text) {
+            guard let finish = value(String(text[end])), finish >= start, finish * factor <= 1440 else { return nil }
+            return Self(text: String(text[full]), minutes: nil) // Preserve a range, do not invent a midpoint.
+        }
+        return Self(text: String(text[full]), minutes: start * factor)
+    }
+
+    static func globalSession(in text: String?) -> Self? {
+        guard let text, let regex = try? NSRegularExpression(pattern: #"(?i)\b(?:each|every|all)\s+(?:(?:training|workout)\s+)?sessions?\s+(?:lasts?|takes?|is|are|should last|should take)\s+[^.!?;\n]+"#) else { return nil }
+        let values = regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match -> Self? in
+            guard let range = Range(match.range, in: text) else { return nil }
+            return explicit(in: String(text[range]))
+        }
+        guard values.count == 1 else { return nil }
+        return values.first
+    }
+
+    static func label(in payload: JSONValue?) -> String? {
+        guard let text = payload?["duration"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text.count <= 160 else { return nil }
+        return text
+    }
+}
+
 enum DayPlanLogic {
     static func date(_ value: String) -> Date? {
         let formatter = DateFormatter()
@@ -31,13 +82,31 @@ enum DayPlanLogic {
     }
 
     static func supplied(_ master: JSONValue, date target: String, kind: DayPlanKind) throws -> JSONValue? {
+        guard let selected = try selectedSupplied(master, date: target, kind: kind) else { return nil }
+        guard kind == .workout, var session = selected.objectValue else { return selected }
+        if StatedPlanDuration.label(in: selected) == nil, override(master, date: target) == nil {
+            let workout = value("byo_structured", in: master)?["workout"]
+            let legacy = value("byo_workout_text", in: master)?.stringValue
+                ?? master["plan_payload"]?["questionnaire"]?["byoWorkoutText"]?.stringValue
+            if let duration = workout?["session_duration"]?.stringValue, !duration.isEmpty {
+                session["duration"] = .string(duration)
+            } else if let stated = StatedPlanDuration.globalSession(in: legacy) {
+                session["duration"] = .string(stated.text)
+            }
+        }
+        return .object(session)
+    }
+
+    private static func selectedSupplied(_ master: JSONValue, date target: String, kind: DayPlanKind) throws -> JSONValue? {
         guard let targetDate = date(target) else { throw invalid("Choose a valid date.") }
         let day = day(master, date: target)
         let override = override(master, date: target)
         if kind == .workout, let override {
             if override["day_type"] == .string("rest") { return nil }
             if let exercises = override["exercises"]?.recoveryArray, !exercises.isEmpty {
-                return .object(["title": override["label"] ?? .string("Your session"), "exercises": .array(exercises)])
+                var session = override.objectValue ?? [:]
+                session["title"] = override["label"] ?? .string("Your session"); session["exercises"] = .array(exercises)
+                return .object(session)
             }
             return nil // A type-only user override takes priority over the supplied cadence.
         }
@@ -80,7 +149,9 @@ enum DayPlanLogic {
         }
         let session = cycle[modulo(index, cycle.count)]
         if session["is_rest"] == .bool(true) { return nil }
-        return .object(["title": session["label"] ?? .string("Your session"), "exercises": session["exercises"] ?? .array([])])
+        var values = session.objectValue ?? [:]
+        values["title"] = session["label"] ?? .string("Your session"); values["exercises"] = session["exercises"] ?? .array([])
+        return .object(values)
     }
 
     static func isRest(_ master: JSONValue, date: String) throws -> Bool {
@@ -126,7 +197,7 @@ enum DayPlanLogic {
         let instructions = kind == .workout ? """
         Return name, type, duration, intensity, workout_summary, warmup, cooldown, exercises, modifications and safety_notes.
         Each exercise has name, sets (number), reps (string), rest, muscles and notes. Normally 4–8 exercises.
-        If supplied_for_this_date has exercises, reproduce exactly that count/order/names and every supplied sets/reps/notes value; fill only missing details. Do not add exercises. User weekday overrides win. Respect equipment, limitations and readiness; do not diagnose injuries.
+        If supplied_for_this_date has exercises, reproduce exactly that count/order/names and every supplied sets/reps/notes value; fill only missing details. Do not add exercises. If supplied_for_this_date.duration is present, copy it exactly, including approximate wording or ranges; it overrides questionnaire/profile/default session length. Fit warmup, exercises, rests and cooldown within that supplied session. User weekday overrides win. Respect equipment, limitations and readiness; do not diagnose injuries.
         """ : """
         Return meals (array), grocery_items, hydration_liters and notes. Each meal has meal_type, name, calories, protein, carbs, fats, ingredients (strings), instructions, prep_time_minutes and notes.
         Normally include breakfast, lunch and dinner, and optionally snack. When supplied_for_this_date has example_meals, reproduce exactly those names/order/count with corresponding meal_type; fill missing ingredients/portions/instructions/macros only. Do not silently replace supplied meals. Follow effective nutrition_targets, including manual overrides. Respect ALL allergies, dietary restrictions and disliked foods from the context and questionnaire.
@@ -189,7 +260,10 @@ enum DayPlanLogic {
                 for key in ["name", "reps", "rest", "notes"] { try text(items[i][key], key) }
                 guard let sets = items[i]["sets"]?.doubleValue, sets.isFinite, (1...30).contains(sets), sets.rounded() == sets else { throw invalid("Invalid set count.") }
             }
-            if let supplied { object["name"] = supplied["title"] ?? object["name"]; object["byo_session"] = supplied }
+            if let supplied {
+                object["name"] = supplied["title"] ?? object["name"]; object["byo_session"] = supplied
+                if let duration = StatedPlanDuration.label(in: supplied) { object["duration"] = .string(duration) }
+            }
         } else {
             let examples = supplied?["example_meals"]?.recoveryArray
             guard (3...8).contains(items.count), examples == nil || examples?.isEmpty == true || items.count == examples?.count else { throw invalid("The meal count did not match your supplied day.") }

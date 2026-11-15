@@ -195,7 +195,7 @@ final class PlanViewModel: ObservableObject {
                     editStatus = "Clarify your supplied plan below, then generate the preview again."
                     persistSetupDraft(); return
                 }
-                let structured = try BYOPlan.validated(result, sides: questionnaire.byoTargets)
+                let structured = try BYOPlan.validated(result, sides: questionnaire.byoTargets, workoutText: questionnaire.byoWorkoutText)
                 var values = answers.objectValue!
                 values["byo_structured"] = structured
                 // Only the canonical enum from the structured supplied routine may change the activity multiplier.

@@ -145,6 +145,11 @@ final class DayPlanViewModel: ObservableObject {
             } else if let existing {
                 record = existing // Another request saved this day; reuse it instead of creating another row.
             } else {
+                if kind == .workout,
+                   let duration = StatedPlanDuration.label(in: try DayPlanLogic.supplied(active.payload, date: date, kind: .workout)),
+                   draft.payload["duration"] != .string(duration) {
+                    throw DayPlanLogic.invalid("This restored preview does not match your supplied duration. Discard it and generate a fresh preview before saving.")
+                }
                 guard Date().timeIntervalSince(draft.generatedAt) <= 30 * 60 else { throw DayPlanLogic.invalid("This preview is over 30 minutes old. Discard it and generate a fresh preview.") }
                 let context = try await loadContext(data, request: request)
                 try requireWrite(user.id, request: request)
