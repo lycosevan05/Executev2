@@ -47,7 +47,8 @@ private struct NutritionScreen: View {
             model: model,
             presentation: presentation,
             isPremium: appState.premiumState.isPremium,
-            captureContent: { kind in AnyView(FoodCaptureSheet(kind: kind, nutrition: model, environment: captureEnvironment)) }
+            captureContent: { kind in AnyView(FoodCaptureSheet(kind: kind, nutrition: model, environment: captureEnvironment)) },
+            recipesContent: { AnyView(RecipeLibrarySheet(environment: captureEnvironment)) }
         )
         .task(id: signedInUser?.id) {
             if let signedInUser { await model.start(for: signedInUser) }
@@ -66,6 +67,7 @@ private enum NutritionSheet: String, Identifiable {
     case ai
     case photo
     case barcode
+    case recipes
     var id: String { rawValue }
 }
 
@@ -74,6 +76,7 @@ struct NutritionDashboardView: View {
     let presentation: NutritionPresentation
     let isPremium: Bool
     var captureContent: ((FoodCaptureKind) -> AnyView)? = nil
+    var recipesContent: (() -> AnyView)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var activeSheet: NutritionSheet?
@@ -93,6 +96,10 @@ struct NutritionDashboardView: View {
                 }
 
                 NutritionSummaryCard(model: model)
+
+                if recipesContent != nil {
+                    ExecuteSecondaryButton(title: "My cookbook") { activeSheet = .recipes }
+                }
 
                 ExecuteSecondaryButton(title: model.snapshot.mealPlan == nil ? "Build meals for this day" : "View meal plan details") {
                     model.openMealPlan()
@@ -149,6 +156,8 @@ struct NutritionDashboardView: View {
             case .photo, .barcode:
                 if let captureContent { captureContent(sheet == .photo ? .photo : .barcode) }
                 else { Text("Food capture is unavailable in this preview.") }
+            case .recipes:
+                if let recipesContent { recipesContent() }
             }
         }
         .sheet(item: $pendingEdit) { record in NutritionManualEntrySheet(model: model, editing: record) }
