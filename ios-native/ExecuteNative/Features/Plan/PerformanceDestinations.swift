@@ -96,9 +96,11 @@ final class PerformanceDestinationModel: ObservableObject {
     private let cache: UserScopedCacheStore
     private var user: ExecuteUser?
     private var generation = UUID()
+    private var refreshing = false
     private var pending: Pending?
     private let defaults: UserDefaults
     private let canWrite: (UUID) -> Bool
+    private let tracker = GoalActivityTracker.shared
 
     private enum Pending: Codable {
         case create(JSONValue, String)
@@ -123,16 +125,17 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func stop() {
-        generation = UUID(); user = nil; pending = nil; hasPendingWrite = false
+        generation = UUID(); refreshing = false; user = nil; pending = nil; hasPendingWrite = false
         plan = nil; goals = []; entries = []; dailyLogs = []; workouts = []; readiness = []
         isLoading = true; isSaving = false; error = nil; writeError = nil; status = nil
     }
 
     func refresh() async {
-        guard let data, user != nil, !isSaving else { return }
+        guard let data, user != nil, !isSaving, !refreshing else { return }
         let request = generation
+        refreshing = true
         isLoading = true; error = nil
-        defer { if request == generation { isLoading = false } }
+        defer { if request == generation { isLoading = false; refreshing = false } }
         do {
             switch destination {
             case .week:
@@ -141,6 +144,12 @@ final class PerformanceDestinationModel: ObservableObject {
                 guard request == generation, !Task.isCancelled else { return }
                 plan = PlanViewModel.selectActiveRecord(plans); dailyLogs = logs
             case .goals, .progress:
+                if let user, pending == nil, canWrite(user.id) {
+                    try await tracker.synchronize(data: data, user: user, isCurrent: {
+                        request == self.generation && self.user?.id == user.id && self.canWrite(user.id) && self.pending == nil
+                    })
+                    await cache.invalidate(CacheKey("home", "dashboard"), userID: user.id)
+                }
                 let values: [EntityRecord<PerformanceGoal>] = try await data.listAll(.goals, isCurrent: { request == self.generation })
                 let history: [EntityRecord<JSONValue>] = try await data.listAll(.goalProgressEntries, isCurrent: { request == self.generation })
                 guard request == generation, !Task.isCancelled else { return }
@@ -175,10 +184,10 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func progressPoints(for id: UUID, dates: [String]) -> [PerformancePoint] {
-        PerformanceCalculations.points(entries.filter { $0.payload["goal_id"]?.stringValue?.lowercased() == id.uuidString.lowercased() }, field: "value", dates: dates)
+        PerformanceCalculations.points(entries.filter { $0.payload["goal_id"]?.stringValue?.lowercased() == id.uuidString.lowercased() && $0.payload["value"]?.doubleValue != nil }, field: "value", dates: dates)
     }
 
-    func createGoal(title: String, target: String, unit: String, start: String, decreasing: Bool) async {
+    func createGoal(title: String, target: String, unit: String, start: String, decreasing: Bool, tracking: GoalActivityMetric = .manual) async {
         guard !isSaving, pending == nil else { return }
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.count <= 160, unit.count <= 40,
@@ -189,10 +198,17 @@ final class PerformanceDestinationModel: ObservableObject {
             writeError = AppError(title: "Check your goal", message: "Enter a title and nonnegative numbers. The target must be above the starting value for an increase goal, or below it for a decrease goal."); return
         }
         let token = UUID().uuidString
-        pending = .create(.object(["title": .string(title), "target_value": .number(targetValue), "current_value": .number(startValue),
+        var fields: [String: JSONValue] = ["title": .string(title), "target_value": .number(targetValue), "current_value": .number(startValue),
             "start_value": .number(startValue), "target_direction": .string(decreasing ? "decrease" : "increase"), "unit": .string(unit),
             "category": .string("performance"), "source": .string("manual"), "status": .string("active"),
-            "start_date": .string(HomeDate.todayString), "native_mutation_id": .string(token)]), token)
+            "start_date": .string(tracking == .workouts ? GoalActivityMetric.weekStart(HomeDate.todayString) ?? HomeDate.todayString : HomeDate.todayString), "native_mutation_id": .string(token)]
+        if tracking != .manual {
+            fields["metric_source"] = .string(tracking.source); fields["metric_field"] = .string(tracking.field)
+            fields["unit"] = .string(tracking.unit); fields["target_mode"] = .string(tracking.recurring ? "recurring" : "absolute")
+            fields["cadence"] = .string(tracking == .workouts ? "weekly" : "daily")
+            if tracking.recurring { fields["start_value"] = .number(0); fields["target_direction"] = .string("complete_count") }
+        }
+        pending = .create(.object(fields), token)
         await retryWrite()
     }
 
@@ -213,7 +229,7 @@ final class PerformanceDestinationModel: ObservableObject {
 
     func togglePause(_ goal: EntityRecord<PerformanceGoal>) async {
         guard !isSaving, pending == nil else { return }
-        let resumed = goal.payload.fraction == 1 ? "completed" : "active"
+        let resumed = GoalActivityMetric.resolve(goal.metadata.data)?.recurring == true ? "active" : goal.payload.fraction == 1 ? "completed" : "active"
         pending = .setStatus(goal.id, goal.metadata.data, goal.payload.status == "paused" ? resumed : "paused")
         await retryWrite()
     }
@@ -246,7 +262,7 @@ final class PerformanceDestinationModel: ObservableObject {
                     guard row.payload == baseline else { throw Self.changedGoal() }
                     let complete = baseline["target_direction"]?.stringValue == "decrease" ? value <= (baseline["target_value"]?.doubleValue ?? 0) : value >= (baseline["target_value"]?.doubleValue ?? 0)
                     let _: EntityRecord<JSONValue> = try await data.update(.goals, id: id, patch: .object([
-                        "current_value": .number(value), "status": .string(complete ? "completed" : "active"), "native_mutation_id": .string(token)]))
+                        "current_value": .number(value), "status": .string(complete && GoalActivityMetric.resolve(baseline)?.recurring != true ? "completed" : "active"), "native_mutation_id": .string(token)]))
                 } else if row.payload["current_value"]?.doubleValue != value { throw Self.changedGoal() }
                 guard request == generation, !Task.isCancelled, canWrite(user.id) else { return }
                 let history: [EntityRecord<JSONValue>] = try await data.listAll(.goalProgressEntries, isCurrent: { request == self.generation })

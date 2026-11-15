@@ -17,6 +17,8 @@ final class HomeViewModel: ObservableObject {
     private let cache: UserScopedCacheStore
     private let realtimeService: RealtimeSubscribing?
     private let router: AppRouter
+    private let canTrackGoals: (UUID) -> Bool
+    private var trackingGeneration = UUID()
     private var user: ExecuteUser?
     private var layoutRecordID: UUID?
     private var subscriptions: [RealtimeSubscription] = []
@@ -31,12 +33,14 @@ final class HomeViewModel: ObservableObject {
         dataService: SupabaseDataService?,
         cache: UserScopedCacheStore,
         realtimeService: RealtimeSubscribing?,
-        router: AppRouter
+        router: AppRouter,
+        canTrackGoals: @escaping (UUID) -> Bool = { _ in false }
     ) {
         self.dataService = dataService
         self.cache = cache
         self.realtimeService = realtimeService
         self.router = router
+        self.canTrackGoals = canTrackGoals
         self.selectedVitals = Self.loadVitals(from: UserDefaults.standard, key: vitalDefaultsKey)
         self.hiddenChecklistDefaults = Set(UserDefaults.standard.stringArray(forKey: checklistDefaultsKey) ?? [])
     }
@@ -120,6 +124,7 @@ final class HomeViewModel: ObservableObject {
     }
 
     func stop() async {
+        trackingGeneration = UUID()
         let current = subscriptions
         subscriptions.removeAll()
         for subscription in current {
@@ -363,10 +368,22 @@ final class HomeViewModel: ObservableObject {
             return
         }
         let loadingUserID = user?.id
+        let trackingRequest = trackingGeneration
         isRefreshing = isRefresh
         error = nil
         let today = HomeDate.todayString
         do {
+            if let user, canTrackGoals(user.id) {
+                do {
+                    try await GoalActivityTracker.shared.synchronize(data: dataService, user: user, isCurrent: {
+                        self.trackingGeneration == trackingRequest && self.user?.id == user.id && self.canTrackGoals(user.id)
+                    })
+                } catch {
+                    guard trackingRequest == trackingGeneration else { return }
+                    self.error = AppError.from(error, title: "Automatic goal progress needs refresh")
+                }
+            }
+            guard trackingRequest == trackingGeneration else { return }
             async let plans: [EntityRecord<HomeAIPlan>] = dataService.list(.aiPlans, orderBy: "-updated_date", limit: 50)
             async let profiles: [EntityRecord<HomeUserProfile>] = dataService.list(.userProfiles, orderBy: "-updated_date", limit: 1)
             async let nutritionProfiles: [EntityRecord<HomeNutritionProfile>] = dataService.list(.nutritionProfiles, orderBy: "-updated_date", limit: 1)
@@ -460,7 +477,7 @@ final class HomeViewModel: ObservableObject {
 
     private func startRealtime() async {
         guard subscriptions.isEmpty, let realtimeService else { return }
-        let tables: [EntityTable] = [.dailyLogs, .foodLogs, .readinessCheckIns, .aiPlans, .mealPlans, .workoutPlans, .goals, .customChecklistItems, .userProfiles, .nutritionProfiles, .userPageLayouts]
+        let tables: [EntityTable] = [.dailyLogs, .foodLogs, .readinessCheckIns, .aiPlans, .mealPlans, .workoutPlans, .workoutLogs, .goals, .customChecklistItems, .userProfiles, .nutritionProfiles, .userPageLayouts]
         for table in tables {
             if let subscription = try? await realtimeService.subscribe(to: table, onChange: { [weak self] _ in
                 Task { await self?.reload() }

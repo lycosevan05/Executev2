@@ -193,3 +193,187 @@ private final class PerformanceData: EntityDataServicing {
     }
     func delete(_ table: EntityTable, id: UUID) async throws { XCTFail("Performance routes never delete records") }
 }
+
+extension PerformanceDestinationTests {
+    private func autoGoal(_ metric: GoalActivityMetric, start: String = "2026-11-09", id: UUID = UUID(), status: String = "active") -> BackendRow {
+        PerformanceData.row(["title": .string("Synthetic automatic goal"), "status": .string(status),
+            "metric_source": .string(metric.source), "metric_field": .string(metric.field), "target_value": .number(3),
+            "current_value": .number(0), "start_date": .string(start), "future_field": .string("keep")], id: id)
+    }
+    private func sync(_ data: PerformanceData, today: String = "2026-11-15", current: @escaping () -> Bool = { true }) async throws {
+        try await GoalActivityTracker().synchronize(data: data, user: user, today: today, isCurrent: current)
+    }
+
+    func testAutomaticWeeklyCountExcludesFutureIncompleteAndPreStartAndResetsMonday() async throws {
+        let data = PerformanceData(); data.rows[.goals] = [autoGoal(.workouts)]
+        data.rows[.workoutLogs] = [
+            PerformanceData.row(["date": .string("2026-11-08"), "status": .string("completed")]),
+            PerformanceData.row(["date": .string("2026-11-13"), "status": .string("completed")]),
+            PerformanceData.row(["date": .string("2026-11-15"), "status": .string("in_progress")]),
+            PerformanceData.row(["date": .string("2026-11-16"), "status": .string("completed")])]
+        try await sync(data)
+        XCTAssertEqual(data.rows[.goals]?.first?.data["current_value"], .number(1))
+        XCTAssertFalse(data.rows[.goalProgressEntries]!.contains { $0.data["date"] == .string("2026-11-16") })
+        let count = data.creates, updates = data.updates
+        try await sync(data); XCTAssertEqual(data.creates, count); XCTAssertEqual(data.updates, updates)
+        data.rows[.workoutLogs] = Array(data.rows[.workoutLogs]!.prefix(3))
+        try await sync(data, today: "2026-11-16")
+        XCTAssertEqual(data.rows[.goals]?.first?.data["current_value"], .number(0))
+        XCTAssertEqual(data.rows[.goals]?.first?.data["status"], .string("active"))
+        XCTAssertEqual(GoalActivityMetric.weekStart("2026-11-01"), "2026-10-26")
+        XCTAssertEqual(GoalActivityMetric.weekStart("2026-11-02"), "2026-11-02")
+    }
+
+    func testAutomaticCorrectionAndRemovalUpdateSameHistoryWithoutTouchingSource() async throws {
+        let data = PerformanceData(), sourceID = UUID(); data.rows[.goals] = [autoGoal(.protein)]
+        data.rows[.dailyLogs] = [PerformanceData.row(["date": .string("2026-11-15"), "protein_consumed_g": .number(100), "unrelated": .string("keep")], id: sourceID)]
+        try await sync(data)
+        let entryID = data.rows[.goalProgressEntries]!.first!.id
+        data.rows[.dailyLogs] = [PerformanceData.row(["date": .string("2026-11-15"), "protein_consumed_g": .number(95), "unrelated": .string("keep")], id: sourceID)]
+        let corrected = data.rows[.dailyLogs]
+        try await sync(data)
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.first?.id, entryID)
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.first?.data["value"], .number(95))
+        XCTAssertEqual(data.rows[.dailyLogs], corrected)
+        data.rows[.dailyLogs] = []
+        try await sync(data)
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.count, 1)
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.first?.data["value"], .null)
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.first?.data["tracking_state"], .string("missing"))
+        XCTAssertEqual(data.rows[.goals]?.first?.data["current_value"], .null)
+        XCTAssertEqual(data.rows[.goals]?.first?.data["future_field"], .string("keep"))
+    }
+
+    func testAutomaticZeroIsObservationAndNewestDailyRecordWins() async throws {
+        let data = PerformanceData(); data.rows[.goals] = [autoGoal(.water)]
+        data.rows[.dailyLogs] = [PerformanceData.row(["date": .string("2026-11-15"), "water_liters": .number(2)], stamp: Date(timeIntervalSince1970: 1)),
+            PerformanceData.row(["date": .string("2026-11-15"), "water_liters": .number(0)], stamp: Date(timeIntervalSince1970: 2))]
+        try await sync(data)
+        XCTAssertEqual(data.rows[.goals]?.first?.data["current_value"], .number(0))
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.first?.data["value"], .number(0))
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.count, 1)
+    }
+
+    func testAutomaticManualOverrideAndOtherManualGoalsArePreserved() async throws {
+        let data = PerformanceData(), goal = autoGoal(.steps), manualGoal = PerformanceData.goal()
+        data.rows[.goals] = [goal, manualGoal]
+        data.rows[.dailyLogs] = [PerformanceData.row(["date": .string("2026-11-15"), "steps": .number(100)])]
+        try await sync(data)
+        let manual = PerformanceData.row(["goal_id": .string(goal.id.uuidString), "date": .string("2026-11-15"), "value": .number(42), "source": .string("manual"), "unknown": .bool(true)])
+        data.rows[.goalProgressEntries, default: []].append(manual)
+        try await sync(data)
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.last, manual)
+        XCTAssertEqual(data.rows[.goals]?.last, manualGoal)
+        XCTAssertEqual(data.rows[.goals]?.first?.data["current_value"], .number(42))
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.first?.data["tracking_state"], .string("manual_override"))
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.first?.data["value"], .null)
+        let model = model(data, destination: .progress(goal.id)); await model.start(for: user)
+        XCTAssertEqual(model.progressPoints(for: goal.id, dates: ["2026-11-15"]), [PerformancePoint(date: "2026-11-15", value: 42)])
+    }
+
+    func testAutomaticPausedAndUnsupportedGoalsNeverWrite() async throws {
+        let data = PerformanceData()
+        data.rows[.goals] = [autoGoal(.steps, status: "paused"), PerformanceData.row(["title": .string("Train every day"), "target_value": .number(3)]),
+            PerformanceData.row(["metric_source": .string("unknown"), "metric_field": .string("steps")])]
+        let baseline = data.rows[.goals]
+        try await sync(data)
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0); XCTAssertEqual(data.rows[.goals], baseline)
+    }
+
+    func testAutomaticLostAcknowledgmentsReconcileSameRecords() async throws {
+        let data = PerformanceData(); data.rows[.goals] = [autoGoal(.workouts, start: "2026-11-15")]
+        data.loseCreate = true
+        do { try await sync(data); XCTFail("Expected lost response") } catch {}
+        XCTAssertEqual(data.creates, 1)
+        data.loseUpdate = true
+        do { try await sync(data); XCTFail("Expected lost patch response") } catch {}
+        try await sync(data)
+        XCTAssertEqual(data.creates, 1); XCTAssertEqual(data.updates, 1)
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.count, 1)
+    }
+
+    func testAutomaticReadFailureAndAccountCancellationDoNotWrite() async throws {
+        let data = PerformanceData(); data.rows[.goals] = [autoGoal(.workouts)]; data.failReads = true
+        do { try await sync(data); XCTFail("Expected read failure") } catch {}
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+        data.failReads = false
+        var current = true; data.beforeRead = { current = false }
+        do { try await sync(data, current: { current }); XCTFail("Expected cancellation") } catch {}
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+
+    func testAutomaticForeignOwnerAndDuplicateHistoryStopBeforeWrites() async throws {
+        let data = PerformanceData(), goal = autoGoal(.workouts); data.rows[.goals] = [goal]
+        let foreign = BackendRow(id: UUID(), ownerID: UUID(), ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: nil, updatedDate: nil, data: .object([:]))
+        data.rows[.dailyLogs] = [foreign]
+        do { try await sync(data); XCTFail("Expected owner rejection") } catch {}
+        XCTAssertEqual(data.creates, 0)
+        data.rows[.dailyLogs] = []; try await sync(data)
+        let entry = data.rows[.goalProgressEntries]!.first!
+        data.rows[.goalProgressEntries]!.append(PerformanceData.row(entry.data.objectValue!))
+        let count = data.creates, updates = data.updates
+        do { try await sync(data); XCTFail("Expected duplicate rejection") } catch {}
+        XCTAssertEqual(data.creates, count); XCTAssertEqual(data.updates, updates)
+    }
+
+    func testAutomaticLatestWeightRetainsLastObservationAndClearsRemovedMeasurement() async throws {
+        let data = PerformanceData(); data.rows[.goals] = [autoGoal(.weight)]
+        data.rows[.dailyLogs] = [PerformanceData.row(["date": .string("2026-11-13"), "weight_kg": .number(75)]),
+            PerformanceData.row(["date": .string("2026-11-15"), "water_liters": .number(1)])]
+        try await sync(data)
+        XCTAssertEqual(data.rows[.goals]?.first?.data["current_value"], .number(75))
+        XCTAssertEqual(data.rows[.goals]?.first?.data["activity_current_date"], .string("2026-11-13"))
+        data.rows[.dailyLogs] = []; try await sync(data)
+        XCTAssertEqual(data.rows[.goals]?.first?.data["current_value"], .null)
+    }
+
+    func testCreatingExplicitAutomaticGoalDoesNotInferFromManualTitle() async throws {
+        let data = PerformanceData(), model = model(data); await model.start(for: user)
+        await model.createGoal(title: "Synthetic sessions", target: "3", unit: "ignored", start: "0", decreasing: false, tracking: .workouts)
+        XCTAssertEqual(data.rows[.goals]?.first?.data["metric_field"], .string("sessions_this_week"))
+        XCTAssertEqual(data.rows[.goals]?.first?.data["unit"], .string("sessions/week"))
+        XCTAssertEqual(data.rows[.goalProgressEntries]?.count, 1)
+        await model.createGoal(title: "Train 3x weekly", target: "3", unit: "sessions", start: "0", decreasing: false)
+        XCTAssertNil(data.rows[.goals]?.last?.data["metric_source"])
+    }
+}
+
+
+extension PerformanceDestinationTests {
+    func testAutomaticPauseDuringSourceReadAndLateReadFailurePreventWrites() async throws {
+        let data = PerformanceData(), goal = autoGoal(.workouts)
+        data.rows[.goals] = [goal]
+        var reads = 0
+        data.beforeRead = {
+            reads += 1
+            if reads == 4 { data.rows[.goals] = [self.autoGoal(.workouts, id: goal.id, status: "paused")] }
+        }
+        do { try await sync(data); XCTFail("Expected changed goal") } catch {}
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+        reads = 0; data.rows[.goals] = [goal]
+        data.beforeRead = { reads += 1; if reads == 3 { data.failReads = true } }
+        do { try await sync(data); XCTFail("Expected later source read failure") } catch {}
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+
+    func testConcurrentAutomaticRefreshesSerializeAndDoNotDuplicate() async throws {
+        let data = PerformanceData(), tracker = GoalActivityTracker()
+        data.rows[.goals] = [autoGoal(.workouts, start: "2026-11-15")]
+        let first = Task { try await tracker.synchronize(data: data, user: user, today: "2026-11-15", isCurrent: { true }) }
+        let second = Task { try await tracker.synchronize(data: data, user: user, today: "2026-11-15", isCurrent: { true }) }
+        try await first.value; try await second.value
+        XCTAssertEqual(data.creates, 1); XCTAssertEqual(data.updates, 1)
+    }
+}
+
+
+extension PerformanceDestinationTests {
+    func testLegacyAutomaticHistoryIsPreservedWithoutOverlappingNewEntries() async throws {
+        let data = PerformanceData(), goal = autoGoal(.steps); data.rows[.goals] = [goal]
+        let legacy = PerformanceData.row(["goal_id": .string(goal.id.uuidString), "date": .string("2026-11-15"), "source": .string("daily_log"), "value": .number(500)])
+        data.rows[.goalProgressEntries] = [legacy]
+        do { try await sync(data); XCTFail("Expected review of legacy automatic history") } catch {}
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+        XCTAssertEqual(data.rows[.goalProgressEntries], [legacy])
+    }
+}

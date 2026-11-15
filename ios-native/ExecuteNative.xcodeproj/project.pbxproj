@@ -90,6 +90,7 @@
 		E80000000000000000000001 /* DayPlanViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80000000000000000000002 /* DayPlanViewModel.swift */; };
 		E90000000000000000000001 /* DayPlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90000000000000000000002 /* DayPlanView.swift */; };
 		EA0000000000000000000001 /* DayPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0000000000000000000002 /* DayPlanTests.swift */; };
+		EB1200000000000000000001 /* GoalActivityTracking.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB1200000000000000000002 /* GoalActivityTracking.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -190,6 +191,7 @@
 		E80000000000000000000002 /* DayPlanViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlanViewModel.swift; sourceTree = "<group>"; };
 		E90000000000000000000002 /* DayPlanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlanView.swift; sourceTree = "<group>"; };
 		EA0000000000000000000002 /* DayPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlanTests.swift; sourceTree = "<group>"; };
+		EB1200000000000000000002 /* GoalActivityTracking.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalActivityTracking.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -502,6 +504,7 @@
 				86566F576D7100D2FE8DB318 /* PlanView.swift */,
 				6196C67B3E06966564038000 /* PlanViewModel.swift */,
 				E40000000000000000000002 /* PerformanceDestinations.swift */,
+				EB1200000000000000000002 /* GoalActivityTracking.swift */,
 				E50000000000000000000002 /* PerformanceDestinationView.swift */,
 				E70000000000000000000002 /* DayPlanLogic.swift */,
 				E80000000000000000000002 /* DayPlanViewModel.swift */,
@@ -703,6 +706,7 @@
 				7F6BA815C4AD47E4D70769C0 /* PlanView.swift in Sources */,
 				7BAE005FA23C3F4C06AAC384 /* PlanViewModel.swift in Sources */,
 				E40000000000000000000001 /* PerformanceDestinations.swift in Sources */,
+				EB1200000000000000000001 /* GoalActivityTracking.swift in Sources */,
 				E50000000000000000000001 /* PerformanceDestinationView.swift in Sources */,
 				E70000000000000000000001 /* DayPlanLogic.swift in Sources */,
 				E80000000000000000000001 /* DayPlanViewModel.swift in Sources */,

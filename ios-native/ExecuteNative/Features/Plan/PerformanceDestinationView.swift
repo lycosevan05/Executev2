@@ -229,7 +229,19 @@ private struct PerformanceScreen: View {
             if let fraction = goal.payload.fraction {
                 ProgressView(value: fraction).tint(ExecuteColor.chartreuseDark)
                 Text("\(Int((fraction * 100).rounded()))% · \((goal.payload.currentValue ?? 0).formatted()) / \((goal.payload.targetValue ?? 0).formatted()) \(goal.payload.unit ?? "")")
-            } else { Text("This goal has no numeric progress target.") }
+            } else { Text(goal.payload.targetValue == nil ? "This goal has no numeric progress target." : "No logged progress yet.") }
+            if let metric = GoalActivityMetric.resolve(goal.metadata.data) {
+                Text("Automatic · \(metric.title)").font(ExecuteTypography.caption(12))
+                if model.entries.contains(where: {
+                    $0.payload["goal_id"]?.stringValue?.lowercased() == goal.id.uuidString.lowercased()
+                        && $0.payload["date"] == goal.metadata.data["activity_current_date"]
+                        && ($0.payload["source"] == .string("manual") || $0.payload["source"] == nil)
+                        && $0.payload["value"]?.doubleValue != nil
+                }) { Text("Manual override for this date").font(ExecuteTypography.caption(12)) }
+                if let date = goal.metadata.data["activity_current_date"]?.stringValue { Text("Activity through \(date)").font(ExecuteTypography.caption(12)) }
+                if goal.payload.currentValue == nil { Text("No logged value for this period.").font(ExecuteTypography.body(13)) }
+                if metric.recurring, goal.payload.fraction == 1 { Label("Target reached for this period", systemImage: "checkmark.circle") }
+            }
             if let date = goal.payload.targetDate { Text("Target date: \(date)").font(ExecuteTypography.caption(12)) }
             if goal.payload.status == "completed" { Label("Complete", systemImage: "trophy") }
         }
@@ -274,6 +286,7 @@ private struct GoalEntrySheet: View {
     @State private var unit = ""
     @State private var start = "0"
     @State private var decreasing = false
+    @State private var tracking: GoalActivityMetric = .manual
     @State private var value = ""
     @State private var add = false
 
@@ -282,16 +295,25 @@ private struct GoalEntrySheet: View {
             Form {
                 if let goal {
                     Section(goal.payload.title ?? "Goal progress") {
+                        if GoalActivityMetric.resolve(goal.metadata.data) != nil { Text("A manual entry overrides automatic progress for today. Correct the source log to change automatic history.").font(.caption) }
                         Picker("Entry mode", selection: $add) { Text("Set exact value").tag(false); Text("Add to current").tag(true) }
                         TextField("Value (\(goal.payload.unit ?? ""))", text: $value).keyboardType(.decimalPad)
                     }
                 } else {
                     Section("New goal") {
                         TextField("Goal title", text: $title)
-                        TextField("Starting value", text: $start).keyboardType(.decimalPad)
+                        Picker("Track progress from", selection: $tracking) {
+                            ForEach(GoalActivityMetric.allCases) { Text($0.title).tag($0) }
+                        }.pickerStyle(.navigationLink)
+                        if !tracking.recurring { TextField("Starting value", text: $start).keyboardType(.decimalPad) }
+                        if tracking != .manual {
+                            Text(tracking == .workouts ? "Counts completed workouts from Monday through today. Future sessions are excluded." : "Uses saved daily logs. Corrections update automatic progress; missing values remain unlogged.").font(.caption)
+                            Text("Updates when Home, Goals or Progress refreshes.").font(.caption)
+                        }
                         TextField("Target value", text: $target).keyboardType(.decimalPad)
-                        TextField("Unit, such as sessions or kg", text: $unit)
-                        Toggle("Decrease toward target", isOn: $decreasing)
+                        if tracking == .manual { TextField("Unit, such as sessions or kg", text: $unit) }
+                        else { Text("Unit: \(tracking.unit)") }
+                        if !tracking.recurring { Toggle("Decrease toward target", isOn: $decreasing) }
                     }
                 }
                 if let error = model.writeError { Text(error.message).foregroundStyle(ExecuteColor.destructive) }
@@ -299,7 +321,7 @@ private struct GoalEntrySheet: View {
                     Task {
                         if model.hasPendingWrite { await model.retryWrite() }
                         else if let goal { await model.logProgress(goal, value: value, add: add) }
-                        else { await model.createGoal(title: title, target: target, unit: unit, start: start, decreasing: decreasing) }
+                        else { await model.createGoal(title: title, target: target, unit: unit, start: tracking.recurring ? "0" : start, decreasing: tracking.recurring ? false : decreasing, tracking: tracking) }
                         if model.writeError == nil, !model.hasPendingWrite { dismiss() }
                     }
                 }.disabled(model.isSaving)

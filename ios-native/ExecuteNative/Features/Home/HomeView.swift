@@ -26,7 +26,8 @@ private struct HomeScreen: View {
             dataService: environment.dataService,
             cache: environment.cache,
             realtimeService: environment.realtimeService,
-            router: environment.router
+            router: environment.router,
+            canTrackGoals: { environment.appState.allowsDraftWrites(for: $0) }
         ))
     }
 
