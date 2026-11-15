@@ -461,3 +461,46 @@ extension RecoveryTests {
         XCTAssertFalse(vm.loaded); XCTAssertEqual(repo.writes, 0); XCTAssertTrue(vm.tasks.isEmpty)
     }
 }
+
+
+extension RecoveryTests {
+    func testProjectionRecoversWorkoutCompletedBeforeChecklistAndIsIdempotent() throws {
+        let date = "2026-10-31"
+        var planData = projectionPlan().data.objectValue!
+        planData["weekly_overview"] = .object(["days": .array([.object([
+            "date": .string(date), "workout_needed": .bool(true), "session_title": .string("Synthetic A")])])])
+        let plan = RecoveryFixtureRepository.row(planData)
+        let daily = RecoveryFixtureRepository.row(["date": .string(date), "workout_done": .bool(true),
+            "workout_duration_min": .number(3), "calories_burned": .number(108)])
+        let patch = try XCTUnwrap(RecoveryDailyProjection.patch(plan: plan, date: date, existing: daily))
+        XCTAssertEqual(patch["checklist_completed_count"], .number(1))
+        XCTAssertEqual(patch["plan_items_completed"], .array([.string("workout:\(date)")]))
+        XCTAssertEqual(patch["checklist_items"]?.recoveryArray?.first?["completed"], .bool(true))
+        XCTAssertNil(patch["workout_duration_min"])
+        var merged = daily.data.objectValue!; merged.merge(patch.objectValue!) { _, new in new }
+        XCTAssertNil(RecoveryDailyProjection.patch(plan: plan, date: date, existing: RecoveryFixtureRepository.row(merged)))
+    }
+
+    func testProjectionPreservesCustomTasksMetadataAndEarlyMealCompletionThenCorrection() throws {
+        let date = "2026-10-31", plan = projectionPlan()
+        let custom: JSONValue = .object(["id": .string("custom"), "type": .string("custom"), "completed": .bool(true), "future": .number(7)])
+        let nutrition: JSONValue = .object(["id": .string("nutrition:\(date)"), "type": .string("nutrition"), "completed": .bool(true), "completed_at": .string("original"), "future": .number(9)])
+        let recovery: JSONValue = .array([.object(["id": .string("custom_recovery"), "title": .string("Keep me")])])
+        var fields: [String: JSONValue] = ["date": .string(date), "checklist_items": .array([nutrition, custom]),
+            "planned_recovery_tasks": recovery, "plan_items_completed": .array([.string("legacy"), .number(99)])]
+        let patch = try XCTUnwrap(RecoveryDailyProjection.patch(plan: plan, date: date, existing: RecoveryFixtureRepository.row(fields)))
+        XCTAssertEqual(patch["checklist_completed_count"], .number(2))
+        XCTAssertEqual(patch["planned_recovery_tasks"], recovery)
+        let tasks = try XCTUnwrap(patch["checklist_items"]?.recoveryArray)
+        XCTAssertEqual(tasks.last, .object(["id": .string("custom"), "type": .string("custom"), "completed": .bool(true), "future": .number(7), "status": .string("completed")]))
+        XCTAssertEqual(tasks.first?["completed_at"], .string("original"))
+        XCTAssertEqual(tasks.first?["future"], .number(9))
+        fields.merge(patch.objectValue!) { _, new in new }
+        fields.merge(DailyActivityChecklist.patch(daily: .object(fields), nutritionDone: false)) { _, new in new }
+        let corrected = RecoveryDailyProjection.patch(plan: plan, date: date, existing: RecoveryFixtureRepository.row(fields))
+        let final = corrected ?? .object(fields)
+        XCTAssertEqual(final["checklist_completed_count"], .number(1))
+        XCTAssertFalse(final["plan_items_completed"]!.recoveryArray!.contains(.string("nutrition:\(date)")))
+        XCTAssertTrue(final["plan_items_completed"]!.recoveryArray!.contains(.number(99)))
+    }
+}

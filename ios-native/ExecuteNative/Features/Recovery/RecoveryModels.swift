@@ -92,17 +92,41 @@ enum RecoveryDailyProjection {
         }
         checklist.append(item("nutrition", title: "Hit nutrition target", description: day["nutrition_focus"]?.stringValue ?? "Stay aligned with your nutrition targets"))
         checklist.append(item("recovery", title: "Recovery focus", description: focus))
-        let completed = existing?.data["plan_items_completed"]?.recoveryArray ?? []
+        // Projection may run after an activity created a DailyLog without a checklist.
+        // Preserve existing task metadata/custom entries, then reconcile durable completion.
+        let oldItems = existing?.data["checklist_items"]?.recoveryArray
+            ?? existing?.data["planned_checklist_items"]?.recoveryArray ?? []
+        checklist = checklist.map { template in
+            guard let old = oldItems.first(where: { $0["id"] == template["id"] }),
+                  var values = template.objectValue, let saved = old.objectValue else { return template }
+            values.merge(saved) { _, saved in saved }
+            return .object(values)
+        } + oldItems.filter { old in !checklist.contains { $0["id"] == old["id"] } }
+        var completed = existing?.data["plan_items_completed"]?.recoveryArray ?? []
+        for task in checklist where task["completed"] == .bool(true) || task["status"] == .string("completed") {
+            if let id = task["id"], !completed.contains(id) { completed.append(id) }
+        }
+        if existing?.data["workout_done"] == .bool(true) {
+            for task in checklist where task["type"] == .string("workout") {
+                if let id = task["id"], !completed.contains(id) { completed.append(id) }
+            }
+        }
+        checklist = checklist.map { task in
+            guard completed.contains(task["id"] ?? .null), var values = task.objectValue else { return task }
+            values["completed"] = .bool(true)
+            values["status"] = .string("completed")
+            return .object(values)
+        }
         let count = checklist.filter { completed.contains($0["id"] ?? .null) }.count
         var patch: [String: JSONValue] = [
             "date": .string(date), "source": .string(RecoverySelection.source(plan) ?? "plan_questionnaire_overview"),
             "source_plan_id": .string(plan.id.uuidString.lowercased()), "generation_batch_id": plan.data["generation_batch_id"] ?? .string(""),
             "planned_checklist_items": .array(checklist), "checklist_items": .array(checklist),
-            "planned_recovery_tasks": .array([.object(["id": .string("recovery_\(date)_1"), "type": .string("recovery"), "title": .string(focus), "description": .string(focus), "duration_minutes": .number(10), "status": .string("planned")])]),
+            "planned_recovery_tasks": existing?.data["planned_recovery_tasks"] ?? .array([.object(["id": .string("recovery_\(date)_1"), "type": .string("recovery"), "title": .string(focus), "description": .string(focus), "duration_minutes": .number(10), "status": .string("planned")])]),
             "checklist_total_count": .number(Double(checklist.count)), "checklist_completed_count": .number(Double(count)),
             "checklist_adherence_pct": .number(floor(Double(count) / Double(checklist.count) * 100 + 0.5)),
             "daily_plan_source": .string("deterministic_from_ai_plan")]
-        if existing == nil { patch["plan_items_completed"] = .array([]) }
+        patch["plan_items_completed"] = .array(completed)
         // Avoid a write on every reload when the deterministic projection already matches.
         if let existing, patch.allSatisfy({ existing.data[$0.key] == $0.value }) { return nil }
         return .object(patch)

@@ -512,16 +512,21 @@ final class NutritionViewModel: ObservableObject {
             guard user?.id == savingUser.id else { return }
             let latest = existing.first { $0.id == snapshot.dailyLogID && $0.payload.date == dateString }
                 ?? existing.first { $0.payload.date == dateString }
+            let plannedTypes = Set(snapshot.mealPlan?.resolvedMeals.map { $0.type.lowercased() } ?? [])
+            let completedTypes = Set((daily.mealsCompleted ?? []).map { $0.lowercased() })
             if let latest {
-                let plannedTypes = Set(snapshot.mealPlan?.resolvedMeals.map { $0.type.lowercased() } ?? [])
-                let completedTypes = Set((daily.mealsCompleted ?? []).map { $0.lowercased() })
                 values.merge(DailyActivityChecklist.patch(daily: latest.metadata.data,
                     workoutDone: latest.metadata.data["workout_done"]?.boolValue,
                     nutritionDone: plannedTypes.isEmpty ? nil : plannedTypes.isSubset(of: completedTypes),
                     workoutTitle: latest.metadata.data["workout_type"]?.stringValue)) { _, new in new }
                 record = try await dataService.update(.dailyLogs, id: latest.id, patch: .object(values))
             } else {
-                record = try await dataService.create(.dailyLogs, payload: daily, user: savingUser)
+                let encoded = try WorkoutSessionLogic.jsonValue(from: daily)
+                var fields = encoded.objectValue ?? [:]
+                fields.merge(DailyActivityChecklist.patch(daily: encoded,
+                    nutritionDone: plannedTypes.isEmpty ? nil : plannedTypes.isSubset(of: completedTypes))) { _, new in new }
+                let created: EntityRecord<JSONValue> = try await dataService.create(.dailyLogs, payload: .object(fields), user: savingUser)
+                record = try EntityRecord(row: created.metadata)
             }
             guard user?.id == savingUser.id else { return }
             snapshot.dailyLogID = record.id

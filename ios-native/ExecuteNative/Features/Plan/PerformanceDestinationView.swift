@@ -109,9 +109,9 @@ private struct PerformanceScreen: View {
                 ExecuteSecondaryButton(title: "Open workout for this day") { router.navigate(to: .dayPlan(kind: .workout, date: resolvedDate)) }
                 ExecuteSecondaryButton(title: "Build or view meals for this day") { router.navigate(to: .dayPlan(kind: .meals, date: resolvedDate)) }
                 ExecuteSecondaryButton(title: "Log food for this day") { router.navigate(to: .logFood(date: Self.date(resolvedDate))) }
-                let daily = PerformanceCalculations.canonical(model.dailyLogs)[resolvedDate]
-                if case .array(let tasks) = daily?["planned_checklist_items"], !tasks.isEmpty {
-                    let completed = daily?["plan_items_completed"]
+                let daily = model.dailyState(for: resolvedDate)
+                if case .array(let tasks) = daily["planned_checklist_items"], !tasks.isEmpty {
+                    let completed = daily["plan_items_completed"]
                     performanceCard {
                         Text("Daily tasks").font(ExecuteTypography.title(18))
                         ForEach(Array(tasks.enumerated()), id: \.offset) { _, task in

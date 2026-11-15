@@ -9,6 +9,20 @@ final class PerformanceDestinationTests: XCTestCase {
             defaults: defaults ?? UserDefaults(suiteName: "PerformancePending.\(UUID())")!, canWrite: canWrite)
     }
 
+    func testWeekProjectsCompletedWorkoutWithoutRecoveryVisitOrDatabaseWrite() async {
+        let data = PerformanceData(), model = model(data, destination: .week)
+        let date = "2026-11-16"
+        data.rows[.aiPlans] = [PerformanceData.row(["plan_type": .string("daily"), "status": .string("active"), "weekly_overview": .object(["days": .array([
+            .object(["date": .string(date), "workout_needed": .bool(true), "session_title": .string("Synthetic A")])])])])]
+        data.rows[.dailyLogs] = [PerformanceData.row(["date": .string(date), "workout_done": .bool(true), "calories_burned": .number(108)])]
+        await model.start(for: user)
+        let projected = model.dailyState(for: date)
+        XCTAssertEqual(projected["checklist_completed_count"], .number(1))
+        XCTAssertEqual(projected["plan_items_completed"], .array([.string("workout:\(date)")]))
+        XCTAssertEqual(projected["calories_burned"], .number(108))
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+
     func testDecreaseGoalProgressAndMissingNumericTargets() throws {
         let goal = try JSONValue.object(["start_value": .number(80), "current_value": .number(77.5), "target_value": .number(75), "target_direction": .string("decrease")]).decoded(as: PerformanceGoal.self)
         XCTAssertEqual(goal.fraction, 0.5)

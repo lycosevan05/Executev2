@@ -504,6 +504,16 @@ enum DailyActivityChecklist {
         let flags = ["workout": workoutDone, "nutrition": nutritionDone]
         var result: [String: JSONValue] = [:]
         var completed = Set(array(daily["plan_items_completed"]).compactMap(\.stringValue))
+        // Activity can precede projection. Store canonical IDs without inventing tasks.
+        if let date = daily["date"]?.stringValue {
+            for (type, flag) in flags {
+                guard let flag else { continue }
+                if flag { completed.insert("\(type):\(date)") }
+                else { completed.remove("\(type):\(date)") }
+            }
+            result["plan_items_completed"] = .array(completed.sorted().map(JSONValue.string)
+                + array(daily["plan_items_completed"]).filter { $0.stringValue == nil })
+        }
         for key in ["checklist_items", "planned_checklist_items"] {
             guard case .array(let items) = daily[key] else { continue }
             result[key] = .array(items.map { item in
@@ -533,7 +543,8 @@ enum DailyActivityChecklist {
         let count = checklist.filter { item in
             item["completed"] == .bool(true) || item["id"]?.stringValue.map { completed.contains($0) } == true
         }.count
-        result["plan_items_completed"] = .array(completed.sorted().map(JSONValue.string))
+        result["plan_items_completed"] = .array(completed.sorted().map(JSONValue.string)
+            + array(daily["plan_items_completed"]).filter { $0.stringValue == nil })
         result["checklist_total_count"] = .number(Double(checklist.count))
         result["checklist_completed_count"] = .number(Double(count))
         result["checklist_adherence_pct"] = .number(Double(count) / Double(checklist.count) * 100)

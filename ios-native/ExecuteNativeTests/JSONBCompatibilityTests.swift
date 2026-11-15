@@ -875,6 +875,24 @@ final class DailyUseWorkflowTests: XCTestCase {
         XCTAssertEqual(session.stage, .summary)
         XCTAssertEqual(data.rows[.workoutLogs]?.count, 1)
         XCTAssertEqual(data.rows[.dailyLogs]?.count, 1)
+        XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["plan_items_completed"], .array([.string("workout:2026-11-13")]))
+    }
+
+    func testFirstMealCreatesDurableCompletionBeforeChecklistAndDeletionClearsIt() async throws {
+        let data = DailyUseData()
+        data.rows[.aiPlans] = [DailyUseData.row(.object(["plan_type": .string("daily"), "status": .string("active")]), id: masterID)]
+        data.rows[.mealPlans] = [DailyUseData.row(.object(["date": .string("2026-11-13"), "source_plan_id": .string(masterID.uuidString), "status": .string("active"), "meals": .array([
+            .object(["meal_type": .string("breakfast"), "name": .string("Synthetic breakfast"), "calories": .number(700)])])]))]
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
+        let model = NutritionViewModel(dataService: data, aiService: nil, cache: UserScopedCacheStore(suiteName: "EarlyMeal.\(UUID())"), realtimeService: nil, router: AppRouter(), initialDate: try XCTUnwrap(formatter.date(from: "2026-11-13")))
+        await model.start(for: user)
+        await model.logPlannedMeal(type: "breakfast")
+        XCTAssertNil(model.error)
+        XCTAssertEqual(data.rows[.dailyLogs]?.count, 1)
+        XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["plan_items_completed"], .array([.string("nutrition:2026-11-13")]))
+        XCTAssertNil(data.rows[.dailyLogs]?.first?.data["checklist_items"])
+        await model.delete(try XCTUnwrap(model.snapshot.foodLogs.first))
+        XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["plan_items_completed"], .array([]))
     }
 }
 
@@ -931,6 +949,19 @@ final class DailyActivityChecklistTests: XCTestCase {
 
     func testNoChecklistDoesNotInventTasks() {
         XCTAssertTrue(DailyActivityChecklist.patch(daily: .object(["workout_done": .bool(true)]), workoutDone: true, nutritionDone: true).isEmpty)
+    }
+
+    func testActivityBeforeProjectionKeepsDurableIDsWithoutInventingTasks() {
+        let daily: JSONValue = .object(["date": .string("2026-11-15"), "plan_items_completed": .array([.string("legacy"), .number(9)])])
+        let done = DailyActivityChecklist.patch(daily: daily, workoutDone: true, nutritionDone: true)
+        XCTAssertNil(done["checklist_items"])
+        XCTAssertNil(done["checklist_total_count"])
+        let ids = done["plan_items_completed"]!.recoveryArray!
+        XCTAssertTrue(ids.contains(.string("workout:2026-11-15")))
+        XCTAssertTrue(ids.contains(.string("nutrition:2026-11-15")))
+        var fields = daily.objectValue!; fields.merge(done) { _, new in new }
+        let removed = DailyActivityChecklist.patch(daily: .object(fields), nutritionDone: false)
+        XCTAssertEqual(removed["plan_items_completed"], .array([.string("legacy"), .string("workout:2026-11-15"), .number(9)]))
     }
 
     func testHistoryUsesActivityDateWhenCompletionCrossesMidnight() throws {

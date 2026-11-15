@@ -163,6 +163,17 @@ final class PerformanceDestinationModel: ObservableObject {
         return typed.resolvedWeeklyOverview?.days ?? []
     }
 
+    func dailyState(for date: String) -> JSONValue {
+        let existing = dailyLogs.filter { $0.payload["date"]?.stringValue == date }
+            .max { ($0.updatedDate ?? $0.createdDate ?? .distantPast) < ($1.updatedDate ?? $1.createdDate ?? .distantPast) }
+        var values = existing?.payload.objectValue ?? [:]
+        // My Week must not depend on having opened Recovery first. Project for display only.
+        if let patch = RecoveryDailyProjection.patch(plan: plan?.metadata, date: date, existing: existing?.metadata)?.objectValue {
+            values.merge(patch) { _, new in new }
+        }
+        return .object(values)
+    }
+
     func progressPoints(for id: UUID, dates: [String]) -> [PerformancePoint] {
         PerformanceCalculations.points(entries.filter { $0.payload["goal_id"]?.stringValue?.lowercased() == id.uuidString.lowercased() }, field: "value", dates: dates)
     }

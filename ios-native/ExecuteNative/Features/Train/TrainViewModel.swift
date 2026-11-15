@@ -505,7 +505,10 @@ final class WorkoutSessionViewModel: ObservableObject {
                 workoutType: workout.payload.name ?? "Workout",
                 caloriesBurned: Double(calories)
             )
-            let _: EntityRecord<WorkoutSessionDailyLog> = try await dataService.create(.dailyLogs, payload: payload, user: user)
+            let encoded = try WorkoutSessionLogic.jsonValue(from: payload)
+            var fields = encoded.objectValue ?? [:]
+            fields.merge(DailyActivityChecklist.patch(daily: encoded, workoutDone: true)) { _, new in new }
+            let _: EntityRecord<JSONValue> = try await dataService.create(.dailyLogs, payload: .object(fields), user: user)
         }
     }
 
