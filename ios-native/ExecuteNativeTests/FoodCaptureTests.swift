@@ -284,6 +284,105 @@ import UniformTypeIdentifiers
         XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["calories_consumed"], .number(500)); XCTAssertEqual(data.updates, 0)
         XCTAssertNotNil(nutrition.error)
     }
+    private func recipe(_ data: CaptureData) throws -> EntityRecord<JSONValue> {
+        let row = CaptureData.row(["name": .string("Synthetic recipe"), "calories": .number(400), "protein": .number(20), "carbs": .number(60), "fats": .number(12),
+            "source_meal_plan_id": .string(UUID().uuidString), "source_meal_key": .string("lunch"), "future_field": .string("retain snapshot")])
+        data.rows[.savedRecipes] = [row]; return try EntityRecord(row: row)
+    }
+    func testRecipeFractionsScaleOneBasisAndRetainSnapshotWithoutPlannedCompletionLinks() throws {
+        let data = CaptureData(), row = try recipe(data)
+        let review = try RecipePortion.review(recipeID: row.id, payload: row.payload, fraction: 0.25, mealType: .dinner)
+        XCTAssertEqual(review.draft.calories, 100); XCTAssertEqual(review.draft.protein, 5); XCTAssertEqual(review.draft.carbs, 15); XCTAssertEqual(review.draft.fats, 3)
+        let payload = try review.payload(date: date, token: "recipe-fixture", time: "12:00")
+        XCTAssertEqual(payload["source_recipe_id"], .string(row.id.uuidString)); XCTAssertEqual(payload["recipe_fraction"], .number(0.25)); XCTAssertEqual(payload["recipe_snapshot"], row.payload)
+        XCTAssertNil(payload["source_meal_plan_id"]); XCTAssertNil(payload["planned_meal_key"])
+        XCTAssertEqual(try payload.decoded(as: NutritionFoodLog.self).foods?.first?.portion, "0.25 × full recipe")
+        XCTAssertEqual(payload["meal_type"], .string("dinner")); XCTAssertEqual(payload["log_method"], .string("manual"))
+    }
+    func testCorrectionFieldsRoundTripFractionalRecipeValuesWithoutChangingUntouchedMacros() {
+        for original in [375.25, 27.5, 42.5, 11.125, 0.125, 9999.999] {
+            XCTAssertEqual(NutritionFormat.number(NutritionFormat.editable(original)), original)
+        }
+        XCTAssertEqual(NutritionFormat.editable(.infinity), "")
+        XCTAssertEqual(NutritionFormat.editable(.nan), "")
+    }
+    func testRecipeInvalidFractionsMissingNutritionAndScaledOverflowFailClosed() throws {
+        let data = CaptureData(), row = try recipe(data)
+        for fraction in [0.0, -1, .nan, .infinity, 10.1] { XCTAssertThrowsError(try RecipePortion.review(recipeID: row.id, payload: row.payload, fraction: fraction, mealType: .snack)) }
+        var fields = row.payload.objectValue!; fields.removeValue(forKey: "protein")
+        XCTAssertThrowsError(try RecipePortion.review(recipeID: row.id, payload: .object(fields), fraction: 0.5, mealType: .snack))
+        fields = row.payload.objectValue!; fields["calories"] = .number(2000)
+        XCTAssertThrowsError(try RecipePortion.review(recipeID: row.id, payload: .object(fields), fraction: 10, mealType: .snack))
+        fields = row.payload.objectValue!; fields["fat"] = fields.removeValue(forKey: "fats")
+        XCTAssertEqual(try RecipePortion.review(recipeID: row.id, payload: .object(fields), fraction: 0.5, mealType: .snack).draft.fats, 6)
+    }
+    func testRecipeLostCreateAndDailySyncRetrySurviveRecreationWithoutDuplicates() async throws {
+        for loseCreate in [false, true] {
+            let data = CaptureData(), row = try recipe(data), defaults = UserDefaults(suiteName: "RecipeFood.\(UUID())")!, first = model(data, defaults: defaults)
+            first.prepareRecipe(row, fraction: 1, mealType: .snack); XCTAssertEqual(data.creates, 0)
+            let reviewed = try RecipePortion.review(recipeID: row.id, payload: row.payload, fraction: 0.5, mealType: .snack)
+            data.loseCreate = loseCreate
+            expect(false, await first.save(reviewed, synchronize: { false }))
+            XCTAssertEqual(first.review, reviewed) // Pending/retry UI must show the submitted portion, not the initial full recipe.
+            let id = try XCTUnwrap(data.rows[.foodLogs]?.first?.id)
+            data.rows[.savedRecipes] = [] // A saved food remains valid if its recipe is later deleted.
+            let retry = model(data, defaults: defaults); XCTAssertTrue(retry.hasAttempt)
+            expect(true, await retry.save(try XCTUnwrap(retry.review), synchronize: { true }))
+            XCTAssertEqual(data.creates, 1); XCTAssertEqual(retry.savedID, id)
+            expect(false, await retry.save(try XCTUnwrap(retry.review), synchronize: { true }))
+        }
+    }
+    func testChangedDeletedForeignOrRepeatedRecipeRecordsPreventNewFoodAndDiscardDoesNotUndo() async throws {
+        for kind in 0..<4 {
+            let data = CaptureData(), row = try recipe(data), capture = model(data)
+            capture.prepareRecipe(row, fraction: 0.5, mealType: .snack)
+            if kind == 0 { data.rows[.savedRecipes] = [] }
+            if kind == 1 { var fields = row.payload.objectValue!; fields["calories"] = .number(999); data.rows[.savedRecipes] = [CaptureData.row(fields, id: row.id)] }
+            if kind == 2 { let old = data.rows[.savedRecipes]![0]; data.rows[.savedRecipes] = [BackendRow(id: old.id, ownerID: UUID(), ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: old.createdDate, updatedDate: old.updatedDate, data: old.data)] }
+            if kind == 3 { let old = data.rows[.savedRecipes]![0]; data.rows[.savedRecipes]!.append(old) }
+            expect(false, await capture.save(try XCTUnwrap(capture.review), synchronize: { true })); XCTAssertEqual(data.creates, 0)
+            let saved = data.rows[.savedRecipes]; capture.discardLocalAttempt(); XCTAssertFalse(capture.hasAttempt); XCTAssertEqual(data.rows[.savedRecipes], saved)
+        }
+    }
+    func testRecipeHistoryPaginationAndSessionGates() async throws {
+        let data = CaptureData(), row = try recipe(data)
+        data.rows[.savedRecipes] = (0..<510).map { _ in CaptureData.row(["name": .string("Older recipe")]) } + data.rows[.savedRecipes]!
+        var allowed = true; let capture = model(data, allowed: { _ in allowed })
+        capture.prepareRecipe(row, fraction: 0.5, mealType: .snack)
+        allowed = false; expect(false, await capture.save(try XCTUnwrap(capture.review), synchronize: { true })); XCTAssertEqual(data.creates, 0)
+        allowed = true; expect(true, await capture.save(try XCTUnwrap(capture.review), synchronize: { true })); XCTAssertEqual(data.creates, 1)
+        let other = model(data); data.beforeRead = { other.stop() }; other.prepareRecipe(row, fraction: 0.5, mealType: .snack)
+        expect(false, await other.save(try XCTUnwrap(other.review), synchronize: { true })); XCTAssertEqual(data.creates, 1)
+    }
+    func testRecipeLoggingCorrectionAndDeletionKeepSameDailyAndPreserveRecipeAndCompletion() async throws {
+        let data = CaptureData(), row = try recipe(data), originalRecipe = data.rows[.savedRecipes], dailyID = UUID()
+        data.rows[.dailyLogs] = [CaptureData.row(["date": .string(date), "steps": .number(1234), "meals_completed": .array([.string("breakfast"), .string("dinner")]), "future_field": .string("keep")], id: dailyID)]
+        let day = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 11, day: 15, hour: 12))!
+        let nutrition = NutritionViewModel(dataService: data, aiService: nil, cache: UserScopedCacheStore(suiteName: "RecipeDaily.\(UUID())"), realtimeService: nil, router: AppRouter(), initialDate: day)
+        await nutrition.start(for: user); let capture = model(data); capture.prepareRecipe(row, fraction: 0.5, mealType: .lunch)
+        expect(true, await capture.save(try XCTUnwrap(capture.review), synchronize: { await nutrition.synchronizeCapturedFood(ownerID: self.user.id, date: self.date, canWrite: { true }) }))
+        let food = try XCTUnwrap(nutrition.snapshot.foodLogs.first); var edit = try XCTUnwrap(capture.review).draft
+        edit.calories = 240; edit.portion = food.log.foods?.first?.portion
+        expect(true, await nutrition.edit(food, draft: edit))
+        let saved = try XCTUnwrap(data.rows[.foodLogs]?.first)
+        XCTAssertEqual(saved.id, food.id); XCTAssertEqual(saved.data["recipe_snapshot"], row.payload); XCTAssertEqual(saved.data["recipe_fraction"], .number(0.5))
+        await nutrition.delete(try XCTUnwrap(nutrition.snapshot.foodLogs.first))
+        let daily = try XCTUnwrap(data.rows[.dailyLogs]?.first)
+        XCTAssertEqual(daily.id, dailyID); XCTAssertEqual(data.rows[.dailyLogs]?.count, 1); XCTAssertEqual(daily.data["calories_consumed"], .number(0))
+        XCTAssertEqual(daily.data["steps"], .number(1234)); XCTAssertEqual(daily.data["future_field"], .string("keep"))
+        XCTAssertEqual(daily.data["meals_completed"], .array([.string("breakfast"), .string("dinner")]))
+        XCTAssertEqual(data.rows[.savedRecipes], originalRecipe); XCTAssertTrue(data.rows[.foodLogs]?.isEmpty == true)
+    }
+    func testUnreadablePendingFoodAttemptBlocksNewSaveUntilExplicitDiscard() async throws {
+        let defaults = UserDefaults(suiteName: "RecipeCorrupt.\(UUID())")!, data = CaptureData(), row = try recipe(data)
+        defaults.set(Data([0,1]), forKey: "execute.cache.\(user.id.uuidString).food-capture.\(date).pending")
+        let capture = model(data, defaults: defaults); XCTAssertTrue(capture.hasAttempt)
+        XCTAssertTrue(FoodCaptureModel.hasPending(userID: user.id, date: date, defaults: defaults))
+        capture.prepareRecipe(row, fraction: 0.5, mealType: .snack); XCTAssertNil(capture.review)
+        expect(false, await capture.save(CaptureLookup.review, synchronize: { true })); XCTAssertEqual(data.creates, 0)
+        capture.discardLocalAttempt(); capture.prepareRecipe(row, fraction: 0.5, mealType: .snack); XCTAssertNotNil(capture.review)
+        XCTAssertFalse(FoodCaptureModel.hasPending(userID: user.id, date: date, defaults: defaults))
+    }
 }
 
 @MainActor private final class CaptureLookup: FoodProductLookingUp {
@@ -330,5 +429,5 @@ import UniformTypeIdentifiers
         let row = Self.row((old.data.objectValue ?? [:]).merging(patch.objectValue ?? [:]) { _, new in new }, id: id)
         rows[table]![index] = row; updates += 1; return try EntityRecord(row: row)
     }
-    func delete(_ table: EntityTable, id: UUID) async throws { XCTFail("Capture never deletes records") }
+    func delete(_ table: EntityTable, id: UUID) async throws { XCTAssertEqual(table, .foodLogs); rows[table]?.removeAll { $0.id == id } }
 }

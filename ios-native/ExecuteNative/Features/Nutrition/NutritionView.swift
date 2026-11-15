@@ -48,7 +48,7 @@ private struct NutritionScreen: View {
             presentation: presentation,
             isPremium: appState.premiumState.isPremium,
             captureContent: { kind in AnyView(FoodCaptureSheet(kind: kind, nutrition: model, environment: captureEnvironment)) },
-            recipesContent: { AnyView(RecipeLibrarySheet(environment: captureEnvironment)) }
+            recipesContent: { AnyView(RecipeLibrarySheet(environment: captureEnvironment, loggingDate: model.selectedDate)) }
         )
         .task(id: signedInUser?.id) {
             if let signedInUser { await model.start(for: signedInUser) }
@@ -675,10 +675,10 @@ private struct NutritionManualEntrySheet: View {
         self.editing = editing
         _name = State(initialValue: editing?.log.resolvedName ?? "")
         _mealType = State(initialValue: editing?.log.resolvedMealType ?? .snack)
-        _calories = State(initialValue: editing.map { NutritionFormat.whole($0.log.totalCalories ?? 0) } ?? "")
-        _protein = State(initialValue: editing.map { NutritionFormat.whole($0.log.totalProteinG ?? 0) } ?? "")
-        _carbs = State(initialValue: editing.map { NutritionFormat.whole($0.log.totalCarbsG ?? 0) } ?? "")
-        _fats = State(initialValue: editing.map { NutritionFormat.whole($0.log.totalFatsG ?? 0) } ?? "")
+        _calories = State(initialValue: editing.map { NutritionFormat.editable($0.log.totalCalories ?? 0) } ?? "")
+        _protein = State(initialValue: editing.map { NutritionFormat.editable($0.log.totalProteinG ?? 0) } ?? "")
+        _carbs = State(initialValue: editing.map { NutritionFormat.editable($0.log.totalCarbsG ?? 0) } ?? "")
+        _fats = State(initialValue: editing.map { NutritionFormat.editable($0.log.totalFatsG ?? 0) } ?? "")
     }
 
     private enum Field { case name, calories, protein, carbs, fats }
@@ -952,8 +952,9 @@ private struct NutritionLoadingPill: View {
     }
 }
 
-private enum NutritionFormat {
+enum NutritionFormat {
     static func whole(_ value: Double) -> String { Int(value.rounded()).formatted() }
+    static func editable(_ value: Double) -> String { value.isFinite ? String(value) : "" }
 
     static func number(_ string: String) -> Double {
         Double(string.replacingOccurrences(of: ",", with: ".")) ?? 0

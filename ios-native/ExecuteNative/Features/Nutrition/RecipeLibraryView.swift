@@ -7,6 +7,12 @@ private struct RecipeSelection: Identifiable {
     var source: CookbookMealSource? = nil
 }
 
+private struct RecipeLogSelection: Identifiable {
+    let id = UUID()
+    let row: EntityRecord<JSONValue>?
+    let date: Date
+}
+
 struct RecipeLibrarySheet: View {
     @ObservedObject private var appState: AppState
     @StateObject private var model: RecipeLibraryModel
@@ -19,10 +25,15 @@ struct RecipeLibrarySheet: View {
     @State private var pendingDelete: EntityRecord<JSONValue>?
     @State private var confirmDiscard = false
     @State private var editorError: String?
+    @State private var loggingSelection: RecipeLogSelection?
+    @State private var loggingDate: Date
     private let initialMeal: CookbookMealSource?
+    private let loggingEnvironment: AppEnvironment
 
-    init(environment: AppEnvironment, initialMeal: CookbookMealSource? = nil) {
+    init(environment: AppEnvironment, initialMeal: CookbookMealSource? = nil, loggingDate: Date = .now) {
         self.initialMeal = initialMeal
+        loggingEnvironment = environment
+        _loggingDate = State(initialValue: min(loggingDate, .now))
         _appState = ObservedObject(wrappedValue: environment.appState)
         _model = StateObject(wrappedValue: RecipeLibraryModel(data: environment.dataService, ai: environment.aiService,
             premium: { environment.appState.premiumState.isPremium },
@@ -34,6 +45,10 @@ struct RecipeLibrarySheet: View {
             List {
                 Section {
                     Text("Save recipes to your cookbook. Nutrition values describe the full recipe; saving a recipe does not log food.").font(.footnote)
+                    DatePicker("Food log date", selection: $loggingDate, in: ...Date.now, displayedComponents: .date)
+                    if let user, FoodCaptureModel.hasPending(userID: user.id, date: NutritionDate.string(from: loggingDate)) {
+                        Button("Resume previous food save") { loggingSelection = RecipeLogSelection(row: nil, date: loggingDate) }
+                    }
                     Toggle("Favorites only", isOn: $liked)
                     Picker("Meal type", selection: $type) {
                         Text("All meals").tag(nil as NutritionMealType?)
@@ -66,6 +81,9 @@ struct RecipeLibrarySheet: View {
             }
             .refreshable { await model.refresh() }
             .sheet(item: $selection) { selected in RecipeEditorSheet(model: model, selection: selected) }
+            .sheet(item: $loggingSelection, onDismiss: { Task { await model.refresh() } }) { selected in
+                RecipeFoodLogSheet(row: selected.row, date: selected.date, environment: loggingEnvironment)
+            }
             .alert("Delete recipe?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })) {
                 Button("Delete recipe", role: .destructive) { if let row = pendingDelete { Task { _ = await model.delete(row) } }; pendingDelete = nil }
                 Button("Cancel", role: .cancel) { pendingDelete = nil }
@@ -116,11 +134,105 @@ struct RecipeLibrarySheet: View {
                 }.font(.subheadline).frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
+                Button("Log recipe portion") { loggingSelection = RecipeLogSelection(row: row, date: loggingDate) }
+                Spacer()
                 Button("Edit recipe") { open(row) }
                 Spacer()
                 Button("Delete recipe", role: .destructive) { pendingDelete = row }
             }
         }.buttonStyle(.borderless).padding(.vertical, 5).disabled(model.busy || model.hasAttempt)
+    }
+}
+
+private struct RecipeFoodLogSheet: View {
+    private let row: EntityRecord<JSONValue>?
+    private let date: String
+    private let environment: AppEnvironment
+    @ObservedObject private var appState: AppState
+    @StateObject private var capture: FoodCaptureModel
+    @StateObject private var nutrition: NutritionViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var fraction = "1"
+    @State private var mealType = NutritionMealType.snack
+    @State private var confirmDiscard = false
+
+    init(row: EntityRecord<JSONValue>?, date: Date, environment: AppEnvironment) {
+        self.row = row; self.date = NutritionDate.string(from: date); self.environment = environment
+        _appState = ObservedObject(wrappedValue: environment.appState)
+        _capture = StateObject(wrappedValue: FoodCaptureModel(data: environment.dataService, ai: nil,
+            canUsePhoto: { environment.appState.premiumState.isPremium }, canAct: { environment.appState.allowsDraftWrites(for: $0) }))
+        _nutrition = StateObject(wrappedValue: NutritionViewModel(dataService: environment.dataService, aiService: nil,
+            cache: environment.cache, realtimeService: environment.realtimeService, router: environment.router, initialDate: date))
+    }
+    private var user: ExecuteUser? { guard case .signedIn(let user) = appState.launchState else { return nil }; return user }
+    private var candidate: FoodCaptureReview? {
+        if capture.hasAttempt { return capture.review }
+        guard let row, let amount = Double(fraction.replacingOccurrences(of: ",", with: ".")) else { return nil }
+        return try? RecipePortion.review(recipeID: row.id, payload: row.payload, fraction: amount, mealType: mealType)
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Log date: \(date)")
+                    Text("Recipe nutrition describes the full recipe. Enter the amount you ate: 0.5 is half, 1 is the full recipe. Saving logs separate intake and does not mark a planned meal complete.").font(.footnote)
+                }
+                if let error = capture.error { Section { Text(error.message).foregroundStyle(ExecuteColor.destructive) } }
+                if let error = nutrition.error { Section { Text(error.message).foregroundStyle(ExecuteColor.destructive) } }
+                if capture.hasAttempt {
+                    Section("Previous food save") {
+                        Text("Verification uses the original reviewed values. It checks the existing food entry before refreshing daily totals.").font(.footnote)
+                        Button("Discard local food retry", role: .destructive) { confirmDiscard = true }.disabled(capture.isWorking)
+                    }
+                } else if row != nil {
+                    Section("Recipe amount") {
+                        TextField("Full-recipe multiplier", text: $fraction).keyboardType(.decimalPad).accessibilityLabel("Recipe amount")
+                        Picker("Log meal type", selection: $mealType) { ForEach(NutritionMealType.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
+                        Text("Use an amount greater than 0 and no more than 10. The scaled values must fit the food log's limits.").font(.footnote)
+                    }.disabled(capture.isWorking)
+                }
+                if let candidate {
+                    Section("Reviewed intake") {
+                        Text(candidate.draft.name).font(.headline)
+                        Text(candidate.portion)
+                        Text("\(candidate.draft.calories.formatted()) kcal · \(candidate.draft.protein.formatted()) g protein · \(candidate.draft.carbs.formatted()) g carbs · \(candidate.draft.fats.formatted()) g fat")
+                        Text(candidate.draft.mealType.rawValue.capitalized)
+                        Text("Estimates scale from the saved recipe. Correct the food-log entry later if your ingredients or amounts differ.").font(.footnote)
+                    }
+                    Section {
+                        Button(capture.hasAttempt ? "Verify previous food save" : "Save recipe food entry") {
+                            guard let user else { return }
+                            Task {
+                                if await capture.save(candidate, synchronize: {
+                                    await nutrition.synchronizeCapturedFood(ownerID: user.id, date: date,
+                                        canWrite: { environment.appState.allowsDraftWrites(for: user.id) })
+                                }) { dismiss() }
+                            }
+                        }.disabled(capture.isWorking || nutrition.isInitialLoading || nutrition.isRefreshing)
+                    }
+                } else if !capture.hasAttempt {
+                    Section { Text(row == nil ? "There is no previous food save for this date." : "Enter a valid amount and use a recipe with complete nutrition estimates.") }
+                }
+                if capture.isWorking || nutrition.isInitialLoading { ProgressView("Checking food and daily totals…") }
+            }
+            .scrollContentBackground(.hidden).background(ExecuteColor.parchment)
+            .navigationTitle("Log recipe portion").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        }
+        .interactiveDismissDisabled(capture.isWorking)
+        .confirmationDialog("Discard the local food retry?", isPresented: $confirmDiscard) {
+            Button("Discard local food retry", role: .destructive) { capture.discardLocalAttempt(); dismiss() }
+        } message: { Text("This does not delete a food entry already saved or undo daily totals. Review the food log before making a new entry.") }
+        .task(id: user?.id) {
+            guard let user else { capture.stop(); dismiss(); return }
+            capture.start(user: user, date: date)
+            if let row, !capture.hasAttempt {
+                mealType = NutritionMealType(rawValue: row.payload["meal_type"]?.stringValue ?? "") ?? .snack
+                capture.prepareRecipe(row, fraction: 1, mealType: mealType)
+            }
+            await nutrition.start(for: user)
+        }
+        .onDisappear { capture.stop(); Task { await nutrition.stop() } }
     }
 }
 

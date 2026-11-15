@@ -4,11 +4,37 @@ import UniformTypeIdentifiers
 
 enum FoodCaptureKind: String, Codable { case photo, barcode }
 
+struct RecipeFoodSource: Codable, Equatable, Sendable {
+    let recipeID: UUID
+    let snapshot: JSONValue
+    let fraction: Double
+}
+
+enum RecipePortion {
+    static func review(recipeID: UUID, payload: JSONValue, fraction: Double, mealType: NutritionMealType) throws -> FoodCaptureReview {
+        guard payload.objectValue != nil, fraction.isFinite, fraction > 0, fraction <= 10,
+              let name = payload["name"]?.stringValue, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let c = payload["calories"]?.doubleValue, let p = payload["protein"]?.doubleValue,
+              let cb = payload["carbs"]?.doubleValue, let f = (payload["fats"] ?? payload["fat"])?.doubleValue,
+              [c, p, cb, f].allSatisfy({ $0.isFinite && $0 >= 0 }), c <= 10_000,
+              [p, cb, f].allSatisfy({ $0 <= 1000 }) else {
+            throw AppError(title: "Check the recipe portion", message: "Use a recipe with complete nutrition estimates and an amount greater than 0 and no more than 10 full recipes.")
+        }
+        let value = FoodCaptureReview(draft: NutritionEntryDraft(name: name, mealType: mealType, calories: c * fraction,
+            protein: p * fraction, carbs: cb * fraction, fats: f * fraction, method: .manual),
+            portion: "\(fraction) × full recipe", source: "Cookbook recipe — scaled estimates", barcode: nil,
+            recipe: RecipeFoodSource(recipeID: recipeID, snapshot: payload, fraction: fraction))
+        _ = try value.payload(date: "2000-01-01", token: "validation", time: "12:00")
+        return value
+    }
+}
+
 struct FoodCaptureReview: Codable, Equatable, Sendable {
     var draft: NutritionEntryDraft
     var portion: String
     var source: String
     var barcode: String?
+    var recipe: RecipeFoodSource? = nil
 
     func payload(date: String, token: String, time: String) throws -> JSONValue {
         guard draft.name.count <= 500, !portion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, portion.count <= 1000,
@@ -19,6 +45,15 @@ struct FoodCaptureReview: Codable, Equatable, Sendable {
         fields["native_mutation_id"] = .string(token)
         fields["capture_source"] = .string(source)
         if let barcode { fields["barcode"] = .string(barcode) }
+        if let recipe {
+            guard recipe.fraction.isFinite, recipe.fraction > 0, recipe.fraction <= 10,
+                  recipe.snapshot.objectValue != nil else { throw FoodBarcode.unavailable() }
+            fields["source_recipe_id"] = .string(recipe.recipeID.uuidString)
+            fields["recipe_fraction"] = .number(recipe.fraction)
+            fields["recipe_snapshot"] = recipe.snapshot
+            // A cookbook copy is independent intake, even when the recipe originated in a daily plan.
+            // Do not copy planned-meal source keys into the food-log envelope.
+        }
         if case .array(var foods) = fields["foods"], var first = foods.first?.objectValue {
             first["portion"] = .string(portion)
             foods[0] = .object(first); fields["foods"] = .array(foods)
@@ -166,10 +201,25 @@ enum FoodPhoto {
     }
     func start(user: ExecuteUser, date: String) {
         stop(); self.user = user; self.date = date
-        if let bytes = defaults.data(forKey: key(user.id, date)), let value = try? JSONDecoder().decode(Attempt.self, from: bytes) {
-            attempt = value; review = value.review; hasAttempt = true
-            error = AppError(title: "Finish the previous save", message: "Retry checks the same saved food before synchronizing daily totals.")
+        if let bytes = defaults.data(forKey: key(user.id, date)) {
+            hasAttempt = true
+            if let value = try? JSONDecoder().decode(Attempt.self, from: bytes) {
+                attempt = value; review = value.review
+                error = AppError(title: "Finish the previous save", message: "Retry checks the same saved food before synchronizing daily totals.")
+            } else { error = AppError(title: "Previous food save needs review", message: "This device's previous save cannot be read. Review your food log before discarding the local retry.") }
         }
+    }
+    static func hasPending(userID: UUID, date: String, defaults: UserDefaults = .standard) -> Bool {
+        defaults.data(forKey: "execute.cache.\(userID.uuidString).food-capture.\(date).pending") != nil
+    }
+    func discardLocalAttempt() {
+        guard !isWorking, let user else { return }
+        defaults.removeObject(forKey: key(user.id, date)); attempt = nil; hasAttempt = false; review = nil; savedID = nil; error = nil
+    }
+    func prepareRecipe(_ row: EntityRecord<JSONValue>, fraction: Double, mealType: NutritionMealType) {
+        guard !isWorking, !hasAttempt, let user, canAct(user.id), row.ownerID == nil || row.ownerID == user.id else { return }
+        do { review = try RecipePortion.review(recipeID: row.id, payload: row.payload, fraction: fraction, mealType: mealType); savedID = nil; error = nil }
+        catch { review = nil; self.error = AppError.from(error) }
     }
     func stop() { generation = UUID(); user = nil; review = nil; attempt = nil; hasAttempt = false; savedID = nil; isWorking = false; error = nil }
     private func key(_ id: UUID, _ date: String) -> String { "execute.cache.\(id.uuidString).food-capture.\(date).pending" }
@@ -210,7 +260,7 @@ enum FoodPhoto {
             let value = attempt ?? Attempt(review: edited, token: UUID().uuidString.lowercased(), time: NutritionDate.timeString(from: .now))
             let payload = try value.review.payload(date: date, token: value.token, time: value.time)
             // Persist the reviewed values/token, never image bytes. A lost response can resume after relaunch.
-            defaults.set(try JSONEncoder().encode(value), forKey: key(user.id, date)); attempt = value; hasAttempt = true
+            defaults.set(try JSONEncoder().encode(value), forKey: key(user.id, date)); attempt = value; review = value.review; hasAttempt = true
             let rows: [EntityRecord<JSONValue>] = try await data.listAll(.foodLogs, isCurrent: { self.current(request, user.id) })
             guard current(request, user.id) else { return false }
             guard rows.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }) else {
@@ -223,6 +273,15 @@ enum FoodPhoto {
                 guard existing.payload["date"] == .string(date) else { throw AppError(title: "Saved food date changed", message: "Review the existing food log before retrying.") }
                 saved = existing
             } else {
+                if let recipe = value.review.recipe {
+                    let recipes: [EntityRecord<JSONValue>] = try await data.listAll(.savedRecipes, isCurrent: { self.current(request, user.id) })
+                    guard current(request, user.id) else { return false }
+                    guard recipes.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }),
+                          recipes.filter({ $0.id == recipe.recipeID }).count == 1,
+                          recipes.first(where: { $0.id == recipe.recipeID })?.payload == recipe.snapshot else {
+                        throw AppError(title: "Recipe changed", message: "The recipe changed or was removed. Review your food log, discard this local retry and reopen the current recipe before logging it.")
+                    }
+                }
                 guard value.review.draft.method != .photo || canUsePhoto() else { throw AppError(title: "Premium required", message: "Photo estimates require an active Premium entitlement.") }
                 saved = try await data.create(.foodLogs, payload: payload, user: user)
             }
