@@ -77,7 +77,22 @@ enum MealPlanEditing {
             values[key] = replacement; updated = .object(values)
         default: throw invalid("Refresh this plan.")
         }
-        let changedMeals = try items(.object(["meals": updated]))
+        return try summaryPatch(meals: updated, token: token, order: original["meal_order"])
+    }
+
+    static func orderedItems(_ payload: JSONValue) throws -> [(String, JSONValue)] {
+        let values = try items(payload)
+        if case .array = payload["meals"] { return values }
+        let order = try MealOrder.validated(types: values.map(\.0), preferred: payload["meal_order"])
+        return order.compactMap { type in values.first { $0.0 == type } }
+    }
+
+    static func summaryPatch(meals: JSONValue, token: String, order: JSONValue? = nil) throws -> JSONValue {
+        var changedMeals = try items(.object(["meals": meals]))
+        if let order {
+            let types = try MealOrder.validated(types: changedMeals.map(\.0), preferred: order)
+            changedMeals = types.compactMap { type in changedMeals.first { $0.0 == type } }
+        }
         var totals = [0.0, 0, 0, 0]
         for (_, meal) in changedMeals {
             if let ingredients = meal["ingredients"] {
@@ -93,10 +108,68 @@ enum MealPlanEditing {
         }
         guard totals.allSatisfy(\.isFinite) else { throw invalid("The meal totals are invalid.") }
         // A shallow patch retains plan/master links and unknown fields; existing food and DailyLogs are never written.
-        return .object(["meals": updated, "total_calories": .number(totals[0]), "total_protein_g": .number(totals[1]),
+        return .object(["meals": meals, "total_calories": .number(totals[0]), "total_protein_g": .number(totals[1]),
                         "total_carbs_g": .number(totals[2]), "total_fats_g": .number(totals[3]),
                         "grocery_items": .array(changedMeals.flatMap { ($0.1["ingredients"]?.recoveryArray ?? []).compactMap(\.stringValue) }.map(JSONValue.string)),
                         "native_meal_edit_id": .string(token)])
+    }
+}
+
+enum MealOrder {
+    static func resolved(types: [String], preferred: [String]?) -> [String] {
+        if let preferred, preferred.count == types.count, Set(preferred) == Set(types) { return preferred }
+        let canonical = ["breakfast", "lunch", "dinner", "snack"]
+        return canonical.filter(types.contains) + types.filter { !canonical.contains($0) }.sorted()
+    }
+    static func validated(types: [String], preferred: JSONValue?) throws -> [String] {
+        guard let preferred else { return resolved(types: types, preferred: nil) }
+        guard case .array(let values) = preferred, values.allSatisfy({ $0.stringValue != nil }) else { throw MealPlanEditing.invalid("The saved meal order needs review.") }
+        let order = values.compactMap(\.stringValue)
+        guard order.count == types.count, Set(order) == Set(types) else { throw MealPlanEditing.invalid("The saved meal order is incomplete or repeated.") }
+        return order
+    }
+}
+
+enum SnackCompositionChange: Equatable {
+    case add(position: Int)
+    case remove
+    case move(position: Int)
+
+    func patch(_ original: JSONValue, edit: PlannedMealEdit, token: String) throws -> JSONValue {
+        let previous = try MealPlanEditing.orderedItems(original)
+        let core = previous.filter { $0.0 != "snack" }
+        guard Set(core.map(\.0)) == Set(["breakfast", "lunch", "dinner"]), core.count == 3 else {
+            throw MealPlanEditing.invalid("Keep breakfast, lunch and dinner intact. This daily plan needs review before snack composition.")
+        }
+        let snack = previous.first { $0.0 == "snack" }
+        var result = core
+        switch self {
+        case .add(let position):
+            guard snack == nil, (0...core.count).contains(position) else { throw MealPlanEditing.invalid("A snack already exists or its position is invalid.") }
+            let value = try edit.applying(to: .object(["meal_type": .string("snack")]))
+            result.insert(("snack", value), at: position)
+        case .remove:
+            guard snack != nil else { throw MealPlanEditing.invalid("This plan has no snack to remove.") }
+        case .move(let position):
+            guard let snack, (0...core.count).contains(position) else { throw MealPlanEditing.invalid("Choose an existing snack and a valid position.") }
+            result.insert(snack, at: position)
+        }
+        let meals: JSONValue
+        var order: JSONValue?
+        switch original["meals"] {
+        case .array: meals = .array(result.map(\.1)); if original["meal_order"] != nil { order = .array(result.map { .string($0.0) }) }
+        case .object(var values):
+            if let oldKey = values.keys.first(where: { $0.lowercased() == "snack" }) { values.removeValue(forKey: oldKey) }
+            if let snack = result.first(where: { $0.0 == "snack" }) {
+                let key = original["meals"]?.objectValue?.keys.first(where: { $0.lowercased() == "snack" }) ?? "snack"
+                values[key] = snack.1
+            }
+            meals = .object(values); order = .array(result.map { .string($0.0) })
+        default: throw MealPlanEditing.invalid("This saved meal structure needs review.")
+        }
+        var patch = try MealPlanEditing.summaryPatch(meals: meals, token: token, order: order).objectValue!
+        if let order { patch["meal_order"] = order }
+        return .object(patch)
     }
 }
 
@@ -106,9 +179,12 @@ enum MealPlanEditing {
     @Published private(set) var error: AppError?
     @Published private(set) var isLocked = false
     @Published private(set) var hasAttempt = false
+    @Published private(set) var mealOrder: [String] = []
+    var hasSnack: Bool { mealOrder.contains("snack") }
     let planID: UUID
     let date: String
     let type: String
+    private let composeSnack: Bool
     private let data: EntityDataServicing?
     private let cache: UserScopedCacheStore
     private let defaults: UserDefaults
@@ -120,13 +196,14 @@ enum MealPlanEditing {
     private struct Attempt: Codable { let original: JSONValue; let patch: JSONValue; let edit: PlannedMealEdit }
 
     init(planID: UUID, date: String, type: String, data: EntityDataServicing?, cache: UserScopedCacheStore,
-         defaults: UserDefaults = .standard, canWrite: @escaping (UUID) -> Bool) {
+         defaults: UserDefaults = .standard, composeSnack: Bool = false, canWrite: @escaping (UUID) -> Bool) {
         self.planID = planID; self.date = date; self.type = type; self.data = data; self.cache = cache
         self.defaults = defaults; self.canWrite = canWrite
+        self.composeSnack = composeSnack
     }
     private func key(_ id: UUID) -> String { "execute.cache.\(id.uuidString).meal-edit.\(planID).\(type)" }
     private func current(_ request: UUID, _ id: UUID) -> Bool { request == generation && user?.id == id && canWrite(id) && !Task.isCancelled }
-    func stop() { generation = UUID(); user = nil; edit = nil; baseline = nil; attempt = nil; hasAttempt = false; busy = false; error = nil; isLocked = false }
+    func stop() { generation = UUID(); user = nil; edit = nil; baseline = nil; attempt = nil; hasAttempt = false; busy = false; error = nil; isLocked = false; mealOrder = [] }
     func discardLocalAttempt() {
         guard !busy, let user else { return }
         defaults.removeObject(forKey: key(user.id)); attempt = nil; hasAttempt = false
@@ -134,8 +211,10 @@ enum MealPlanEditing {
 
     func start(user: ExecuteUser) async {
         stop(); self.user = user
-        if let bytes = defaults.data(forKey: key(user.id)), let pending = try? JSONDecoder().decode(Attempt.self, from: bytes) {
-            attempt = pending; hasAttempt = true; edit = pending.edit
+        if let bytes = defaults.data(forKey: key(user.id)) {
+            hasAttempt = true
+            if let pending = try? JSONDecoder().decode(Attempt.self, from: bytes) { attempt = pending; edit = pending.edit }
+            else { error = MealPlanEditing.invalid("This previous save cannot be read. Review the saved plan before discarding the local retry.") }
         }
         let request = generation; busy = true
         defer { if request == generation { busy = false } }
@@ -143,19 +222,28 @@ enum MealPlanEditing {
             let (row, locked) = try await read(request: request, user: user)
             guard current(request, user.id) else { return }
             baseline = row.payload; isLocked = locked
+            mealOrder = try MealPlanEditing.orderedItems(row.payload).map(\.0)
             if attempt == nil {
-                guard let meal = try MealPlanEditing.items(row.payload).first(where: { $0.0 == type })?.1 else { throw MealPlanEditing.invalid("Refresh the selected meal.") }
+                let selected = try MealPlanEditing.items(row.payload).first(where: { $0.0 == type })?.1
+                guard let meal = selected ?? (composeSnack && type == "snack" ? .object(["name": .string(""), "calories": .number(0), "protein": .number(0), "carbs": .number(0), "fats": .number(0)]) : nil) else { throw MealPlanEditing.invalid("Refresh the selected meal.") }
                 edit = PlannedMealEdit(meal)
             }
         } catch { if current(request, user.id) { self.error = AppError.from(error, title: "Could not open meal editor") } }
     }
 
-    func save(_ edit: PlannedMealEdit) async -> Bool {
-        guard !busy, let baseline, let data, let user, canWrite(user.id) else { return false }
+    func save(_ edit: PlannedMealEdit, composition: SnackCompositionChange? = nil) async -> Bool {
+        guard !busy, !hasAttempt || attempt != nil, let baseline, let data, let user, canWrite(user.id) else { return false }
         let request = generation; busy = true; error = nil
         defer { if request == generation { busy = false } }
         do {
-            let pending = try attempt ?? Attempt(original: baseline, patch: MealPlanEditing.patch(baseline, type: type, edit: edit, token: UUID().uuidString), edit: edit)
+            guard composition == nil || (composeSnack && type == "snack") else { throw MealPlanEditing.invalid("Open snack composition to change its position or presence.") }
+            let pending: Attempt
+            if let attempt { pending = attempt }
+            else {
+                let token = UUID().uuidString
+                let patch = try composition.map { try $0.patch(baseline, edit: edit, token: token) } ?? MealPlanEditing.patch(baseline, type: type, edit: edit, token: token)
+                pending = Attempt(original: baseline, patch: patch, edit: edit)
+            }
             let (row, locked) = try await read(request: request, user: user)
             guard current(request, user.id) else { return false }
             let fields = pending.patch.objectValue!

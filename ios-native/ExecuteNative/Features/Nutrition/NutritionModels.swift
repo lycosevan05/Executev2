@@ -195,6 +195,7 @@ struct NutritionMealPlan: Codable, Equatable, Sendable {
     let totalProteinG: Double?
     let totalCarbsG: Double?
     let totalFatsG: Double?
+    var mealOrder: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
         case date, meals
@@ -204,6 +205,7 @@ struct NutritionMealPlan: Codable, Equatable, Sendable {
         case totalProteinG = "total_protein_g"
         case totalCarbsG = "total_carbs_g"
         case totalFatsG = "total_fats_g"
+        case mealOrder = "meal_order"
     }
 
     var resolvedMeals: [(type: String, meal: NutritionMeal)] {
@@ -216,10 +218,11 @@ struct NutritionMealPlan: Codable, Equatable, Sendable {
                 return (type, meal)
             }
         case .object(let values):
-            return values.compactMap { key, value in
+            let result: [(type: String, meal: NutritionMeal)] = values.compactMap { key, value in
                 guard let meal = value.decodedIfPossible(as: NutritionMeal.self) else { return nil }
                 return (meal.resolvedType ?? key.lowercased(), meal)
             }
+            return MealOrder.resolved(types: result.map(\.type), preferred: mealOrder).compactMap { type in result.first { $0.type == type } }
         default:
             return []
         }

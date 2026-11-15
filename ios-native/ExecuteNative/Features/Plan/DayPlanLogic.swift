@@ -170,7 +170,11 @@ enum DayPlanLogic {
     static func usable(_ payload: JSONValue, kind: DayPlanKind) -> Bool {
         if kind == .workout { return !(payload["exercises"]?.recoveryArray ?? []).isEmpty }
         if let meals = payload["meals"]?.recoveryArray { return meals.count >= 3 }
-        return ["breakfast", "lunch", "dinner"].allSatisfy { payload["meals"]?[$0]?["name"]?.stringValue != nil }
+        guard let values = payload["meals"]?.objectValue else { return false }
+        return ["breakfast", "lunch", "dinner"].allSatisfy { type in
+            let matches = values.filter { $0.key.lowercased() == type }
+            return matches.count == 1 && matches.first?.value["name"]?.stringValue != nil
+        }
     }
 
     static func targets(master: JSONValue, context: JSONValue) -> JSONValue {

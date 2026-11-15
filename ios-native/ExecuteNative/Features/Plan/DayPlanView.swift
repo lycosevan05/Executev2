@@ -116,6 +116,11 @@ private struct DayPlanScreen: View {
                     .font(ExecuteTypography.caption(12))
             }
         }
+        if model.preview == nil, let saved = model.saved {
+            ExecuteSecondaryButton(title: "Manage optional snack") {
+                editingMeal = MealPlanEditSelection(planID: saved.id, date: model.date, type: "snack", composeSnack: true)
+            }.disabled(model.busy)
+        }
         ForEach(Array(mealItems(payload).enumerated()), id: \.offset) { _, meal in
             card {
                 Text((meal["meal_type"] ?? meal["type"])?.stringValue?.capitalized ?? "Meal").font(ExecuteTypography.caption(12))
@@ -148,8 +153,9 @@ private struct DayPlanScreen: View {
 
     private func mealItems(_ payload: JSONValue) -> [JSONValue] {
         if let meals = payload["meals"]?.recoveryArray { return meals }
-        return ["breakfast", "lunch", "dinner", "snack"].compactMap { type in
-            guard var meal = payload["meals"]?[type]?.objectValue else { return nil }
+        let keys = payload["meals"]?.objectValue?.keys.map { $0.lowercased() } ?? []
+        return MealOrder.resolved(types: keys, preferred: payload["meal_order"]?.recoveryArray?.compactMap(\.stringValue)).compactMap { type in
+            guard let key = payload["meals"]?.objectValue?.keys.first(where: { $0.lowercased() == type }), var meal = payload["meals"]?[key]?.objectValue else { return nil }
             meal["meal_type"] = .string(type); return .object(meal)
         }
     }

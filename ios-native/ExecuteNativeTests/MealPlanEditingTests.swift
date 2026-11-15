@@ -113,6 +113,107 @@ import XCTest
         await first.start(user: user); clean.loseAck = true; expect(false, await first.save(try changed(first)))
         let other = self.model(clean, defaults: defaults); await other.start(user: ExecuteUser(id: UUID(), email: "other@example.invalid", displayName: "Other")); XCTAssertFalse(other.hasAttempt)
     }
+    private func snackModel(_ data: MealEditData, defaults: UserDefaults? = nil) -> MealPlanEditorModel {
+        MealPlanEditorModel(planID: data.planID, date: date, type: "snack", data: data, cache: UserScopedCacheStore(suiteName: "SnackCache.\(UUID())"),
+            defaults: defaults ?? UserDefaults(suiteName: "SnackEdit.\(UUID())")!, composeSnack: true, canWrite: { _ in true })
+    }
+    private func snack() -> PlannedMealEdit {
+        PlannedMealEdit(.object(["name": .string("Synthetic optional snack"), "calories": .number(200), "protein": .number(10), "carbs": .number(25), "fats": .number(6),
+            "ingredients": .array([.string("Synthetic snack oats")]), "instructions": .string("Mix synthetic ingredients."), "notes": .string("QA only")]))
+    }
+    private func merged(_ original: JSONValue, _ patch: JSONValue) -> JSONValue { .object(original.objectValue!.merging(patch.objectValue!) { _, new in new }) }
+    func testSnackArrayAddMoveRemovePreservesCoreContentOrderAndUnknowns() throws {
+        let original = MealEditData().plan.data
+        let added = merged(original, try SnackCompositionChange.add(position: 1).patch(original, edit: snack(), token: "add"))
+        XCTAssertEqual(try MealPlanEditing.items(added).map(\.0), ["breakfast", "snack", "lunch", "dinner"])
+        XCTAssertEqual(added["total_calories"], .number(1700)); XCTAssertEqual(added["total_protein_g"], .number(70))
+        let moved = merged(added, try SnackCompositionChange.move(position: 0).patch(added, edit: snack(), token: "move"))
+        XCTAssertEqual(try MealPlanEditing.items(moved).map(\.0), ["snack", "breakfast", "lunch", "dinner"])
+        XCTAssertEqual(moved["grocery_items"]?.recoveryArray?.first, .string("Synthetic snack oats"))
+        let removed = merged(moved, try SnackCompositionChange.remove.patch(moved, edit: snack(), token: "remove"))
+        XCTAssertEqual(removed["meals"], original["meals"]); XCTAssertEqual(removed["total_calories"], .number(1500))
+        for value in [added, moved, removed] {
+            XCTAssertEqual(value["source_plan_id"], original["source_plan_id"]); XCTAssertEqual(value["date"], original["date"]); XCTAssertEqual(value["custom_plan"], original["custom_plan"])
+            XCTAssertEqual(try MealPlanEditing.items(value).filter { $0.0 != "snack" }.map(\.1), original["meals"]?.recoveryArray)
+        }
+    }
+    func testSnackObjectShapeCaseKeysAndExplicitOrderSurviveTypedReadAndLaterEdit() async throws {
+        let data = MealEditData(); var original = data.plan.data.objectValue!
+        original["meals"] = .object(Dictionary(uniqueKeysWithValues: try MealPlanEditing.items(data.plan.data).map { ($0.0.capitalized, $0.1) }))
+        let added = merged(.object(original), try SnackCompositionChange.add(position: 1).patch(.object(original), edit: snack(), token: "object"))
+        XCTAssertNotNil(added["meals"]?["Breakfast"]); XCTAssertNil(added["meals"]?["breakfast"])
+        XCTAssertEqual(try added.decoded(as: NutritionMealPlan.self).resolvedMeals.map(\.type), ["breakfast", "snack", "lunch", "dinner"])
+        data.replacePlan(added); let editor = model(data); await editor.start(user: user)
+        expect(true, await editor.save(try changed(editor)))
+        XCTAssertEqual(data.plan.data["meal_order"], added["meal_order"])
+        XCTAssertEqual(data.plan.data["grocery_items"]?.recoveryArray?[1], .string("Synthetic snack oats"))
+        let removed = try SnackCompositionChange.remove.patch(data.plan.data, edit: snack(), token: "remove")
+        XCTAssertNil(removed["meals"]?["snack"]); XCTAssertEqual(removed["meal_order"], .array([.string("breakfast"), .string("lunch"), .string("dinner")]))
+    }
+    func testSnackCompositionRejectsRepeatedMissingCoreInvalidPositionAndMalformedOrder() throws {
+        let original = MealEditData().plan.data
+        XCTAssertThrowsError(try SnackCompositionChange.remove.patch(original, edit: snack(), token: "bad"))
+        for index in [-1, 4] { XCTAssertThrowsError(try SnackCompositionChange.add(position: index).patch(original, edit: snack(), token: "bad")) }
+        let added = merged(original, try SnackCompositionChange.add(position: 3).patch(original, edit: snack(), token: "add"))
+        XCTAssertThrowsError(try SnackCompositionChange.add(position: 0).patch(added, edit: snack(), token: "bad"))
+        var broken = added.objectValue!; broken["meals"] = .array(Array(added["meals"]!.recoveryArray!.dropFirst()))
+        XCTAssertThrowsError(try SnackCompositionChange.remove.patch(.object(broken), edit: snack(), token: "bad"))
+        broken = added.objectValue!; broken["meals"] = .object(Dictionary(uniqueKeysWithValues: try MealPlanEditing.items(added)))
+        broken["meal_order"] = .array([.string("breakfast"), .string("breakfast"), .string("dinner"), .string("snack")])
+        XCTAssertThrowsError(try SnackCompositionChange.move(position: 0).patch(.object(broken), edit: snack(), token: "bad"))
+    }
+    func testSnackModelLifecycleUpdatesOnlySameChildAndPreservesLoggedMainMeals() async throws {
+        let data = MealEditData(), original = data.plan.data
+        data.rows[.dailyLogs] = [MealEditData.row(["date": .string(date), "meals_completed": .array([.string("breakfast"), .string("dinner")])])]
+        let untouched = data.rows.filter { $0.key != .mealPlans }
+        let add = snackModel(data); await add.start(user: user); XCTAssertFalse(add.hasSnack); XCTAssertEqual(data.writes, 0)
+        expect(true, await add.save(snack(), composition: .add(position: 1)))
+        let move = snackModel(data); await move.start(user: user); XCTAssertTrue(move.hasSnack)
+        expect(true, await move.save(try XCTUnwrap(move.edit), composition: .move(position: 0)))
+        let remove = snackModel(data); await remove.start(user: user)
+        expect(true, await remove.save(try XCTUnwrap(remove.edit), composition: .remove))
+        XCTAssertEqual(data.writes, 3); XCTAssertEqual(data.plan.data["meals"], original["meals"]); XCTAssertEqual(data.plan.id, data.planID)
+        XCTAssertEqual(data.rows.filter { $0.key != .mealPlans }, untouched)
+    }
+    func testSnackLoggedByDailyOrLinkedFoodAndLateLoggingBlocksAllComposition() async throws {
+        for kind in 0..<3 {
+            let data = MealEditData()
+            data.replacePlan(merged(data.plan.data, try SnackCompositionChange.add(position: 3).patch(data.plan.data, edit: snack(), token: "fixture")))
+            let editor = snackModel(data)
+            if kind == 2 { await editor.start(user: user) }
+            if kind == 0 { data.rows[.dailyLogs] = [MealEditData.row(["date": .string(date), "meals_completed": .array([.string("snack")])])] }
+            else { data.rows[.foodLogs] = [MealEditData.row(["date": .string(date), "source_meal_plan_id": .string(data.planID.uuidString), "planned_meal_key": .string("snack")])] }
+            if kind != 2 { await editor.start(user: user); XCTAssertTrue(editor.isLocked) }
+            expect(false, await editor.save(try XCTUnwrap(editor.edit), composition: .move(position: 0)))
+            expect(false, await editor.save(try XCTUnwrap(editor.edit), composition: .remove)); XCTAssertEqual(data.writes, 0)
+        }
+    }
+    func testSnackLostAcknowledgmentForAddMoveRemoveRestoresAndNeverRepeatsPatch() async throws {
+        for change in [SnackCompositionChange.add(position: 1), .move(position: 0), .remove] {
+            let data = MealEditData()
+            if change != .add(position: 1) { data.replacePlan(merged(data.plan.data, try SnackCompositionChange.add(position: 3).patch(data.plan.data, edit: snack(), token: "fixture"))) }
+            let defaults = UserDefaults(suiteName: "SnackRetry.\(UUID())")!, first = snackModel(data, defaults: defaults)
+            await first.start(user: user); data.loseAck = true
+            expect(false, await first.save(snack(), composition: change)); XCTAssertTrue(first.hasAttempt); XCTAssertEqual(data.writes, 1)
+            let acknowledged = data.plan.data
+            let retry = snackModel(data, defaults: defaults); await retry.start(user: user)
+            expect(true, await retry.save(try XCTUnwrap(retry.edit))); XCTAssertEqual(data.writes, 1); XCTAssertEqual(data.plan.data, acknowledged)
+        }
+    }
+    func testSnackConflictAndCorruptRetryFailClosedUntilDiscard() async throws {
+        let data = MealEditData(), defaults = UserDefaults(suiteName: "SnackCorrupt.\(UUID())")!
+        defaults.set(Data([0,1]), forKey: "execute.cache.\(user.id.uuidString).meal-edit.\(data.planID).snack")
+        let editor = snackModel(data, defaults: defaults); await editor.start(user: user); XCTAssertTrue(editor.hasAttempt)
+        expect(false, await editor.save(snack(), composition: .add(position: 3))); XCTAssertEqual(data.writes, 0)
+        editor.discardLocalAttempt()
+        var changedPlan = data.plan.data.objectValue!; changedPlan["custom_plan"] = .string("newer value"); data.replacePlan(.object(changedPlan))
+        expect(false, await editor.save(snack(), composition: .add(position: 3))); XCTAssertEqual(data.writes, 0)
+        await editor.start(user: user); expect(true, await editor.save(snack(), composition: .add(position: 3)))
+    }
+    func testSnackSaveCannotBeInvokedThroughUnrelatedMealEditor() async throws {
+        let data = MealEditData(), editor = model(data); await editor.start(user: user)
+        expect(false, await editor.save(snack(), composition: .add(position: 3))); XCTAssertEqual(data.writes, 0)
+    }
 }
 
 @MainActor private final class MealEditData: EntityDataServicing {
