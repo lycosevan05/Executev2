@@ -116,14 +116,14 @@ private struct DayPlanScreen: View {
         }
         ForEach(Array(mealItems(payload).enumerated()), id: \.offset) { _, meal in
             card {
-                Text(meal["meal_type"]?.stringValue?.capitalized ?? "Meal").font(ExecuteTypography.caption(12))
+                Text((meal["meal_type"] ?? meal["type"])?.stringValue?.capitalized ?? "Meal").font(ExecuteTypography.caption(12))
                 Text(meal["name"]?.stringValue ?? "").font(ExecuteTypography.label(16))
                 Text("\(number(meal["calories"])) kcal · P \(number(meal["protein"])) · C \(number(meal["carbs"])) · F \(number(meal["fats"])) g")
                 ForEach(Array((meal["ingredients"]?.recoveryArray ?? []).enumerated()), id: \.offset) { _, ingredient in Text("• \(ingredient.stringValue ?? "")") }
                 if let instructions = meal["instructions"]?.stringValue { Text(instructions) }
                 if let prep = meal["prep_time_minutes"]?.doubleValue { Text("Prep: \(prep.formatted()) minutes").font(ExecuteTypography.caption(12)) }
                 if let notes = meal["notes"]?.stringValue, !notes.isEmpty { Text(notes) }
-                if model.preview == nil, let saved = model.saved, let type = meal["meal_type"]?.stringValue {
+                if model.preview == nil, let saved = model.saved, let type = (meal["meal_type"] ?? meal["type"])?.stringValue {
                     Button("Edit planned \(type)") { editingMeal = MealPlanEditSelection(planID: saved.id, date: model.date, type: type.lowercased()) }
                         .accessibilityIdentifier("meal-plan.edit.\(type)")
                 }
