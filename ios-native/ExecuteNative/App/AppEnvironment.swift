@@ -107,7 +107,7 @@ final class AppEnvironment: ObservableObject {
                 configuration: configuration,
                 configurationError: nil,
                 authService: authService,
-                accountService: SupabaseAccountService(functions: functions),
+                accountService: SupabaseAccountService(functions: functions, readiness: .awaitingServerVerification),
                 cache: cache,
                 router: router,
                 subscriptionService: subscriptionService,

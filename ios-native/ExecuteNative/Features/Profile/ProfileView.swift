@@ -577,12 +577,20 @@ private struct DeleteAccountSheet: View {
                         .foregroundStyle(ExecuteColor.mist)
                         .multilineTextAlignment(.center)
 
+                    if !model.canDeleteAccount {
+                        Text("Account deletion is temporarily unavailable. Contact support@executelabs.ca for help.")
+                            .font(ExecuteTypography.body(13))
+                            .foregroundStyle(ExecuteColor.olive)
+                            .multilineTextAlignment(.center)
+                    }
+
                     VStack(alignment: .leading, spacing: 6) {
                         Text("TYPE DELETE TO CONFIRM")
                             .font(ExecuteTypography.caption(9).weight(.bold))
                             .tracking(0.6)
                             .foregroundStyle(ExecuteColor.mist)
                         TextField("DELETE", text: $confirmation)
+                            .disabled(!model.canDeleteAccount)
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled()
                             .font(ExecuteTypography.body(16))
@@ -630,7 +638,8 @@ private struct DeleteAccountSheet: View {
     }
 
     private var canDelete: Bool {
-        confirmation.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "DELETE"
+        model.canDeleteAccount
+            && confirmation.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "DELETE"
             && !model.isDeletingAccount
     }
 

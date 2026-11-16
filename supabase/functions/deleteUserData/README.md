@@ -28,13 +28,54 @@ prerequisite to deployment approval. This is a review package, not an assertion
 that a byte-reproducible deployment rollback is ready. Unknown legacy email
 associations and concurrent writers remain acceptance limits.
 
+## Native rollout barrier and acknowledgement — E18
+
+The current production AppEnvironment explicitly selects
+awaitingServerVerification. SupabaseAccountService refuses BEFORE invoking the
+function; Profile shows a temporary-unavailability message and disables both
+confirmation entry and permanent deletion. No live capability probe is sent: the
+legacy deployed handler does not restrict the request method/body, so probing it
+could itself delete records. This temporary barrier is an open release blocker,
+not removal of required account deletion.
+
+After separately authorized deployment and independent revision/config readback,
+an explicitly reviewed acceptance build can select verifiedServerRollout for a
+newly authorized disposable account. The service then requires success true, no
+error, results.authentication exactly deleted, a storage status and valid
+nonnegative deleted-count statuses for every other result. Bare legacy success,
+missing/malformed/partial/error acknowledgements and all
+transport/decoding/provider failures remain unconfirmed; raw backend details are
+not echoed. These client checks do not independently prove server-side cleanup,
+and cannot replace database/storage/auth acceptance. Failed/unavailable requests
+retain session, cache, navigation and draft permission. Enablement remains an
+explicit source change; there is no user-supplied runtime bypass or implicit
+flag defaulting to enabled.
+
+33 unique native methods pass (8new contract regressions plus25affected existing
+session/billing/Profile methods), distinct from unchanged E17's26server
+fixtures. Normal simulator UI verifies the unavailable message, disabled
+controls and Cancel/back to Home; no confirmation text or permanent action was
+entered. Fresh independent14group SELECT before/after all UI preserves every
+count and RAWhash. Generic normal signed iOS Debug build/strict-deep codesign
+pass; no physical deletion test. The initial32native run overlaps the final33;
+do not sum.
+
+Rollback ZIP verification was deferred by the user. Two normal download controls
+produced no observable download event or error; no archive/version binding was
+obtained. Browser policy blocked chrome://downloads (HTTP/HTTPS only), and no
+alternate-surface/filesystem/API workaround was attempted. Deployment is still
+unapproved and not ready. Continue independent required native workflows while
+this gate is outstanding.
+
 ## Exact change and ownership contract
 
 `index.ts` authenticates through the existing shared helper and accepts POST
 only (OPTIONS remains CORS). The request body cannot select an identity.
 `handler.ts` redacts unexpected failures. The existing success envelope remains
-`{ success: true, results }`, compatible with the standalone Swift
-AccountService. No Swift code changed.
+`{ success: true, results }`. The native service now requires explicit
+authentication removal and nonnegative storage/record deletion counts, rather
+than trusting a success boolean. The real app remains unavailable for deletion
+until the server rollout is independently verified.
 
 `store.ts` deletes UUID-owned rows plus separately encoded legacy email matches
 **only where owner_id IS NULL**. A nonnull foreign owner always wins over
@@ -141,11 +182,15 @@ overlap the final26; do not sum them.
    normal tooling to the verified intended project; preserve current JWT
    verification. Do not execute deployment from this document without that
    approval. This document provides no authorization.
-5. Read back the deployed revision/config before any destructive action. Request
-   separate destructive acceptance authorization for a **new, explicitly
-   disposable account without preserved migration activity**. Start without any
-   paid subscription. Capture owner/source/count/storage baseline for that
-   account and foreign-owner sentinels through SELECT only; verify native
+5. Read back the deployed revision/config before any destructive action. Keep
+   the native rollout barrier active until this verification. Any acceptance
+   build enabling verifiedServerRollout must be reviewed against the exact
+   approved backend revision, and final release must include successful
+   lifecycle acceptance; the disabled state cannot satisfy W09. Request separate
+   destructive acceptance authorization for a **new, explicitly disposable
+   account without preserved migration activity**. Start without any paid
+   subscription. Capture owner/source/count/storage baseline for that account
+   and foreign-owner sentinels through SELECT only; verify native
    confirmation/cancel before any actual deletion.
 6. Only after explicit destructive approval, exercise deletion,
    partial-failure/retry, local purge and private re-login behavior;

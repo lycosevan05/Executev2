@@ -35,6 +35,8 @@ final class AppState: ObservableObject {
     private var callbacksInFlight: Set<String> = []
     private var completedCallbacks: [String] = []
 
+    var accountDeletionAvailable: Bool { accountService.deletionAvailable }
+
     func allowsDraftWrites(for userID: UUID) -> Bool {
         signedInUserID == userID && !deletingUserIDs.contains(userID)
     }

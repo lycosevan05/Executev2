@@ -1485,3 +1485,132 @@ final class DailyActivityChecklistTests: XCTestCase {
         catch { XCTFail("Expected exact-session mismatch") }
     }
 }
+
+/// Local response fixtures only. No real deletion endpoint or authentication storage is used.
+@MainActor private final class DeletionFunctionFixture: EdgeFunctionInvoking {
+    var calls = 0
+    var payload: JSONValue
+    var failure: Error?
+    private(set) var requestName: String?
+    private(set) var requestBody: JSONValue?
+    init(_ payload: JSONValue = .object(["success": .bool(true)])) { self.payload = payload }
+    func invoke<Request: Encodable & Sendable, Response: Decodable & Sendable>(_ name: String, request: Request, response: Response.Type) async throws -> Response {
+        calls += 1; requestName = name
+        requestBody = try JSONDecoder.execute.decode(JSONValue.self, from: JSONEncoder.execute.encode(request))
+        if let failure { throw failure }
+        return try JSONDecoder.execute.decode(Response.self, from: JSONEncoder.execute.encode(payload))
+    }
+}
+
+@MainActor final class AccountDeletionContractTests: XCTestCase {
+    private let success: JSONValue = .object(["success": .bool(true), "results": .object([
+        "authentication": .string("deleted"), "storage": .string("deleted 0"), "goals": .string("deleted 2")])])
+
+    func testUnverifiedRolloutCannotInvokeMutatingLegacyEndpoint() async {
+        let fixture = DeletionFunctionFixture()
+        let service = SupabaseAccountService(functions: fixture)
+        XCTAssertFalse(service.deletionAvailable)
+        do { try await service.deleteAccount(); XCTFail("Unverified server must not be invoked") }
+        catch let error as AppError { XCTAssertEqual(error.title, "Account deletion unavailable") }
+        catch { XCTFail("Expected local readiness error") }
+        XCTAssertEqual(fixture.calls, 0)
+    }
+
+    func testLegacySuccessWithoutCompleteCleanupAcknowledgmentIsRejected() async {
+        for payload: JSONValue in [.object(["success": .bool(true)]), .object(["success": .bool(true), "results": .object(["goals": .string("deleted 3")])])] {
+            let fixture = DeletionFunctionFixture(payload)
+            let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+            do { try await service.deleteAccount(); XCTFail("Legacy response is not full deletion") }
+            catch let error as AppError { XCTAssertEqual(error.title, "Account deletion not confirmed") }
+            catch { XCTFail("Expected safe acknowledgment rejection") }
+            XCTAssertEqual(fixture.calls, 1)
+        }
+    }
+
+    func testMissingFailedMalformedAndContradictoryCleanupStatusesAreRejectedWithoutEchoingProviderDetails() async {
+        let variants: [JSONValue] = [
+            .object(["success": .bool(false), "error": .string("private-fixture-provider-detail")]),
+            .object(["success": .bool(true), "error": .string("private-fixture-provider-detail"), "results": success["results"]!]),
+            .object(["success": .bool(true), "results": .object(["authentication": .string("pending"), "storage": .string("deleted 0")])]),
+            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted")])]),
+            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("error: private-fixture-provider-detail")])]),
+            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("deleted -1")])]),
+            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("deleted nonsense")])]),
+            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("deleted 0"), "goals": .object(["error": .string("private-fixture-provider-detail")])])]),
+            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("deleted 0"), "goals": .string("error: private-fixture-provider-detail")])])
+        ]
+        for payload in variants {
+            let service = SupabaseAccountService(functions: DeletionFunctionFixture(payload), readiness: .verifiedServerRollout)
+            do { try await service.deleteAccount(); XCTFail("Incomplete cleanup accepted") }
+            catch let error as AppError {
+                XCTAssertEqual(error.title, "Account deletion not confirmed")
+                XCTAssertFalse(error.message.contains("private-fixture-provider-detail"))
+            } catch { XCTFail("Expected redacted app error") }
+        }
+    }
+
+    func testVerifiedRolloutWithCompleteAcknowledgmentAcceptsEmptyBodyRequest() async throws {
+        let fixture = DeletionFunctionFixture(success)
+        let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+        XCTAssertTrue(service.deletionAvailable)
+        try await service.deleteAccount()
+        XCTAssertEqual(fixture.calls, 1); XCTAssertEqual(fixture.requestName, "deleteUserData")
+        XCTAssertEqual(fixture.requestBody, .object([:]))
+    }
+
+    func testTransportFailureNeverBecomesSuccessfulDeletion() async {
+        for failure in [URLError(.notConnectedToInternet) as Error, NSError(domain: "FixtureProvider", code: 500, userInfo: [NSLocalizedDescriptionKey: "private-fixture-provider-detail"])] {
+            let fixture = DeletionFunctionFixture(success); fixture.failure = failure
+            let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+            do { try await service.deleteAccount(); XCTFail("Expected safe transport error") }
+            catch let error as AppError {
+                XCTAssertEqual(error.title, "Account deletion not confirmed")
+                XCTAssertFalse(error.message.contains("private-fixture-provider-detail"))
+            } catch { XCTFail("Unexpected fixture error") }
+        }
+    }
+
+    func testMalformedAcknowledgmentDecodingFailsSafely() async {
+        let fixture = DeletionFunctionFixture(.object(["success": .string("private-fixture-provider-detail")]))
+        let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+        do { try await service.deleteAccount(); XCTFail("Expected safe decoding error") }
+        catch let error as AppError {
+            XCTAssertEqual(error.title, "Account deletion not confirmed")
+            XCTAssertFalse(error.message.contains("private-fixture-provider-detail"))
+        } catch { XCTFail("Raw decoding error must not escape") }
+    }
+
+    func testUnavailableRolloutPreservesSessionCacheNavigationAndDraftPermissions() async throws {
+        let fixture = DeletionFunctionFixture(success)
+        try await verifyPreservedState(SupabaseAccountService(functions: fixture), expectedAvailable: false)
+        XCTAssertEqual(fixture.calls, 0)
+    }
+
+    func testLegacyAcknowledgmentPreservesSessionCacheNavigationAndDraftPermissions() async throws {
+        let fixture = DeletionFunctionFixture()
+        try await verifyPreservedState(SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout), expectedAvailable: true)
+        XCTAssertEqual(fixture.calls, 1)
+    }
+
+    private func verifyPreservedState(_ account: AccountServicing, expectedAvailable: Bool) async throws {
+        let user = ExecuteUser(id: UUID(), email: "delete-contract@example.invalid", displayName: "Fixture")
+        let suite = "DeletionContract.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)); defer { defaults.removePersistentDomain(forName: suite) }
+        let cache = UserScopedCacheStore(suiteName: suite), router = AppRouter()
+        let auth = MockAuthService(restoredUser: user)
+        let state = AppState(authService: auth, accountService: account, cache: cache, router: router, subscriptionService: MockSubscriptionService(), configurationError: nil)
+        await state.start(); try await cache.write("keep", for: CacheKey("fixture", "retained"))
+        router.navigate(to: .profile(section: nil))
+        let profile = ProfileViewModel(dataService: nil, appState: state, router: router, cache: cache, defaults: defaults)
+        XCTAssertEqual(profile.canDeleteAccount, expectedAvailable)
+        do { try await state.deleteAccount(); XCTFail("Expected deletion to remain unconfirmed") } catch {}
+        XCTAssertEqual(state.launchState, .signedIn(user)); XCTAssertEqual(auth.restoredUser, user)
+        XCTAssertTrue(state.allowsDraftWrites(for: user.id))
+        XCTAssertEqual(router.pathBinding(for: .home).wrappedValue, [.profile(section: nil)])
+        let cached = await cache.read(CacheKey("fixture", "retained"), as: String.self)
+        switch cached {
+        case let .fresh(value), let .stale(value): XCTAssertEqual(value, "keep")
+        case .missing: XCTFail("Failed deletion must retain cache")
+        }
+    }
+}

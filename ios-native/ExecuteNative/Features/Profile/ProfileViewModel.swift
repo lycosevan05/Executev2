@@ -116,6 +116,8 @@ final class ProfileViewModel: ObservableObject {
         return saved
     }
 
+    var canDeleteAccount: Bool { appState.accountDeletionAvailable }
+
     func signOut() async { await appState.signOut() }
     func deleteAccount() async -> Bool {
         guard !isDeletingAccount else { return false }
