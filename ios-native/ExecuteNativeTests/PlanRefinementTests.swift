@@ -26,6 +26,45 @@ final class PlanRefinementTests: XCTestCase {
         XCTAssertEqual(data.updates, 0)
     }
 
+    func testRefinementReadsLatestSavedPreferencesWithoutChangingThemOrTheMaster() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), vm = model(data, ai: ai)
+        await vm.start(for: user)
+        data.rows[.userProfiles] = [PlanFixtureData.row(payload: .object(["coaching_style": .string("structured")]))]
+        data.rows[.nutritionProfiles] = [PlanFixtureData.row(payload: .object(["protein_target_g": .number(175), "disliked_foods": .array([.string("Synthetic avoided ingredient")])]))]
+        data.rows[.workoutProfiles] = [PlanFixtureData.row(payload: .object(["equipment_available": .array([.string("Resistance bands")])]))]
+        let before = data.rows
+        vm.changeRequest = "Keep my weekly schedule and use my current preferences"
+        await vm.refine()
+        XCTAssertNotNil(vm.revisedOverview)
+        XCTAssertTrue(ai.requests.last?.prompt.contains("structured") == true)
+        XCTAssertTrue(ai.requests.last?.prompt.contains("Synthetic avoided ingredient") == true)
+        XCTAssertTrue(ai.requests.last?.prompt.contains("Resistance bands") == true)
+        XCTAssertTrue(ai.requests.last?.prompt.contains("Explicit non-null current profile preferences override older") == true)
+        XCTAssertEqual(data.rows, before); XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+
+    func testRefinementDoesNotSendForeignDuplicateOrIncompleteProfileContext() async {
+        for kind in 0..<3 {
+            let data = PlanFixtureData(), ai = PlanFixtureAI(), vm = model(data, ai: ai)
+            await vm.start(for: user)
+            let row = PlanFixtureData.row(payload: .object(["coaching_style": .string("balanced")]))
+            if kind == 0 {
+                data.rows[.userProfiles] = [BackendRow(id: row.id, ownerID: UUID(), ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: row.createdDate, updatedDate: row.updatedDate, data: row.data)]
+            } else if kind == 1 { data.rows[.nutritionProfiles] = [row, row] }
+            else { data.rows[.workoutProfiles] = (0..<501).map { _ in row }; data.failSecondPage = true }
+            vm.changeRequest = "More recovery"; await vm.refine()
+            XCTAssertTrue(ai.requests.isEmpty); XCTAssertNil(vm.revisedOverview); XCTAssertNotNil(vm.editError)
+        }
+    }
+
+    func testAccountChangeDuringPreferenceReadCannotMakeAnAIRequest() async {
+        let data = PlanFixtureData(), ai = PlanFixtureAI(), vm = model(data, ai: ai)
+        await vm.start(for: user); vm.changeRequest = "More recovery"
+        data.beforeListReturn = { vm.stop() }
+        await vm.refine()
+        XCTAssertTrue(ai.requests.isEmpty); XCTAssertNil(vm.revisedOverview); XCTAssertEqual(data.creates, 0)
+    }
+
     func testLostCreateResponseRetryReusesCommittedRevisionAndSurvivesReload() async throws {
         let data = PlanFixtureData(), ai = PlanFixtureAI(), model = model(data, ai: ai)
         await model.start(for: user)

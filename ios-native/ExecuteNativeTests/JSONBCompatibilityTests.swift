@@ -2,6 +2,177 @@ import XCTest
 import Supabase
 @testable import ExecuteNative
 
+final class EmailOTPInputTests: XCTestCase {
+    func testSameNormalizedMailboxAndSixDigitCodeAreUsedForVerification() {
+        XCTAssertEqual(EmailOTPInput.email("  Profile.QA+one@example.invalid\n"), "Profile.QA+one@example.invalid")
+        XCTAssertEqual(EmailOTPInput.code(" 012345\n"), "012345")
+        for text in ["", "@example.invalid", "qa@", "qa@@example.invalid", "qa @example.invalid", String(repeating: "x", count: 250) + "@example.invalid"] { XCTAssertNil(EmailOTPInput.email(text)) }
+        for text in ["12345", "1234567", "123 45", "12345x", "１２３４５６"] { XCTAssertNil(EmailOTPInput.code(text)) }
+    }
+}
+
+@MainActor final class ProfilePreferenceTests: XCTestCase {
+    private let user = ExecuteUser(id: UUID(), email: "profile-qa@example.invalid", displayName: "QA")
+    private func model(_ section: ProfilePreferenceSection, _ data: PreferenceData, defaults: UserDefaults? = nil, allowed: @escaping (UUID) -> Bool = { _ in true }) -> ProfilePreferenceModel {
+        ProfilePreferenceModel(section: section, data: data, cache: UserScopedCacheStore(suiteName: "PreferenceCache.\(UUID())"),
+            defaults: defaults ?? UserDefaults(suiteName: "Preference.\(UUID())")!, canWrite: allowed)
+    }
+    private func result(_ expected: Bool, _ actual: Bool, file: StaticString = #filePath, line: UInt = #line) { XCTAssertEqual(expected, actual, file: file, line: line) }
+    func testOnlyDirtyFieldsPersistWithoutFreezingPlanDefaultsOrChangingActivity() async throws {
+        let data = PreferenceData(), before = data.rows
+        let m = model(.nutrition, data); await m.start(user: user)
+        XCTAssertTrue(m.ready); XCTAssertFalse(m.changed); XCTAssertEqual(m.planDefaults["calorie_target"], "2200.0")
+        result(true, await m.save()); XCTAssertEqual(data.writes, 0)
+        m.set("protein_target_g", "175"); result(true, await m.save())
+        XCTAssertEqual(data.patches.last, .object(["protein_target_g": .number(175)]))
+        XCTAssertEqual(data.rows[.nutritionProfiles]?.first?.data["custom"], .string("preserve"))
+        XCTAssertNil(data.rows[.nutritionProfiles]?.first?.data["calorie_target"])
+        XCTAssertEqual(data.rows.filter { $0.key != .nutritionProfiles }, before.filter { $0.key != .nutritionProfiles })
+    }
+    func testWorkoutAndCoachingUseSameOwnedProfileAndPreserveUnknownFields() async {
+        let data = PreferenceData()
+        for (section, key, value) in [(ProfilePreferenceSection.workout, "equipment_available", "Bodyweight only\nResistance bands"), (.coaching, "coaching_style", "structured")] {
+            let id = data.rows[section.table]?.first?.id
+            let m = model(section, data); await m.start(user: user); m.set(key, value)
+            result(true, await m.save()); XCTAssertEqual(data.rows[section.table]?.first?.id, id)
+            XCTAssertEqual(data.rows[section.table]?.first?.data["custom"], .string("preserve"))
+        }
+        XCTAssertEqual(data.creates, 0)
+    }
+    func testResetTargetsClearsOnlyOverridesAndRetainsPreferencesAndMaster() async {
+        let data = PreferenceData()
+        data.replace(.nutritionProfiles, ["calorie_target": .number(2400), "calorie_target_source": .string("manual"), "protein_target_g": .number(175), "liked_foods": .array([.string("oats")])])
+        let originalMaster = data.rows[.aiPlans]
+        let m = model(.nutrition, data); await m.start(user: user); m.resetTargets(); result(true, await m.save())
+        XCTAssertEqual(data.patches.last?["calorie_target"], .null); XCTAssertEqual(data.patches.last?["calorie_target_source"], .string("ai_plan"))
+        XCTAssertEqual(data.rows[.nutritionProfiles]?.first?.data["liked_foods"], .array([.string("oats")]))
+        XCTAssertEqual(data.rows[.aiPlans], originalMaster)
+    }
+    func testMacroOverrideDoesNotRequireManualCaloriesAcrossHomeNutritionAndGeneration() throws {
+        let raw: JSONValue = .object(["calorie_target_source": .string("ai_plan"), "calorie_target": .number(2500), "protein_target_g": .number(175)])
+        let profile = try raw.decoded(as: HomeNutritionProfile.self)
+        let master: JSONValue = .object(["nutrition_targets": .object(["calories": .number(2200), "protein_g": .number(160), "carbs_g": .number(255), "fat_g": .number(60)])])
+        let plan = try master.decoded(as: HomeAIPlan.self)
+        XCTAssertEqual(HomeCalculations.calorieTarget(nutritionProfile: profile, activePlan: plan), 2200)
+        XCTAssertEqual(HomeCalculations.macroTargets(nutritionProfile: profile, activePlan: plan, mealPlan: nil).protein, 175)
+        let n = NutritionCalculations.targets(profile: profile, activePlan: plan, mealPlan: nil)
+        XCTAssertEqual(n.calories, 2200); XCTAssertEqual(n.protein, 175)
+        let t = DayPlanLogic.targets(master: master, context: .object(["nutrition_profile": raw]))
+        XCTAssertEqual(t["calories"], .number(2200)); XCTAssertEqual(t["protein_g"], .number(175))
+        let context: JSONValue = .object(["nutrition_profile": raw, "user_profile": .object(["coaching_style": .string("structured")])])
+        let request = try DayPlanLogic.request(kind: .meals, date: "2026-11-15", master: master, context: context)
+        XCTAssertTrue(request.prompt.contains("structured")); XCTAssertTrue(request.prompt.contains("Explicit non-null current profile preferences override older"))
+    }
+    func testLostUpdateAcknowledgmentSurvivesRecreationWithoutRepeatingWrite() async {
+        let data = PreferenceData(), defaults = UserDefaults(suiteName: "PreferenceRetry.\(UUID())")!
+        let first = model(.nutrition, data, defaults: defaults); await first.start(user: user)
+        first.set("protein_target_g", "175"); data.loseAck = true; result(false, await first.save()); XCTAssertTrue(first.hasAttempt)
+        first.set("protein_target_g", "999"); XCTAssertEqual(first.values["protein_target_g"], "175")
+        let retry = model(.nutrition, data, defaults: defaults); await retry.start(user: user)
+        result(true, await retry.save()); XCTAssertEqual(data.writes, 1); XCTAssertFalse(retry.hasAttempt)
+    }
+    func testLostCreateAcknowledgmentFindsSameTokenAndDoesNotCreateDuplicate() async {
+        let data = PreferenceData(), defaults = UserDefaults(suiteName: "PreferenceCreate.\(UUID())")!
+        data.rows[.workoutProfiles] = []
+        let first = model(.workout, data, defaults: defaults); await first.start(user: user)
+        first.set("days_per_week", "3"); data.loseAck = true; result(false, await first.save())
+        let retry = model(.workout, data, defaults: defaults); await retry.start(user: user)
+        result(true, await retry.save()); XCTAssertEqual(data.creates, 1); XCTAssertEqual(data.rows[.workoutProfiles]?.count, 1)
+    }
+    func testConflictWrongAcknowledgmentAndCorruptRetryNeverOverwriteNewerValues() async {
+        let data = PreferenceData(), defaults = UserDefaults(suiteName: "PreferenceCorrupt.\(UUID())")!
+        let m = model(.coaching, data, defaults: defaults); await m.start(user: user); m.set("coaching_style", "balanced")
+        data.replace(.userProfiles, ["coaching_style": .string("flexible")]); result(false, await m.save()); XCTAssertEqual(data.writes, 0)
+        await m.start(user: user); m.set("coaching_style", "structured"); data.wrongAck = true; result(false, await m.save()); XCTAssertTrue(m.hasAttempt)
+        let retry = model(.coaching, data, defaults: defaults); await retry.start(user: user); result(true, await retry.save()); XCTAssertEqual(data.writes, 1)
+        defaults.set(Data([0,1]), forKey: "execute.cache.\(user.id.uuidString).profile-preferences.coaching")
+        await m.start(user: user); XCTAssertTrue(m.hasAttempt); result(false, await m.save()); m.discardLocalAttempt(); XCTAssertFalse(m.hasAttempt)
+    }
+    func testForeignDuplicateIncompleteReadsAndSessionSwitchFailClosed() async {
+        for kind in 0..<3 {
+            let data = PreferenceData()
+            if kind == 0 { data.replace(.userProfiles, [:], owner: UUID()) }
+            if kind == 1 { data.rows[.userProfiles] = (0..<501).map { _ in PreferenceData.row([:]) } }
+            if kind == 2 { data.failRead = true }
+            let m = model(.coaching, data); await m.start(user: user); XCTAssertFalse(m.ready); result(false, await m.save()); XCTAssertEqual(data.writes, 0)
+            if kind == 1 { XCTAssertGreaterThanOrEqual(data.reads, 2) }
+        }
+        let data = PreferenceData(); var allowed = true
+        let m = model(.coaching, data, allowed: { _ in allowed }); await m.start(user: user); m.set("coaching_style", "balanced")
+        data.beforeAck = { allowed = false }; result(false, await m.save()); XCTAssertTrue(m.hasAttempt)
+        m.stop(); XCTAssertTrue(m.values.isEmpty); XCTAssertFalse(m.ready)
+        allowed = true; data.beforeRead = { m.stop() }; await m.start(user: user); XCTAssertFalse(m.ready); XCTAssertTrue(m.values.isEmpty)
+    }
+    func testValidationPreservesLegacyChoicesAndRejectsInvalidNumbersAndLists() async throws {
+        let data = PreferenceData(); data.replace(.userProfiles, ["coaching_style": .string("supportive")])
+        let m = model(.coaching, data); await m.start(user: user); XCTAssertTrue(m.ready); result(true, await m.save()); XCTAssertEqual(data.writes, 0)
+        let days = ProfilePreferenceSection.workout.fields.first { $0.id == "days_per_week" }!
+        for s in ["0", "8", "3.5", "nan", "inf"] { XCTAssertThrowsError(try days.value(s)) }
+        XCTAssertEqual(try days.value(""), .null)
+        let protein = ProfilePreferenceSection.nutrition.fields.first { $0.id == "protein_target_g" }!
+        XCTAssertEqual(try protein.value("27,5"), .number(27.5))
+        let equipment = ProfilePreferenceSection.workout.fields.last!
+        XCTAssertThrowsError(try equipment.value(Array(repeating: "x", count: 61).joined(separator: "\n")))
+        XCTAssertThrowsError(try equipment.display(.array([.object([:])])))
+        XCTAssertEqual(try equipment.value(""), .array([]))
+        let diet = ProfilePreferenceSection.nutrition.fields.last!
+        XCTAssertEqual(try diet.value("dairy_free"), .string("dairy_free"))
+    }
+    func testStructurallyDecodableButInvalidRetryCannotCrashOrWriteUnrelatedFields() async throws {
+        for patch: JSONValue in [.string("not an object"), .object(["display_name": .string("must not be written by nutrition")])] {
+            let data = PreferenceData(), defaults = UserDefaults(suiteName: "PreferenceBadPatch.\(UUID())")!
+            let raw: JSONValue = .object(["recordID": .string(data.rows[.nutritionProfiles]!.first!.id.uuidString), "original": data.rows[.nutritionProfiles]!.first!.data,
+                "patch": patch, "token": .string(UUID().uuidString)])
+            defaults.set(try JSONEncoder().encode(raw), forKey: "execute.cache.\(user.id.uuidString).profile-preferences.nutrition")
+            let m = model(.nutrition, data, defaults: defaults); await m.start(user: user)
+            XCTAssertTrue(m.hasAttempt); XCTAssertNotNil(m.error); result(false, await m.save()); XCTAssertEqual(data.writes, 0)
+        }
+    }
+    func testExplicitListClearDoesNotBecomeFallbackOrPersistUntouchedDefaults() async {
+        let data = PreferenceData(), m = model(.nutrition, data)
+        await m.start(user: user); m.set("liked_foods", "Synthetic oats"); m.set("liked_foods", "")
+        result(true, await m.save())
+        XCTAssertEqual(data.patches.last, .object(["liked_foods": .array([])]))
+        XCTAssertNil(data.rows[.nutritionProfiles]?.first?.data["calorie_target"])
+    }
+}
+
+@MainActor private final class PreferenceData: EntityDataServicing {
+    var rows: [EntityTable: [BackendRow]] = [:]
+    var writes = 0, creates = 0, reads = 0
+    var patches: [JSONValue] = []
+    var loseAck = false, wrongAck = false, failRead = false
+    var beforeAck: (() -> Void)?, beforeRead: (() -> Void)?
+    init() {
+        for table in [EntityTable.userProfiles, .workoutProfiles, .nutritionProfiles] { rows[table] = [Self.row(["custom": .string("preserve")])] }
+        rows[.aiPlans] = [Self.row(["status": .string("active"), "plan_type": .string("daily"), "nutrition_targets": .object(["calories": .number(2200)])])]
+        rows[.dailyLogs] = [Self.row(["date": .string("2026-11-15"), "calories_consumed": .number(1450)])]
+    }
+    static func row(_ fields: [String: JSONValue], id: UUID = UUID(), owner: UUID? = nil) -> BackendRow {
+        BackendRow(id: id, ownerID: owner, ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: .now, updatedDate: .now, data: .object(fields))
+    }
+    func replace(_ table: EntityTable, _ fields: [String: JSONValue], owner: UUID? = nil) { rows[table] = [Self.row(fields, id: rows[table]?.first?.id ?? UUID(), owner: owner)] }
+    func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>] { try await listPage(table, orderBy: orderBy, limit: limit, offset: 0) }
+    func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
+        reads += 1; beforeRead?(); if failRead { throw URLError(.notConnectedToInternet) }
+        return try (rows[table] ?? []).dropFirst(offset).prefix(limit).map { try EntityRecord(row: $0) }
+    }
+    func update<Payload: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<Payload> {
+        writes += 1; patches.append(patch)
+        let old = rows[table]!.first!
+        let row = Self.row(old.data.objectValue!.merging(patch.objectValue!) { _, new in new }, id: old.id, owner: old.ownerID)
+        rows[table] = [row]
+        beforeAck?(); if loseAck { loseAck = false; throw URLError(.networkConnectionLost) }
+        return try EntityRecord(row: wrongAck ? Self.row(row.data.objectValue!) : row)
+    }
+    func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload> {
+        creates += 1; let raw = try JSONDecoder.execute.decode(JSONValue.self, from: JSONEncoder.execute.encode(payload))
+        let row = Self.row(raw.objectValue!, owner: user.id); rows[table, default: []].append(row)
+        if loseAck { loseAck = false; throw URLError(.networkConnectionLost) }; return try EntityRecord(row: row)
+    }
+    func delete(_ table: EntityTable, id: UUID) async throws { XCTFail("Preferences never delete records") }
+}
+
 final class LaunchOptionsTests: XCTestCase {
     func testFeaturePreviewsRequireExplicitLaunchArguments() {
         XCTAssertNil(AppLaunchOptions.previewDestination(arguments: []))

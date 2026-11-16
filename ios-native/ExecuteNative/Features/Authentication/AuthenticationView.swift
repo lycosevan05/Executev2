@@ -6,6 +6,7 @@ struct AuthenticationView: View {
     @State private var email = ""
     @State private var code = ""
     @State private var otpWasSent = false
+    @State private var sentEmail: String?
     @State private var isWorking = false
     @State private var error: AppError?
     @State private var legalDocument: LegalDocument?
@@ -25,6 +26,7 @@ struct AuthenticationView: View {
                             .textInputAutocapitalization(.never)
                             .keyboardType(.emailAddress)
                             .textContentType(.emailAddress)
+                            .disabled(otpWasSent || isWorking)
                             .padding(ExecuteSpacing.sm)
                             .background(ExecuteColor.parchment)
                             .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
@@ -41,6 +43,9 @@ struct AuthenticationView: View {
                                 code = ""
                                 sendCode()
                             }
+                            ExecuteSecondaryButton(title: "Use another email") {
+                                sentEmail = nil; code = ""; otpWasSent = false; error = nil
+                            }
                         } else {
                             ExecutePrimaryButton(title: "Continue with email", action: sendCode, isLoading: isWorking)
                         }
@@ -48,6 +53,7 @@ struct AuthenticationView: View {
                         ExecuteSecondaryButton(title: "Continue with Apple") { startOAuth(.apple) }
                         ExecuteSecondaryButton(title: "Continue with Google") { startOAuth(.google) }
                     }
+                    .disabled(isWorking)
                     .padding(ExecuteSpacing.md)
                 }
                 if let error {
@@ -80,15 +86,17 @@ struct AuthenticationView: View {
     }
 
     private func sendCode() {
+        guard !isWorking else { return }
+        guard let address = EmailOTPInput.email(sentEmail ?? email) else {
+            error = AppError(title: "Enter a valid email", message: "Use the email address associated with your Execute account.")
+            return
+        }
+        isWorking = true; error = nil
         Task {
-            guard email.contains("@") else {
-                error = AppError(title: "Enter a valid email", message: "Use the email address associated with your Execute account.")
-                return
-            }
-            isWorking = true
             defer { isWorking = false }
             do {
-                try await environment.appState.sendEmailOTP(to: email.trimmingCharacters(in: .whitespacesAndNewlines))
+                try await environment.appState.sendEmailOTP(to: address)
+                sentEmail = address; email = address
                 otpWasSent = true
                 error = nil
             } catch {
@@ -98,15 +106,16 @@ struct AuthenticationView: View {
     }
 
     private func verifyCode() {
+        guard !isWorking else { return }
+        guard let address = sentEmail, let token = EmailOTPInput.code(code) else {
+            error = AppError(title: "Enter the full code", message: "Enter the six-digit code sent to this email address.")
+            return
+        }
+        isWorking = true; error = nil
         Task {
-            guard code.count >= 6 else {
-                error = AppError(title: "Enter the full code", message: "Enter the complete verification code from your email.")
-                return
-            }
-            isWorking = true
             defer { isWorking = false }
             do {
-                try await environment.appState.verifyEmailOTP(email: email, token: code)
+                try await environment.appState.verifyEmailOTP(email: address, token: token)
             } catch {
                 self.error = AppError.from(error, title: "Could not verify that code")
             }
@@ -114,8 +123,9 @@ struct AuthenticationView: View {
     }
 
     private func startOAuth(_ provider: OAuthProvider) {
+        guard !isWorking else { return }
+        isWorking = true; error = nil
         Task {
-            isWorking = true
             defer { isWorking = false }
             do {
                 let url = try await environment.appState.authorizationURL(for: provider)

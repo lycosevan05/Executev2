@@ -440,13 +440,12 @@ enum HomeCalculations {
         activePlan: HomeAIPlan?,
         mealPlan: HomeMealPlan?
     ) -> (protein: Double?, carbs: Double?, fats: Double?) {
-        let manual = nutritionProfile?.calorieTargetSource == "manual"
         let plan = activePlan?.resolvedNutritionTargets
-        let protein = manual && (nutritionProfile?.proteinTargetG ?? 0) > 0
+        let protein = (nutritionProfile?.proteinTargetG ?? 0) > 0
             ? nutritionProfile?.proteinTargetG : plan?.proteinG ?? mealPlan?.totalProteinG
-        let carbs = manual && (nutritionProfile?.carbsTargetG ?? 0) > 0
+        let carbs = (nutritionProfile?.carbsTargetG ?? 0) > 0
             ? nutritionProfile?.carbsTargetG : plan?.carbsG ?? mealPlan?.totalCarbsG
-        let fats = manual && (nutritionProfile?.fatsTargetG ?? 0) > 0
+        let fats = (nutritionProfile?.fatsTargetG ?? 0) > 0
             ? nutritionProfile?.fatsTargetG : plan?.fatG ?? plan?.fatsG ?? mealPlan?.totalFatsG
         return (positive(protein), positive(carbs), positive(fats))
     }

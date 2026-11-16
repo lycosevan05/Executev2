@@ -11,6 +11,21 @@ enum OAuthProvider: String, CaseIterable, Sendable {
     case google
 }
 
+enum EmailOTPInput {
+    static func email(_ value: String) -> String? {
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = text.split(separator: "@", omittingEmptySubsequences: false)
+        guard text.count <= 254, parts.count == 2, parts.allSatisfy({ !$0.isEmpty }),
+              !text.contains(where: \.isWhitespace) else { return nil }
+        return text
+    }
+    static func code(_ value: String) -> String? {
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.utf8.count == 6, text.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        return text
+    }
+}
+
 @MainActor
 protocol AuthServicing: AnyObject, Sendable {
     func restoreSession() async throws -> ExecuteUser?

@@ -236,7 +236,10 @@ final class PlanViewModel: ObservableObject {
         defer { if request == generation { isRefining = false } }
         do {
             let dates = PlanRefinement.dates(from: Date())
-            let llmRequest = try PlanRefinement.request(current: activeRecord.payload, change: changeRequest, dates: dates)
+            guard let dataService else { throw AppError(title: "Preferences unavailable", message: "Connect your account before requesting a plan change.") }
+            let preferences = try await preferenceContext(dataService, request: request)
+            guard request == generation, !Task.isCancelled else { return }
+            let llmRequest = try PlanRefinement.request(current: activeRecord.payload, change: changeRequest, dates: dates, preferences: preferences)
             let raw = try await aiService.structuredResponse(llmRequest, as: JSONValue.self)
             guard request == generation, !Task.isCancelled else { return }
             guard hasPremiumAccess() else {
@@ -438,20 +441,27 @@ final class PlanViewModel: ObservableObject {
     }
 
     private func loadSetupContext(_ dataService: EntityDataServicing, request: UUID) async throws {
-                let users: [EntityRecord<JSONValue>] = try await dataService.list(.userProfiles, orderBy: "-updated_date", limit: 1)
-                guard request == generation, !Task.isCancelled else { return }
-                let workouts: [EntityRecord<JSONValue>] = try await dataService.list(.workoutProfiles, orderBy: "-updated_date", limit: 1)
-                guard request == generation, !Task.isCancelled else { return }
-                let nutrition: [EntityRecord<JSONValue>] = try await dataService.list(.nutritionProfiles, orderBy: "-updated_date", limit: 1)
-                guard request == generation, !Task.isCancelled else { return }
-                let injuries: [EntityRecord<JSONValue>] = try await dataService.listAll(.injuryProfiles, isCurrent: { request == self.generation })
-                guard request == generation, !Task.isCancelled else { return }
-                restoringDraft = true
-                questionnaire.prefill(user: users.first?.payload, workout: workouts.first?.payload, nutrition: nutrition.first?.payload)
-                restoringDraft = false
-                generationContext = .object(["user_profile": users.first?.payload ?? .null,
-                    "workout_profile": workouts.first?.payload ?? .null, "nutrition_profile": nutrition.first?.payload ?? .null,
-                    "active_limitations": .array(injuries.filter { $0.payload["is_active"]?.boolValue != false }.map(\.payload))])
+        let context = try await preferenceContext(dataService, request: request)
+        guard request == generation, !Task.isCancelled else { return }
+        restoringDraft = true
+        questionnaire.prefill(user: context["user_profile"], workout: context["workout_profile"], nutrition: context["nutrition_profile"])
+        restoringDraft = false
+        generationContext = context
+    }
+
+    private func preferenceContext(_ dataService: EntityDataServicing, request: UUID) async throws -> JSONValue {
+        guard let user, request == generation, canPersistDraft(user.id) else { throw CancellationError() }
+        func current() -> Bool { request == generation && self.user?.id == user.id && canPersistDraft(user.id) && !Task.isCancelled }
+        var context: [String: JSONValue] = [:]
+        for (table, key) in [(EntityTable.userProfiles, "user_profile"), (.workoutProfiles, "workout_profile"), (.nutritionProfiles, "nutrition_profile"), (.injuryProfiles, "active_limitations")] {
+            let rows: [EntityRecord<JSONValue>] = try await dataService.listAll(table, isCurrent: current)
+            guard current() else { throw CancellationError() }
+            guard rows.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }), table == .injuryProfiles || rows.count <= 1 else {
+                throw AppError(title: "Profile context needs review", message: "Duplicate or foreign profile records were preserved instead of being sent to AI.")
+            }
+            context[key] = table == .injuryProfiles ? .array(rows.filter { $0.payload["is_active"]?.boolValue != false }.map(\.payload)) : rows.first?.payload ?? .null
+        }
+        return .object(context)
     }
 
     func beginSetup() async {

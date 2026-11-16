@@ -366,11 +366,11 @@ enum NutritionCalculations {
         let plan = activePlan?.resolvedNutritionTargets
         let calories = manual && (profile?.calorieTarget ?? 0) > 0
             ? profile?.calorieTarget : plan?.calories ?? mealPlan?.totalCalories
-        let protein = manual && (profile?.proteinTargetG ?? 0) > 0
+        let protein = (profile?.proteinTargetG ?? 0) > 0
             ? profile?.proteinTargetG : plan?.proteinG ?? mealPlan?.totalProteinG
-        let carbs = manual && (profile?.carbsTargetG ?? 0) > 0
+        let carbs = (profile?.carbsTargetG ?? 0) > 0
             ? profile?.carbsTargetG : plan?.carbsG ?? mealPlan?.totalCarbsG
-        let fats = manual && (profile?.fatsTargetG ?? 0) > 0
+        let fats = (profile?.fatsTargetG ?? 0) > 0
             ? profile?.fatsTargetG : plan?.fatG ?? plan?.fatsG ?? mealPlan?.totalFatsG
         return NutritionTargets(
             calories: positive(calories),

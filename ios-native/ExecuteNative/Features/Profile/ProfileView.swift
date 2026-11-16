@@ -47,6 +47,7 @@ struct ProfileDashboardView: View {
     @State private var isNameEditorPresented = false
     @State private var isDeletePresented = false
     @State private var isSignOutPresented = false
+    @State private var preferenceSection: ProfilePreferenceSection?
 
     var body: some View {
         ScrollView {
@@ -68,6 +69,17 @@ struct ProfileDashboardView: View {
                             subtitle: "Permissions and delivery settings",
                             action: openNotificationSettings
                         )
+                    }
+                }
+
+                ProfileSection(title: "Personalization") {
+                    VStack(spacing: 0) {
+                        ForEach(ProfilePreferenceSection.allCases) { section in
+                            ProfileActionRow(symbol: section == .nutrition ? "fork.knife" : section == .workout ? "dumbbell" : "bubble.left",
+                                title: section.title, subtitle: "Review your saved preferences", action: { preferenceSection = section })
+                        }
+                        ProfileActionRow(symbol: "target", title: "Goals", subtitle: "Targets and progress", action: model.openGoals)
+                        ProfileActionRow(symbol: "figure.walk", title: "Limitations", subtitle: "Injuries and movement cautions", action: model.openLimitations)
                     }
                 }
 
@@ -131,6 +143,9 @@ struct ProfileDashboardView: View {
         .sheet(isPresented: $isDeletePresented) {
             DeleteAccountSheet(model: model)
         }
+        .sheet(item: $preferenceSection) { section in
+            ProfilePreferencesView(section: section)
+        }
         .confirmationDialog(
             "Sign out of Execute?",
             isPresented: $isSignOutPresented,
@@ -153,6 +168,7 @@ struct ProfileDashboardView: View {
         .executeScreen()
         .onAppear {
             if initialSection == "name" { isNameEditorPresented = true }
+            if let section = initialSection.flatMap(ProfilePreferenceSection.init(rawValue:)) { preferenceSection = section }
         }
     }
 
@@ -165,6 +181,81 @@ struct ProfileDashboardView: View {
     private func openNotificationSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         openURL(url)
+    }
+}
+
+private struct ProfilePreferencesView: View {
+    @EnvironmentObject private var environment: AppEnvironment
+    let section: ProfilePreferenceSection
+    var body: some View { ProfilePreferencesScreen(section: section, environment: environment) }
+}
+
+private struct ProfilePreferencesScreen: View {
+    @ObservedObject private var appState: AppState
+    @StateObject private var model: ProfilePreferenceModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmDiscard = false
+    init(section: ProfilePreferenceSection, environment: AppEnvironment) {
+        _appState = ObservedObject(wrappedValue: environment.appState)
+        _model = StateObject(wrappedValue: ProfilePreferenceModel(section: section, data: environment.dataService, cache: environment.cache,
+            canWrite: { environment.appState.allowsDraftWrites(for: $0) }))
+    }
+    private var user: ExecuteUser? { if case .signedIn(let user) = appState.launchState { return user }; return nil }
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Only changed fields are saved. Blank numeric overrides use plan defaults. Clearing an edited food or equipment list saves an empty list. Existing plans and recorded activity are preserved.").font(.footnote)
+                    if model.section == .coaching { Text("Structured: precise steps. Balanced: adaptable guidance. Flexible: more autonomy.").font(.footnote) }
+                    if model.hasAttempt { Text("A previous save needs verification. Closing keeps this same attempt available on this device.") }
+                    if let error = model.error { Text(error.message).foregroundStyle(ExecuteColor.destructive) }
+                    if model.busy { ProgressView("Checking preferences…") }
+                }
+                if model.ready {
+                    ForEach(model.section.fields) { field in
+                        Section(field.title) {
+                            preference(field)
+                            if let value = model.planDefaults[field.id] { Text("Current plan: \(value)").font(.footnote) }
+                        }.disabled(model.busy || model.hasAttempt)
+                    }
+                    if model.section == .nutrition {
+                        Button("Use plan nutrition targets") { model.resetTargets() }.disabled(model.busy || model.hasAttempt)
+                    }
+                    Button(model.hasAttempt ? "Verify previous preference save" : "Save preferences") {
+                        Task { if await model.save() { dismiss() } }
+                    }.disabled(model.busy || (!model.changed && !model.hasAttempt))
+                } else if !model.busy, let user {
+                    Button("Reload preferences") { Task { await model.start(user: user) } }
+                }
+                if model.hasAttempt {
+                    Button("Discard local preference retry", role: .destructive) { confirmDiscard = true }.disabled(model.busy)
+                }
+            }
+            .navigationTitle(model.section.title).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(model.busy) } }
+        }
+        .interactiveDismissDisabled(model.busy)
+        .confirmationDialog("Discard local preference retry?", isPresented: $confirmDiscard) {
+            Button("Discard local retry", role: .destructive) { model.discardLocalAttempt(); dismiss() }
+        } message: { Text("This does not undo preferences that already reached the server. Reopen to review saved values.") }
+        .task(id: user?.id) { if let user { await model.start(user: user) } else { model.stop(); dismiss() } }
+        .onDisappear { model.stop() }
+    }
+    @ViewBuilder private func preference(_ field: ProfilePreferenceField) -> some View {
+        let binding = Binding(get: { model.values[field.id] ?? "" }, set: { model.set(field.id, $0) })
+        switch field.kind {
+        case .number:
+            TextField("Use plan / default", text: binding).keyboardType(.decimalPad).accessibilityLabel(field.title)
+        case .list:
+            Text("One item per line").font(.footnote)
+            TextEditor(text: binding).frame(minHeight: 85).accessibilityLabel(field.title)
+        case .choice(let options):
+            Picker(field.title, selection: binding) {
+                Text("Use plan / default").tag("")
+                if let value = model.values[field.id], !value.isEmpty, !options.contains(value) { Text("Saved: \(value)").tag(value) }
+                ForEach(options, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
+            }
+        }
     }
 }
 
