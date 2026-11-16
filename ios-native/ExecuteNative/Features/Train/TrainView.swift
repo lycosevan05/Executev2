@@ -706,12 +706,21 @@ private struct WorkoutExerciseEditor: View {
                 increment: { model.adjustReps(by: 1) }
             )
 
+            if model.needsWeightUnitConfirmation {
+                Text("This older session saved weights without their units. Select the units originally used; the saved numbers will be preserved.")
+                    .font(.footnote)
+                HStack {
+                    Button("Saved weights are lb") { model.confirmSavedWeightUnits(.imperial) }
+                    Button("Saved weights are kg") { model.confirmSavedWeightUnits(.metric) }
+                }
+            }
             WorkoutValueAdjuster(
                 title: "WEIGHT (\(model.weightUnit.uppercased()))",
                 value: formattedWeight(model.weights[model.currentExerciseIndex] ?? 0),
                 decrement: { model.adjustWeight(by: -model.weightStep) },
                 increment: { model.adjustWeight(by: model.weightStep) }
             )
+            .disabled(model.needsWeightUnitConfirmation)
 
             VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
                 Text("\(completedForExercise)/\(exercise.setCount) SETS COMPLETE")

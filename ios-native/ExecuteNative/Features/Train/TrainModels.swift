@@ -121,6 +121,7 @@ struct WorkoutSessionLog: Codable, Sendable {
     var userNotes: String? = nil
     var exerciseLogs: [WorkoutSessionExerciseLog]? = nil
     var skippedExercises: [String]? = nil
+    var weightUnitSystem: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case date, status, rating
@@ -145,6 +146,16 @@ struct WorkoutSessionLog: Codable, Sendable {
         case userNotes = "user_notes"
         case exerciseLogs = "exercise_logs"
         case skippedExercises = "skipped_exercises"
+        case weightUnitSystem = "weight_unit_system"
+    }
+}
+
+enum WorkoutWeightUnits {
+    static func resolve(log: WorkoutSessionLog?, profileUnits: String?) throws -> ProfileUnitSystem? {
+        if let saved = log?.weightUnitSystem { return ProfileUnitSystem(rawValue: saved) }
+        // Both retained web logs and earlier native logs omitted units. Positive loads cannot be inferred.
+        if log?.exerciseLogs?.contains(where: { $0.weight > 0 }) == true { return nil }
+        return try ProfileUnitSystem.saved(profileUnits)
     }
 }
 

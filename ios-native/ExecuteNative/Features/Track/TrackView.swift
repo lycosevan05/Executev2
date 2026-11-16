@@ -18,14 +18,15 @@ private struct TrackScreen: View {
             dataService: environment.dataService,
             cache: environment.cache,
             realtimeService: environment.realtimeService,
-            router: environment.router
+            router: environment.router,
+            canWrite: { environment.appState.allowsDraftWrites(for: $0) }
         ))
     }
 
     var body: some View {
         TrackDashboardView(model: model)
             .task(id: signedInUser?.id) {
-                if let signedInUser { await model.start(for: signedInUser) }
+                if let signedInUser { await model.start(for: signedInUser) } else { await model.stop() }
             }
             .onDisappear { Task { await model.stop() } }
     }
@@ -64,11 +65,13 @@ struct TrackDashboardView: View {
                         TrackMetricCard(
                             metric: metric,
                             value: model.displayValue(for: metric),
+                            unit: model.unit(for: metric),
                             isLogged: model.isLogged(metric),
                             isSaving: model.savingMetrics.contains(metric)
                         ) {
                             selectedMetric = metric
                         }
+                        .disabled(!model.canLog(metric))
                     }
 
                     TrackAddMetricCard { isManagePresented = true }
@@ -107,7 +110,8 @@ struct TrackDashboardView: View {
             TrackLogSheet(
                 metric: metric,
                 currentValue: model.numericValue(for: metric),
-                currentHabits: model.habits(for: metric)
+                currentHabits: model.habits(for: metric),
+                units: model.unitSystem ?? .metric
             ) { entry in
                 Task { await model.save(entry, for: metric) }
             }
@@ -229,6 +233,7 @@ private struct TrackFoodSummaryCard: View {
 private struct TrackMetricCard: View {
     let metric: TrackMetric
     let value: String
+    let unit: String
     let isLogged: Bool
     let isSaving: Bool
     let action: () -> Void
@@ -267,7 +272,7 @@ private struct TrackMetricCard: View {
                             Text(value)
                                 .font(ExecuteTypography.display(20))
                                 .foregroundStyle(ExecuteColor.charcoal)
-                            Text(metric == .habits ? "habits" : metric.unit)
+                            Text(metric == .habits ? "habits" : unit)
                                 .font(ExecuteTypography.caption(9))
                                 .foregroundStyle(metric.tint)
                         }
@@ -289,7 +294,7 @@ private struct TrackMetricCard: View {
             .shadow(color: isLogged ? metric.tint.opacity(0.07) : ExecuteHomeStyle.utilityShadow.color, radius: 6, y: 2)
         }
         .buttonStyle(ExecutePressStyle())
-        .accessibilityLabel(isLogged ? "\(metric.title), \(value) \(metric.unit), edit" : "Log \(metric.title)")
+        .accessibilityLabel(isLogged ? "\(metric.title), \(value) \(unit), edit" : "Log \(metric.title)")
     }
 
     private var moodEmoji: String {
@@ -443,6 +448,7 @@ private struct TrackLogSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var value: Double
     @State private var selectedHabits: Set<String>
+    @State private var weightInput: TrackWeightInput
 
     private let habits = [
         "Morning hydration", "No phone in bed", "Stretch 10min",
@@ -453,12 +459,15 @@ private struct TrackLogSheet: View {
         metric: TrackMetric,
         currentValue: Double?,
         currentHabits: [String],
+        units: ProfileUnitSystem,
         save: @escaping (TrackEntryValue) -> Void
     ) {
         self.metric = metric
         self.save = save
         let initial = metric.isAdditive ? metric.defaultEntry : currentValue ?? metric.defaultEntry
-        _value = State(initialValue: min(max(initial, metric.range.lowerBound), metric.range.upperBound))
+        let weight = TrackWeightInput(kilograms: initial, units: units)
+        _weightInput = State(initialValue: weight)
+        _value = State(initialValue: metric == .weight ? weight.displayed : min(max(initial, metric.range.lowerBound), metric.range.upperBound))
         _selectedHabits = State(initialValue: Set(currentHabits))
     }
 
@@ -512,7 +521,7 @@ private struct TrackLogSheet: View {
     }
 
     private var entry: TrackEntryValue {
-        metric == .habits ? .habits(habits.filter(selectedHabits.contains)) : .number(value)
+        metric == .habits ? .habits(habits.filter(selectedHabits.contains)) : .number(metric == .weight ? weightInput.stored(value) : value)
     }
 
     private var numericEditor: some View {
@@ -522,11 +531,11 @@ private struct TrackLogSheet: View {
                     .font(ExecuteTypography.display(42))
                     .foregroundStyle(ExecuteColor.charcoal)
                     .contentTransition(.numericText())
-                Text(metric.unit)
+                Text(metric == .weight ? weightInput.units.weightUnit : metric.unit)
                     .font(ExecuteTypography.label(14))
                     .foregroundStyle(ExecuteColor.mist)
             }
-            Slider(value: $value, in: metric.range, step: metric.step)
+            Slider(value: $value, in: metric == .weight ? 0...weightInput.units.displayedWeight(kilograms: 350) : metric.range, step: metric.step)
                 .tint(metric.tint)
             Text(metric.isAdditive ? "This amount is added to today's total." : "This replaces today's current value.")
                 .font(ExecuteTypography.caption(11))
@@ -619,7 +628,8 @@ private struct TrackHistoryScreen: View {
             dataService: environment.dataService,
             cache: environment.cache,
             realtimeService: nil,
-            router: environment.router
+            router: environment.router,
+            canWrite: { environment.appState.allowsDraftWrites(for: $0) }
         ))
     }
 
@@ -637,7 +647,7 @@ private struct TrackHistoryScreen: View {
                 ScrollView {
                     LazyVStack(spacing: ExecuteSpacing.sm) {
                         ForEach(model.snapshot.history) { entry in
-                            TrackHistoryCard(entry: entry)
+                            TrackHistoryCard(entry: entry, units: model.unitSystem ?? .metric)
                         }
                     }
                     .padding(ExecuteSpacing.md)
@@ -651,7 +661,7 @@ private struct TrackHistoryScreen: View {
         .navigationTitle("Tracking History")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: signedInUser?.id) {
-            if let signedInUser { await model.start(for: signedInUser) }
+            if let signedInUser { await model.start(for: signedInUser) } else { await model.stop() }
         }
     }
 
@@ -663,6 +673,7 @@ private struct TrackHistoryScreen: View {
 
 private struct TrackHistoryCard: View {
     let entry: TrackHistoryEntry
+    let units: ProfileUnitSystem
     private let columns = [GridItem(.adaptive(minimum: 92), spacing: ExecuteSpacing.xs)]
 
     var body: some View {
@@ -678,7 +689,7 @@ private struct TrackHistoryCard: View {
                     TrackHistoryPill(
                         symbol: metric.symbol,
                         value: historyValue(for: metric),
-                        unit: metric == .habits ? "habits" : metric.unit,
+                        unit: metric == .habits ? "habits" : metric == .weight ? units.weightUnit : metric.unit,
                         tint: metric.tint
                     )
                 }
@@ -706,7 +717,8 @@ private struct TrackHistoryCard: View {
 
     private func historyValue(for metric: TrackMetric) -> String {
         if metric == .habits { return "\(entry.log.habitsCompleted?.count ?? 0)" }
-        guard let value = entry.log.numericValue(for: metric) else { return "—" }
+        guard var value = entry.log.numericValue(for: metric) else { return "—" }
+        if metric == .weight { value = units.displayedWeight(kilograms: value) }
         switch metric {
         case .sleep, .water, .weight: return value.formatted(.number.precision(.fractionLength(1)))
         case .steps, .caloriesBurned, .mood, .energy: return Int(value.rounded()).formatted()

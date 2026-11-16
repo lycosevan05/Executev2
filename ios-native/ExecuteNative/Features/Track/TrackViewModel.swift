@@ -8,12 +8,15 @@ final class TrackViewModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var savingMetrics = Set<TrackMetric>()
     @Published private(set) var error: AppError?
+    @Published private(set) var unitSystem: ProfileUnitSystem?
 
     private let dataService: EntityDataServicing?
     private let cache: UserScopedCacheStore
     private let realtimeService: RealtimeSubscribing?
     private let router: AppRouter
     private let defaults: UserDefaults
+    private let canWrite: (UUID) -> Bool
+    private var generation = UUID()
     private var user: ExecuteUser?
     private var activePlanID: UUID?
     private var activePlanSource: String?
@@ -29,13 +32,15 @@ final class TrackViewModel: ObservableObject {
         cache: UserScopedCacheStore,
         realtimeService: RealtimeSubscribing?,
         router: AppRouter,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        canWrite: @escaping (UUID) -> Bool = { _ in true }
     ) {
         self.dataService = dataService
         self.cache = cache
         self.realtimeService = realtimeService
         self.router = router
         self.defaults = defaults
+        self.canWrite = canWrite
 
         let saved = defaults.stringArray(forKey: activeMetricsKey)?.compactMap(TrackMetric.init(rawValue:)) ?? []
         self.activeMetrics = saved.isEmpty ? Set(TrackMetric.defaultOrder) : Set(saved)
@@ -74,6 +79,7 @@ final class TrackViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
+        generation = UUID(); snapshot = .empty; unitSystem = nil
         self.user = user
         hasStarted = true
         await restoreCachedSnapshot()
@@ -86,11 +92,16 @@ final class TrackViewModel: ObservableObject {
     }
 
     func stop() async {
+        generation = UUID(); user = nil; unitSystem = nil; snapshot = .empty
+        savingMetrics = []; activePlanID = nil; activePlanSource = nil; activeGenerationBatchID = nil
         let current = subscriptions
         subscriptions.removeAll()
         for subscription in current { await subscription.cancel() }
         hasStarted = false
     }
+
+    func unit(for metric: TrackMetric) -> String { metric == .weight ? (unitSystem ?? .metric).weightUnit : metric.unit }
+    func canLog(_ metric: TrackMetric) -> Bool { metric != .weight || unitSystem != nil }
 
     var visibleMetrics: [TrackMetric] {
         TrackMetric.defaultOrder.filter(activeMetrics.contains)
@@ -130,7 +141,8 @@ final class TrackViewModel: ObservableObject {
 
     func displayValue(for metric: TrackMetric) -> String {
         if metric == .habits { return "\(habits(for: metric).count)" }
-        guard let value = numericValue(for: metric) else { return "—" }
+        guard var value = numericValue(for: metric) else { return "—" }
+        if metric == .weight { value = (unitSystem ?? .metric).displayedWeight(kilograms: value) }
         switch metric {
         case .sleep, .water, .weight: return value.formatted(.number.precision(.fractionLength(1)))
         case .steps, .caloriesBurned, .mood, .energy: return Int(value.rounded()).formatted()
@@ -149,6 +161,8 @@ final class TrackViewModel: ObservableObject {
     }
 
     func save(_ entry: TrackEntryValue, for metric: TrackMetric) async {
+        guard let savingUser = user, canWrite(savingUser.id), savingMetrics.isEmpty, canLog(metric) else { return }
+        let request = generation
         guard let mutation = TrackLogMutation.applying(
             entry,
             for: metric,
@@ -163,20 +177,16 @@ final class TrackViewModel: ObservableObject {
         }
 
         let previous = snapshot
-        let savingUser = user
         snapshot.dailyLog = mutation.log
         if metric == .weight { snapshot.lastKnownWeight = mutation.log.weightKg }
         savingMetrics.insert(metric)
         error = nil
-        defer { savingMetrics.remove(metric) }
+        defer { if request == generation { savingMetrics.remove(metric) } }
 
-        let mutationID = try? await cache.optimisticWrite(snapshot, for: snapshotKey, ttl: 300)
+        let mutationID = try? await cache.optimisticWrite(snapshot, for: snapshotKey, userID: savingUser.id, ttl: 300)
 
         do {
-            guard let dataService, let savingUser else {
-                if let mutationID { await cache.confirmOptimisticWrite(mutationID, for: snapshotKey) }
-                return
-            }
+            guard request == generation, user?.id == savingUser.id, canWrite(savingUser.id), let dataService else { return }
 
             let record: EntityRecord<TrackDailyLog>
             if let dailyLogID = snapshot.dailyLogID {
@@ -185,13 +195,15 @@ final class TrackViewModel: ObservableObject {
                 record = try await dataService.create(.dailyLogs, payload: mutation.log, user: savingUser)
             }
 
-            guard user?.id == savingUser.id else { return }
+            guard request == generation, user?.id == savingUser.id, canWrite(savingUser.id) else { return }
+            guard record.ownerID == nil || record.ownerID == savingUser.id else { throw CancellationError() }
             snapshot.dailyLogID = record.id
             snapshot.dailyLog = record.payload
             if metric == .weight { snapshot.lastKnownWeight = record.payload.weightKg }
             if let mutationID { await cache.confirmOptimisticWrite(mutationID, for: snapshotKey) }
-            try? await cache.write(snapshot, for: snapshotKey, ttl: 300)
+            try? await cache.write(snapshot, for: snapshotKey, userID: savingUser.id, ttl: 300)
         } catch {
+            guard request == generation, user?.id == savingUser.id, canWrite(savingUser.id) else { return }
             if let mutationID { await cache.rollbackOptimisticWrite(mutationID, for: snapshotKey) }
             snapshot = previous
             self.error = AppError.from(error, title: "Couldn't save \(metric.title.lowercased())")
@@ -211,14 +223,23 @@ final class TrackViewModel: ObservableObject {
             isInitialLoading = false
             return
         }
-        let loadingUserID = user?.id
+        guard let loadingUserID = user?.id else { return }
+        let request = generation
         isRefreshing = isRefresh
         error = nil
 
         do {
+            unitSystem = nil
+            let profiles: [EntityRecord<NativeUserProfile>] = try await dataService.listAll(.userProfiles, isCurrent: { self.generation == request && self.user?.id == loadingUserID && self.canWrite(loadingUserID) })
+            guard profiles.count <= 1, profiles.allSatisfy({ $0.ownerID == nil || $0.ownerID == loadingUserID }) else {
+                throw AppError(title: "Profile records need review", message: "Multiple or foreign profiles were preserved. Reload Profile before logging weight.")
+            }
+            let loadedUnits = try ProfileUnitSystem.saved(profiles.first?.payload.units)
             let logs: [EntityRecord<TrackDailyLog>] = try await dataService.list(.dailyLogs, orderBy: "-updated_date", limit: 100)
             let plans: [EntityRecord<HomeAIPlan>] = try await dataService.list(.aiPlans, orderBy: "-updated_date", limit: 25)
-            guard loadingUserID == user?.id else { return }
+            guard request == generation, loadingUserID == user?.id, canWrite(loadingUserID) else { return }
+            guard logs.allSatisfy({ $0.ownerID == nil || $0.ownerID == loadingUserID }), plans.allSatisfy({ $0.ownerID == nil || $0.ownerID == loadingUserID }) else { throw CancellationError() }
+            unitSystem = loadedUnits
 
             let activePlan = selectActivePlan(plans)
             activePlanID = activePlan?.id
@@ -239,8 +260,9 @@ final class TrackViewModel: ObservableObject {
                 lastKnownWeight: todayRecord?.payload.weightKg ?? lastWeight,
                 history: history
             )
-            try? await cache.write(snapshot, for: snapshotKey, ttl: 300)
+            try? await cache.write(snapshot, for: snapshotKey, userID: loadingUserID, ttl: 300)
         } catch {
+            guard request == generation, loadingUserID == user?.id, canWrite(loadingUserID) else { return }
             self.error = AppError.from(error, title: "Couldn't load tracking")
         }
 
@@ -249,8 +271,9 @@ final class TrackViewModel: ObservableObject {
     }
 
     private func restoreCachedSnapshot() async {
-        switch await cache.read(snapshotKey, as: TrackSnapshot.self) {
-        case .fresh(let cached), .stale(let cached): snapshot = cached
+        let request = generation
+        switch await cache.read(snapshotKey, as: TrackSnapshot.self, userID: user?.id) {
+        case .fresh(let cached), .stale(let cached): if generation == request { snapshot = cached }
         case .missing: break
         }
     }

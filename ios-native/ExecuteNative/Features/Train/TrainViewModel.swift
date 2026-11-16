@@ -147,7 +147,7 @@ final class WorkoutSessionViewModel: ObservableObject {
     @Published private(set) var isSaving = false
     @Published private(set) var isCompleting = false
     @Published private(set) var error: AppError?
-    @Published private(set) var unitSystem = "metric"
+    @Published private(set) var unitSystem = "imperial"
 
     let route: WorkoutSessionRoute
 
@@ -175,7 +175,8 @@ final class WorkoutSessionViewModel: ObservableObject {
     var totalSetCount: Int { exercises.reduce(0) { $0 + $1.setCount } }
     var progress: Double { totalSetCount > 0 ? Double(completedSetCount) / Double(totalSetCount) : 0 }
     var exercisePositionLabel: String { exercises.isEmpty ? "No exercises" : "Exercise \(currentExerciseIndex + 1) of \(exercises.count)" }
-    var weightUnit: String { unitSystem.lowercased() == "imperial" ? "lb" : "kg" }
+    var needsWeightUnitConfirmation: Bool { ProfileUnitSystem(rawValue: unitSystem) == nil }
+    var weightUnit: String { needsWeightUnitConfirmation ? "units unconfirmed" : unitSystem == "imperial" ? "lb" : "kg" }
     var weightStep: Double { unitSystem.lowercased() == "imperial" ? 5 : 2.5 }
     var hasProgress: Bool { completedSetCount > 0 || !notes.isEmpty || !skippedExercises.isEmpty }
 
@@ -202,15 +203,19 @@ final class WorkoutSessionViewModel: ObservableObject {
             exercises = selected.payload.exercises ?? []
 
             let logs: [EntityRecord<WorkoutSessionLog>] = try await dataService.list(.workoutLogs, orderBy: "-updated_date", limit: 100)
-            let profiles: [EntityRecord<WorkoutSessionUserProfile>] = (try? await dataService.list(.userProfiles, orderBy: "-updated_date", limit: 1)) ?? []
+            let profiles: [EntityRecord<WorkoutSessionUserProfile>] = try await dataService.listAll(.userProfiles, isCurrent: { self.user?.id == user.id && !Task.isCancelled })
+            guard profiles.count <= 1, profiles.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }) else {
+                throw AppError(title: "Profile records need review", message: "Multiple or foreign profiles were preserved without starting a session.")
+            }
             if let profile = profiles.first?.payload {
-                unitSystem = profile.units ?? "metric"
                 profileWeightKg = profile.weightKg ?? profile.weight ?? 75
             }
 
             if let existing = selectInProgressLog(from: logs, workout: selected) {
+                unitSystem = try WorkoutWeightUnits.resolve(log: existing.payload, profileUnits: profiles.first?.payload.units)?.rawValue ?? ""
                 restore(from: existing)
             } else {
+                unitSystem = try ProfileUnitSystem.saved(profiles.first?.payload.units).rawValue
                 try await createLog(for: selected, user: user)
             }
             stage = .session
@@ -247,8 +252,15 @@ final class WorkoutSessionViewModel: ObservableObject {
     }
 
     func adjustWeight(by delta: Double) {
+        guard !needsWeightUnitConfirmation else { return }
         let current = weights[currentExerciseIndex] ?? 0
         weights[currentExerciseIndex] = max(0, ((current + delta) * 10).rounded() / 10)
+        scheduleSave()
+    }
+
+    func confirmSavedWeightUnits(_ units: ProfileUnitSystem) {
+        guard needsWeightUnitConfirmation else { return }
+        unitSystem = units.rawValue
         scheduleSave()
     }
 
@@ -288,6 +300,10 @@ final class WorkoutSessionViewModel: ObservableObject {
     func returnToSession() { stage = .session }
 
     func complete(using checkIn: WorkoutSessionCheckIn) async {
+        guard !needsWeightUnitConfirmation else {
+            error = AppError(title: "Confirm saved weight units", message: "Return to the session and select the units originally used for its saved weights before completing it.")
+            return
+        }
         guard !isCompleting, checkIn.isComplete, let dataService, let logID, let user, let workout else { return }
         isCompleting = true
         error = nil
@@ -428,7 +444,8 @@ final class WorkoutSessionViewModel: ObservableObject {
             weeklyPlanID: route.weeklyPlanID?.uuidString,
             startedAt: now,
             timerStartedAt: now,
-            exerciseLogs: []
+            exerciseLogs: [],
+            weightUnitSystem: unitSystem
         )
         let record: EntityRecord<WorkoutSessionLog> = try await dataService.create(.workoutLogs, payload: payload, user: user)
         logID = record.id
@@ -461,13 +478,15 @@ final class WorkoutSessionViewModel: ObservableObject {
     }
 
     private func progressPatch(exercisePosition: Int) throws -> [String: JSONValue] {
-        [
+        var fields: [String: JSONValue] = [
             "sets_completed": .number(Double(completedSetCount)),
             "exercises_completed": .number(Double(exercisePosition)),
             "user_notes": .string(notes),
             "exercise_logs": try WorkoutSessionLogic.jsonValue(from: exerciseLogs()),
             "skipped_exercises": try WorkoutSessionLogic.jsonValue(from: Array(skippedExercises).sorted())
         ]
+        if !needsWeightUnitConfirmation { fields["weight_unit_system"] = .string(unitSystem) }
+        return fields
     }
 
     private func synchronizeDailyLog(

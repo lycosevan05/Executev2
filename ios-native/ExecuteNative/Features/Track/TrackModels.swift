@@ -123,6 +123,14 @@ enum TrackEntryValue: Equatable, Sendable {
     case habits([String])
 }
 
+/// The entry form freezes its units. Leaving a converted value untouched preserves exact SI storage.
+struct TrackWeightInput {
+    let kilograms: Double
+    let units: ProfileUnitSystem
+    var displayed: Double { units.displayedWeight(kilograms: kilograms) }
+    func stored(_ value: Double) -> Double { value == displayed ? kilograms : units.kilograms(displayedWeight: value) }
+}
+
 struct TrackDailyLog: Codable, Equatable, Sendable {
     var date: String?
     var source: String?

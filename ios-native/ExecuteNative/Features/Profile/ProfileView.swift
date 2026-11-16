@@ -20,7 +20,8 @@ private struct ProfileScreen: View {
         _model = StateObject(wrappedValue: ProfileViewModel(
             dataService: environment.dataService,
             appState: environment.appState,
-            router: environment.router
+            router: environment.router,
+            cache: environment.cache
         ))
         self.initialSection = initialSection
     }
@@ -28,7 +29,7 @@ private struct ProfileScreen: View {
     var body: some View {
         ProfileDashboardView(model: model, premiumState: appState.premiumState, initialSection: initialSection)
             .task(id: signedInUser?.id) {
-                if let signedInUser { await model.start(for: signedInUser) }
+                if let signedInUser { await model.start(for: signedInUser) } else { model.stop() }
             }
     }
 
@@ -48,6 +49,7 @@ struct ProfileDashboardView: View {
     @State private var isDeletePresented = false
     @State private var isSignOutPresented = false
     @State private var preferenceSection: ProfilePreferenceSection?
+    @State private var confirmDiscardIdentity = false
 
     var body: some View {
         ScrollView {
@@ -58,6 +60,18 @@ struct ProfileDashboardView: View {
                     isLoading: model.isLoading,
                     edit: { isNameEditorPresented = true }
                 )
+                .disabled(!model.canEditIdentity)
+
+                if model.hasIdentityAttempt {
+                    Text("A previous profile save needs verification before another edit.")
+                    Button("Verify previous profile save") { Task { _ = await model.verifyIdentitySave() } }
+                        .disabled(model.isSavingIdentity || model.isLoading)
+                    Button("Discard local profile retry", role: .destructive) { confirmDiscardIdentity = true }
+                        .disabled(model.isSavingIdentity || model.isLoading)
+                }
+                if !model.ready && !model.isLoading {
+                    Button("Reload profile") { Task { await model.reload() } }
+                }
 
                 ProfileSection(title: "Preferences") {
                     VStack(spacing: 0) {
@@ -143,9 +157,12 @@ struct ProfileDashboardView: View {
         .sheet(isPresented: $isDeletePresented) {
             DeleteAccountSheet(model: model)
         }
-        .sheet(item: $preferenceSection) { section in
+        .sheet(item: $preferenceSection, onDismiss: { Task { await model.reload() } }) { section in
             ProfilePreferencesView(section: section)
         }
+        .confirmationDialog("Discard local profile retry?", isPresented: $confirmDiscardIdentity) {
+            Button("Discard local retry", role: .destructive) { model.discardIdentityRetry() }
+        } message: { Text("This does not undo a save that reached the server. Reload Profile to review saved values.") }
         .confirmationDialog(
             "Sign out of Execute?",
             isPresented: $isSignOutPresented,
@@ -246,6 +263,8 @@ private struct ProfilePreferencesScreen: View {
         switch field.kind {
         case .number:
             TextField("Use plan / default", text: binding).keyboardType(.decimalPad).accessibilityLabel(field.title)
+        case .name:
+            TextField(field.title, text: binding).accessibilityLabel(field.title)
         case .list:
             Text("One item per line").font(.footnote)
             TextEditor(text: binding).frame(minHeight: 85).accessibilityLabel(field.title)
@@ -366,6 +385,13 @@ private struct ProfileUnitPicker: View {
                 }
             }
             .pickerStyle(.segmented)
+            .disabled(!model.canEditIdentity)
+            Text("Body weight uses these units in Track. New workouts keep the units selected when started; saved session weights retain their original units.")
+                .font(.footnote).foregroundStyle(ExecuteColor.mist)
+            if !model.usesDefaultUnits {
+                Button("Use default units (Imperial)") { Task { await model.useDefaultUnits() } }
+                    .disabled(!model.canEditIdentity)
+            }
         }
         .padding(ExecuteSpacing.md)
     }
@@ -492,6 +518,10 @@ private struct ProfileNameEditor: View {
                 ExecutePrimaryButton(title: "Save name", action: save, isLoading: model.isSavingName)
                     .disabled(!model.canSaveName)
                     .opacity(model.canSaveName ? 1 : 0.48)
+                if !model.usesAccountName {
+                    Button("Use account name") { Task { if await model.useAccountName() { dismiss() } } }
+                        .disabled(!model.canEditIdentity)
+                }
                 Spacer()
             }
             .padding(ExecuteSpacing.md)
@@ -506,6 +536,7 @@ private struct ProfileNameEditor: View {
         }
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(model.isSavingIdentity)
         .onAppear { isFocused = true }
     }
 

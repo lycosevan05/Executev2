@@ -88,14 +88,16 @@ actor UserScopedCacheStore {
         deactivate(userID: userID)
     }
 
-    func read<Value: Decodable & Sendable>(_ key: CacheKey, as type: Value.Type) -> CacheRead<Value> {
+    func read<Value: Decodable & Sendable>(_ key: CacheKey, as type: Value.Type, userID: UUID? = nil) -> CacheRead<Value> {
+        if let userID, activeUserID != userID { return .missing }
         guard let envelope = envelope(for: key), let value = try? decoder.decode(Value.self, from: envelope.data) else {
             return .missing
         }
         return envelope.isExpired ? .stale(value) : .fresh(value)
     }
 
-    func write<Value: Encodable>(_ value: Value, for key: CacheKey, ttl: TimeInterval? = nil, optimisticMutationID: UUID? = nil) throws {
+    func write<Value: Encodable>(_ value: Value, for key: CacheKey, userID: UUID? = nil, ttl: TimeInterval? = nil, optimisticMutationID: UUID? = nil) throws {
+        if let userID, activeUserID != userID { throw CancellationError() }
         let expiry = ttl.map { Date().addingTimeInterval($0) }
         let envelope = CacheEnvelope(
             data: try encoder.encode(value),
@@ -108,7 +110,8 @@ actor UserScopedCacheStore {
     }
 
     @discardableResult
-    func optimisticWrite<Value: Encodable>(_ value: Value, for key: CacheKey, ttl: TimeInterval? = nil) throws -> UUID {
+    func optimisticWrite<Value: Encodable>(_ value: Value, for key: CacheKey, userID: UUID? = nil, ttl: TimeInterval? = nil) throws -> UUID {
+        if let userID, activeUserID != userID { throw CancellationError() }
         let mutationID = UUID()
         optimisticSnapshots[key] = envelope(for: key)
         try write(value, for: key, ttl: ttl, optimisticMutationID: mutationID)

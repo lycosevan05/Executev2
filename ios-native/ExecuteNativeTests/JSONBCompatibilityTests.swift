@@ -137,6 +137,129 @@ final class EmailOTPInputTests: XCTestCase {
     }
 }
 
+
+@MainActor final class ProfileIdentityTests: XCTestCase {
+    let user = ExecuteUser(id: UUID(), email: "identity-qa@example.invalid", displayName: "Account name")
+    private func model(_ data: PreferenceData, defaults: UserDefaults? = nil, allowed: @escaping (UUID) -> Bool = { _ in true }) -> ProfileViewModel {
+        let cache = UserScopedCacheStore(suiteName: "IdentityCache.\(UUID())"), router = AppRouter()
+        let state = AppState(authService: MockAuthService(), cache: cache, router: router, subscriptionService: MockSubscriptionService(), configurationError: nil)
+        return ProfileViewModel(dataService: data, appState: state, router: router, cache: cache,
+            defaults: defaults ?? UserDefaults(suiteName: "Identity.\(UUID())")!, canWrite: allowed)
+    }
+    func testSequentialNameUnitsAndDefaultRestorationPatchOnlyDirtyFields() async {
+        let data = PreferenceData(), before = data.rows
+        let profile = model(data); await profile.start(for: user)
+        XCTAssertEqual(profile.displayName, "Account name"); XCTAssertTrue(profile.canEditIdentity)
+        profile.nameDraft = " Synthetic   QA "; let saved = await profile.saveDisplayName(); XCTAssertTrue(saved)
+        XCTAssertEqual(data.patches.last, .object(["display_name": .string("Synthetic QA")]))
+        await profile.selectUnits(.metric)
+        XCTAssertEqual(profile.units, .metric); XCTAssertEqual(profile.displayName, "Synthetic QA")
+        XCTAssertEqual(data.patches.last, .object(["units": .string("metric")]))
+        let restored = await profile.useAccountName(); XCTAssertTrue(restored)
+        await profile.useDefaultUnits()
+        XCTAssertEqual(profile.displayName, "Account name"); XCTAssertEqual(profile.units, .imperial)
+        XCTAssertEqual(data.rows[.userProfiles]?.first?.data["custom"], .string("preserve"))
+        XCTAssertEqual(data.rows.filter { $0.key != .userProfiles }, before.filter { $0.key != .userProfiles })
+        XCTAssertEqual(data.creates, 0)
+    }
+    func testLostIdentityCreateAndUpdateAcknowledgmentsSurviveRecreation() async {
+        for missing in [false, true] {
+            let data = PreferenceData(), defaults = UserDefaults(suiteName: "IdentityRetry.\(UUID())")!
+            if missing { data.rows[.userProfiles] = [] }
+            let first = model(data, defaults: defaults); await first.start(for: user)
+            first.nameDraft = "Synthetic QA"; data.loseAck = true
+            let saved = await first.saveDisplayName(); XCTAssertFalse(saved); XCTAssertTrue(first.hasIdentityAttempt)
+            XCTAssertFalse(first.canEditIdentity)
+            let retry = model(data, defaults: defaults); await retry.start(for: user)
+            let verified = await retry.verifyIdentitySave(); XCTAssertTrue(verified)
+            XCTAssertEqual(data.rows[.userProfiles]?.count, 1); XCTAssertEqual(data.writes + data.creates, 1)
+            await retry.selectUnits(.metric); XCTAssertEqual(retry.units, .metric)
+            XCTAssertEqual(data.writes + data.creates, 2)
+        }
+    }
+    func testFailedForeignDuplicateAndStaleSessionReadsNeverEnableIdentityWrites() async {
+        for kind in 0..<3 {
+            let data = PreferenceData()
+            if kind == 0 { data.failRead = true }
+            if kind == 1 { data.replace(.userProfiles, [:], owner: UUID()) }
+            if kind == 2 { data.rows[.userProfiles] = [PreferenceData.row([:]), PreferenceData.row([:])] }
+            let profile = model(data); await profile.start(for: user); profile.nameDraft = "Synthetic QA"
+            let saved = await profile.saveDisplayName(); XCTAssertFalse(saved); XCTAssertFalse(profile.ready)
+            await profile.selectUnits(.metric); XCTAssertEqual(data.writes + data.creates, 0)
+        }
+        let data = PreferenceData()
+        let stale = model(data); data.beforeRead = { stale.stop() }
+        await stale.start(for: user); XCTAssertFalse(stale.ready); XCTAssertTrue(stale.email.isEmpty)
+    }
+    func testLateAcknowledgmentCannotPublishIntoStoppedOrNewAccount() async {
+        let data = PreferenceData()
+        let current = model(data); await current.start(for: user); current.nameDraft = "Synthetic QA"
+        data.beforeAck = { current.stop() }
+        let saved = await current.saveDisplayName(); XCTAssertFalse(saved)
+        XCTAssertTrue(current.email.isEmpty); XCTAssertNil(current.profile.displayName); XCTAssertFalse(current.isSavingIdentity)
+        data.beforeAck = nil; data.replace(.userProfiles, [:])
+        let other = ExecuteUser(id: UUID(), email: "other-qa@example.invalid", displayName: "Other account")
+        await current.start(for: other); XCTAssertEqual(current.displayName, "Other account")
+    }
+    func testConflictingProfileAndInvalidUnitsPreserveRecordsUntilReviewed() async {
+        let data = PreferenceData(); data.replace(.userProfiles, ["units": .string("legacy")])
+        let profile = model(data); await profile.start(for: user)
+        profile.nameDraft = "Synthetic QA"; let saved = await profile.saveDisplayName(); XCTAssertTrue(saved)
+        XCTAssertEqual(data.rows[.userProfiles]?.first?.data["units"], .string("legacy"))
+        data.replace(.userProfiles, ["units": .string("metric"), "display_name": .string("Concurrent name")])
+        await profile.selectUnits(.imperial); XCTAssertNotNil(profile.error); XCTAssertEqual(data.writes, 1)
+        await profile.reload(); await profile.selectUnits(.imperial); XCTAssertEqual(profile.units, .imperial)
+    }
+}
+
+final class WeightUnitTests: XCTestCase {
+    func testDefaultAndUnsupportedUnitsAndPreciseSIRoundTrip() throws {
+        XCTAssertEqual(try ProfileUnitSystem.saved(nil), .imperial)
+        XCTAssertThrowsError(try ProfileUnitSystem.saved("legacy"))
+        let entry = TrackWeightInput(kilograms: 80.1234567, units: .imperial)
+        XCTAssertEqual(entry.displayed, 176.6417, accuracy: 0.001)
+        XCTAssertEqual(entry.stored(entry.displayed), 80.1234567)
+        XCTAssertEqual(entry.stored(176.369809747902), 80, accuracy: 0.00000001)
+        XCTAssertEqual(TrackWeightInput(kilograms: 80, units: .metric).stored(81), 81)
+    }
+    func testWorkoutUnitsAreFrozenAndUntaggedPositiveWeightsAreNeverGuessed() throws {
+        let weighted = WorkoutSessionExerciseLog(exIdx: 0, name: "Synthetic squat", completedSetIndices: [0], weight: 100, reps: 10)
+        var log = WorkoutSessionLog(exerciseLogs: [weighted])
+        XCTAssertNil(try WorkoutWeightUnits.resolve(log: log, profileUnits: "metric"))
+        XCTAssertNil(try WorkoutWeightUnits.resolve(log: log, profileUnits: "imperial"))
+        log.weightUnitSystem = "metric"
+        XCTAssertEqual(try WorkoutWeightUnits.resolve(log: log, profileUnits: "imperial"), .metric)
+        let decoded = try JSONDecoder.execute.decode(WorkoutSessionLog.self, from: JSONEncoder.execute.encode(log))
+        XCTAssertEqual(decoded.weightUnitSystem, "metric"); XCTAssertEqual(decoded.exerciseLogs?.first?.weight, 100)
+        XCTAssertEqual(try WorkoutWeightUnits.resolve(log: nil, profileUnits: nil), .imperial)
+    }
+}
+
+@MainActor final class TrackUnitSessionTests: XCTestCase {
+    func testProfileUnitsChangeReadbackWithoutChangingStoredSIAndFailureDisablesWeight() async {
+        let user = ExecuteUser(id: UUID(), email: "track-qa@example.invalid", displayName: "QA"), data = PreferenceData()
+        data.replace(.dailyLogs, ["date": .string(HomeDate.todayString), "weight_kg": .number(80)])
+        let cache = UserScopedCacheStore(suiteName: "TrackUnits.\(UUID())"); await cache.activate(userID: user.id)
+        let model = TrackViewModel(dataService: data, cache: cache, realtimeService: nil, router: AppRouter(), defaults: UserDefaults(suiteName: "TrackUnit.\(UUID())")!)
+        await model.start(for: user)
+        XCTAssertEqual(model.unit(for: .weight), "lb"); XCTAssertEqual(model.numericValue(for: .weight), 80)
+        XCTAssertEqual(model.displayValue(for: .weight), "176.4")
+        data.replace(.userProfiles, ["units": .string("metric")]); await model.refresh()
+        XCTAssertEqual(model.unit(for: .weight), "kg"); XCTAssertEqual(model.displayValue(for: .weight), "80.0")
+        let before = data.rows; data.failRead = true; await model.refresh()
+        XCTAssertFalse(model.canLog(.weight)); XCTAssertEqual(model.unit(for: .weight), "kg")
+        await model.save(.number(81), for: .weight); XCTAssertEqual(data.rows, before)
+        await model.stop(); XCTAssertTrue(model.snapshot.history.isEmpty); XCTAssertNil(model.numericValue(for: .weight))
+    }
+    func testOwnerBoundCacheRejectsWritesAfterAccountSwitch() async throws {
+        let cache = UserScopedCacheStore(suiteName: "UnitCacheRace.\(UUID())"), a = UUID(), b = UUID(), key = CacheKey("track", "today")
+        await cache.activate(userID: a); await cache.activate(userID: b)
+        do { try await cache.write("old account", for: key, userID: a); XCTFail("Stale write accepted") } catch {}
+        do { try await cache.optimisticWrite("old account", for: key, userID: a); XCTFail("Stale optimistic write accepted") } catch {}
+        if case .missing = await cache.read(key, as: String.self, userID: b) {} else { XCTFail("New account cache polluted") }
+    }
+}
+
 @MainActor private final class PreferenceData: EntityDataServicing {
     var rows: [EntityTable: [BackendRow]] = [:]
     var writes = 0, creates = 0, reads = 0
@@ -1010,6 +1133,27 @@ final class DailyUseWorkflowTests: XCTestCase {
         XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["calories_burned"], .number(166))
         XCTAssertEqual(data.rows[.dailyLogs]?.first?.data["future_daily_field"], .string("keep"))
         XCTAssertEqual(data.rows[.aiPlans]?.first?.data, master.data)
+    }
+
+    func testWorkoutUnitTagSurvivesProfileChangeAndLegacyConfirmationKeepsNumbers() async throws {
+        let data = DailyUseData(); setup(data)
+        data.rows[.userProfiles] = [DailyUseData.row(.object(["units": .string("imperial")]))]
+        let first = model(data); await first.start(for: user)
+        XCTAssertEqual(first.weightUnit, "lb")
+        first.adjustWeight(by: 100); await first.saveProgress()
+        XCTAssertEqual(data.rows[.workoutLogs]?.first?.data["weight_unit_system"], .string("imperial"))
+        data.rows[.userProfiles] = [DailyUseData.row(.object(["units": .string("metric")]))]
+        let resumed = model(data); await resumed.start(for: user)
+        XCTAssertEqual(resumed.weightUnit, "lb"); XCTAssertEqual(resumed.weights[0], 100)
+        var raw = data.rows[.workoutLogs]!.first!.data.objectValue!; raw.removeValue(forKey: "weight_unit_system")
+        data.rows[.workoutLogs] = [DailyUseData.row(.object(raw), id: data.rows[.workoutLogs]!.first!.id)]
+        let legacy = model(data); await legacy.start(for: user)
+        XCTAssertTrue(legacy.needsWeightUnitConfirmation); legacy.adjustWeight(by: 5); XCTAssertEqual(legacy.weights[0], 100)
+        await legacy.complete(using: WorkoutSessionCheckIn(exertionLevel: "Moderate", feeling: "Good", pain: "None", performance: "As expected"))
+        XCTAssertNil(legacy.summary)
+        legacy.confirmSavedWeightUnits(.imperial); await legacy.saveProgress()
+        XCTAssertEqual(legacy.weights[0], 100); XCTAssertEqual(data.rows[.workoutLogs]?.count, 1)
+        XCTAssertEqual(data.rows[.workoutLogs]?.first?.data["weight_unit_system"], .string("imperial"))
     }
 
     func testResumeUsesExactWorkoutAndDateInsteadOfSharedMaster() async throws {

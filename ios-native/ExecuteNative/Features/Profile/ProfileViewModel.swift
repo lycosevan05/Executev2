@@ -9,184 +9,127 @@ final class ProfileViewModel: ObservableObject {
     @Published private(set) var isSavingName = false
     @Published private(set) var isSavingUnits = false
     @Published private(set) var isDeletingAccount = false
+    @Published private(set) var ready = false
+    @Published private(set) var hasIdentityAttempt = false
     @Published private(set) var error: AppError?
 
-    private let dataService: SupabaseDataService?
+    private let identity: ProfilePreferenceModel
     private let appState: AppState
     private let router: AppRouter
+    private let canWrite: (UUID) -> Bool
     private var user: ExecuteUser?
-    private var recordID: UUID?
-    private var hasStarted = false
+    private var generation = UUID()
 
-    init(dataService: SupabaseDataService?, appState: AppState, router: AppRouter) {
-        self.dataService = dataService
-        self.appState = appState
-        self.router = router
+    init(dataService: EntityDataServicing?, appState: AppState, router: AppRouter,
+         cache: UserScopedCacheStore = UserScopedCacheStore(), defaults: UserDefaults = .standard,
+         canWrite: ((UUID) -> Bool)? = nil) {
+        self.appState = appState; self.router = router
+        let allowed = canWrite ?? { appState.allowsDraftWrites(for: $0) }
+        self.canWrite = allowed
+        identity = ProfilePreferenceModel(section: .identity, data: dataService, cache: cache, defaults: defaults, canWrite: allowed)
     }
 
     static func preview() -> ProfileViewModel {
-        let auth = MockAuthService()
-        let cache = UserScopedCacheStore()
         let router = AppRouter()
-        let state = AppState(
-            authService: auth,
-            cache: cache,
-            router: router,
-            subscriptionService: MockSubscriptionService(),
-            configurationError: nil
-        )
+        let state = AppState(authService: MockAuthService(), cache: UserScopedCacheStore(), router: router,
+            subscriptionService: MockSubscriptionService(), configurationError: nil)
         let model = ProfileViewModel(dataService: nil, appState: state, router: router)
-        model.user = ExecuteUser(
-            id: UUID(),
-            email: "evan@example.com",
-            displayName: "Evan Steel"
-        )
-        model.profile = NativeUserProfile(displayName: "Evan Steel", units: ProfileUnitSystem.metric.rawValue)
-        model.nameDraft = "Evan Steel"
-        model.units = .metric
-        model.isLoading = false
+        model.user = ExecuteUser(id: UUID(), email: "evan@example.com", displayName: "Evan Steel")
+        model.profile = NativeUserProfile(displayName: "Evan Steel", units: "metric")
+        model.nameDraft = "Evan Steel"; model.units = .metric; model.isLoading = false
         return model
     }
 
     var displayName: String {
         profile.displayName.flatMap(ProfileMutation.normalizedDisplayName)
-            ?? ProfileMutation.normalizedDisplayName(user?.displayName ?? "")
-            ?? "Execute member"
+            ?? ProfileMutation.normalizedDisplayName(user?.displayName ?? "") ?? "Execute member"
     }
-
     var email: String { user?.email ?? "" }
-
+    var isSavingIdentity: Bool { isSavingName || isSavingUnits }
+    var canEditIdentity: Bool { ready && !isLoading && !isSavingIdentity && !hasIdentityAttempt }
     var canSaveName: Bool {
-        guard let normalized = ProfileMutation.normalizedDisplayName(nameDraft) else { return false }
-        return normalized != displayName && !isSavingName
+        guard canEditIdentity, let normalized = ProfileMutation.normalizedDisplayName(nameDraft) else { return false }
+        return normalized != displayName
     }
+    var usesAccountName: Bool { profile.displayName == nil }
+    var usesDefaultUnits: Bool { profile.units == nil }
 
+    func stop() {
+        generation = UUID(); identity.stop(); user = nil
+        profile = NativeUserProfile(); nameDraft = ""; units = .imperial
+        ready = false; isLoading = false; isSavingName = false; isSavingUnits = false; hasIdentityAttempt = false; error = nil
+    }
+    private func current(_ request: UUID, _ id: UUID) -> Bool {
+        generation == request && user?.id == id && canWrite(id) && !Task.isCancelled
+    }
     func start(for user: ExecuteUser) async {
-        guard !hasStarted || self.user?.id != user.id else { return }
+        if self.user?.id != user.id { stop() }
         self.user = user
-        hasStarted = true
-        nameDraft = displayName
         await reload()
     }
-
     func reload() async {
-        guard let dataService else {
-            isLoading = false
-            return
-        }
-        isLoading = true
-        error = nil
-        do {
-            let records: [EntityRecord<NativeUserProfile>] = try await dataService.list(
-                .userProfiles,
-                orderBy: "-updated_date",
-                limit: 1
-            )
-            if let record = records.first {
-                recordID = record.id
-                profile = record.payload
-                if let value = ProfileMutation.normalizedDisplayName(record.payload.displayName ?? "") {
-                    nameDraft = value
-                }
-                units = ProfileUnitSystem(rawValue: record.payload.units ?? "") ?? .imperial
-            }
-        } catch {
-            self.error = AppError.from(error, title: "Could not load your profile")
-        }
-        isLoading = false
+        guard !isSavingIdentity, let user else { return }
+        generation = UUID(); let request = generation
+        ready = false; isLoading = true; error = nil
+        await identity.start(user: user)
+        guard current(request, user.id) else { return }
+        synchronize(); isLoading = false
     }
-
+    private func synchronize() {
+        // Display only acknowledged fields; a retry is shown separately until verified.
+        profile = (try? identity.savedPayload?.decoded(as: NativeUserProfile.self)) ?? NativeUserProfile()
+        units = (try? ProfileUnitSystem.saved(profile.units)) ?? .imperial
+        ready = identity.ready; hasIdentityAttempt = identity.hasAttempt; error = identity.error
+        if let raw = profile.units, (try? ProfileUnitSystem.saved(raw)) == nil {
+            error = AppError(title: "Measurement units need review", message: "The unsupported saved preference was preserved. Choose metric or imperial to replace it.")
+        }
+        nameDraft = hasIdentityAttempt ? identity.values["display_name"] ?? displayName : displayName
+    }
     func saveDisplayName() async -> Bool {
-        guard let value = ProfileMutation.normalizedDisplayName(nameDraft), let user else {
-            error = AppError(title: "Check your name", message: "Use between 2 and 60 characters.")
-            return false
+        guard let value = ProfileMutation.normalizedDisplayName(nameDraft) else {
+            error = AppError(title: "Check your name", message: "Use between 2 and 60 characters."); return false
         }
-        isSavingName = true
-        error = nil
-        defer { isSavingName = false }
-        do {
-            try await persist(
-                patch: ProfileMutation.displayNamePatch(value)!,
-                creating: NativeUserProfile(displayName: value, units: units.rawValue),
-                user: user
-            )
-            profile.displayName = value
-            nameDraft = value
-            return true
-        } catch {
-            self.error = AppError.from(error, title: "Could not save your name")
-            return false
-        }
+        return await saveIdentity("display_name", value)
+    }
+    func useAccountName() async -> Bool { await saveIdentity("display_name", "") }
+    func selectUnits(_ value: ProfileUnitSystem) async { _ = await saveIdentity("units", value.rawValue) }
+    func useDefaultUnits() async { _ = await saveIdentity("units", "") }
+    private func saveIdentity(_ key: String, _ value: String) async -> Bool {
+        guard canEditIdentity, let user, canWrite(user.id) else { return false }
+        identity.set(key, value)
+        return await persistIdentity(name: key == "display_name")
+    }
+    func verifyIdentitySave() async -> Bool {
+        guard hasIdentityAttempt, !isSavingIdentity, !isLoading else { return false }
+        return await persistIdentity(name: identity.values["display_name"] != (profile.displayName ?? ""))
+    }
+    func discardIdentityRetry() {
+        guard !isSavingIdentity, !isLoading else { return }; identity.discardLocalAttempt(); synchronize()
+    }
+    private func persistIdentity(name: Bool) async -> Bool {
+        guard let user, canWrite(user.id) else { return false }
+        let request = generation
+        isSavingName = name; isSavingUnits = !name; error = nil
+        let saved = await identity.save()
+        guard current(request, user.id) else { return false }
+        isSavingName = false; isSavingUnits = false; synchronize()
+        return saved
     }
 
-    func selectUnits(_ value: ProfileUnitSystem) async {
-        guard value != units, let user else { return }
-        let previous = units
-        units = value
-        isSavingUnits = true
-        error = nil
-        defer { isSavingUnits = false }
-        do {
-            try await persist(
-                patch: ProfileMutation.unitsPatch(value),
-                creating: NativeUserProfile(displayName: profile.displayName ?? displayName, units: value.rawValue),
-                user: user
-            )
-            profile.units = value.rawValue
-        } catch {
-            units = previous
-            self.error = AppError.from(error, title: "Could not save unit preference")
-        }
-    }
-
-    func signOut() async {
-        await appState.signOut()
-    }
-
+    func signOut() async { await appState.signOut() }
     func deleteAccount() async -> Bool {
         guard !isDeletingAccount else { return false }
-        isDeletingAccount = true
-        error = nil
+        isDeletingAccount = true; error = nil
         defer { isDeletingAccount = false }
-        do {
-            try await appState.deleteAccount()
-            return true
-        } catch {
-            self.error = AppError.from(error, title: "Account deletion failed")
-            return false
-        }
+        do { try await appState.deleteAccount(); return true }
+        catch { self.error = AppError.from(error, title: "Account deletion failed"); return false }
     }
-
     func openBilling() { router.navigate(to: .billing) }
     func openGoals() { router.navigate(to: .goals) }
     func openLimitations() { router.navigate(to: .recovery(date: nil, source: "profile")) }
     func openPrivacy() { router.navigate(to: .privacy) }
     func openTerms() { router.navigate(to: .terms) }
     func clearError() { error = nil }
-
-    private func persist(
-        patch: JSONValue,
-        creating payload: NativeUserProfile,
-        user: ExecuteUser
-    ) async throws {
-        guard let dataService else { return }
-        if let recordID {
-            let record: EntityRecord<NativeUserProfile> = try await dataService.update(
-                .userProfiles,
-                id: recordID,
-                patch: patch
-            )
-            profile = record.payload
-        } else {
-            let record: EntityRecord<NativeUserProfile> = try await dataService.create(
-                .userProfiles,
-                payload: payload,
-                user: user
-            )
-            recordID = record.id
-            profile = record.payload
-        }
-    }
 }
 
 @MainActor
@@ -205,6 +148,7 @@ final class ProfilePreferenceModel: ObservableObject {
     private var user: ExecuteUser?
     private var generation = UUID()
     private var baseline: EntityRecord<JSONValue>?
+    var savedPayload: JSONValue? { baseline?.payload }
     private var initial: [String: String] = [:]
     private var touched: Set<String> = []
     private var pending: Attempt?
@@ -251,7 +195,7 @@ final class ProfilePreferenceModel: ObservableObject {
             if let pending {
                 for field in section.fields where pending.patch[field.id] != nil { values[field.id] = try field.display(pending.patch[field.id]) }
             }
-            if let data {
+            if section != .identity, let data {
                 let masters: [EntityRecord<JSONValue>] = try await data.listAll(.aiPlans, isCurrent: { self.current(request, user.id) })
                 guard masters.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }), current(request, user.id) else { throw CancellationError() }
                 if let master = PlanViewModel.selectActiveRecord(masters)?.payload {
@@ -294,9 +238,11 @@ final class ProfilePreferenceModel: ObservableObject {
             let row = try await read(request, user: user)
             guard current(request, user.id) else { return false }
             let fields = attempt.patch.objectValue!
+            let acknowledged: EntityRecord<JSONValue>
             let sameRecord = attempt.recordID.map { row?.id == $0 } ?? (row?.payload["native_profile_creation_id"] == .string(attempt.token))
             if sameRecord, let row, fields.allSatisfy({ row.payload[$0.key] == $0.value }) {
                 // Acknowledged values are already on the same row; never repeat a lost-ack write.
+                acknowledged = row
             } else {
                 guard row?.id == attempt.recordID, row?.payload == attempt.original else {
                     throw AppError(title: "Preferences changed", message: "Close and reopen to review the latest saved preferences. A local retry never overwrites a newer profile.")
@@ -311,8 +257,12 @@ final class ProfilePreferenceModel: ObservableObject {
                       fields.allSatisfy({ saved.payload[$0.key] == $0.value }) else {
                     throw AppError(title: "Preference acknowledgment needs verification", message: "Retry this same save before making another edit.")
                 }
+                acknowledged = saved
             }
             guard current(request, user.id) else { return false }
+            baseline = acknowledged
+            for field in section.fields { initial[field.id] = try field.display(acknowledged.payload[field.id]) }
+            values = initial; touched = []
             defaults.removeObject(forKey: key(user.id)); pending = nil; hasAttempt = false
             await cache.invalidate(CacheKey("home", "dashboard"), userID: user.id)
             await cache.invalidate(CacheKey("nutrition", HomeDate.todayString), userID: user.id)
