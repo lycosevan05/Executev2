@@ -84,7 +84,7 @@ function dataPath(key: string) {
 }
 
 export async function findRecords(
-  client: ReturnType<typeof createClient>,
+  client: ReturnType<typeof createServiceClient>,
   table: string,
   criteria: Record<string, unknown>,
   options: { limit?: number; orderBy?: string; ascending?: boolean } = {},
@@ -109,7 +109,7 @@ export async function findRecords(
 }
 
 export async function createRecord(
-  client: ReturnType<typeof createClient>,
+  client: ReturnType<typeof createServiceClient>,
   table: string,
   data: Record<string, unknown>,
   ownerEmail: string,
@@ -136,7 +136,7 @@ export async function createRecord(
 }
 
 export async function updateRecord(
-  client: ReturnType<typeof createClient>,
+  client: ReturnType<typeof createServiceClient>,
   table: string,
   id: string,
   data: Record<string, unknown>,
@@ -158,7 +158,7 @@ export async function updateRecord(
 }
 
 export async function upsertRecordBy(
-  client: ReturnType<typeof createClient>,
+  client: ReturnType<typeof createServiceClient>,
   table: string,
   criteria: Record<string, unknown>,
   data: Record<string, unknown>,

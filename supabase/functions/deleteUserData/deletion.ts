@@ -1,0 +1,107 @@
+/** Local, dependency-free orchestration. No credentials, network or deployment on import. */
+export interface DeletionUser {
+  id: string;
+  email?: string | null;
+}
+export interface UploadEntry {
+  name: string;
+  id?: string | null;
+  metadata?: unknown;
+}
+export interface DeletionStore {
+  subscriptionIds(user: DeletionUser): Promise<string[]>;
+  listUploads(prefix: string, offset: number): Promise<UploadEntry[]>;
+  removeUploads(paths: string[]): Promise<void>;
+  deleteRows(table: string, user: DeletionUser): Promise<number>;
+  assertRowsAbsent(table: string, user: DeletionUser): Promise<void>;
+  deleteAuthentication(id: string): Promise<void>;
+}
+export interface DeletionBilling {
+  verifyOwner(id: string, user: DeletionUser): Promise<void>;
+  cancel(id: string): Promise<void>;
+}
+export const pageSize = 100;
+const maxObjects = 10000;
+export function validateUser(user: DeletionUser) {
+  if (!/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(user.id)) {
+    throw new Error("Invalid account identity; no deletion performed.");
+  }
+}
+
+export async function collectUploads(
+  store: DeletionStore,
+  userId: string,
+): Promise<string[]> {
+  validateUser({ id: userId });
+  const files: string[] = [];
+  const seen = new Set<string>();
+  const pending = [{ prefix: userId, depth: 0 }];
+  while (pending.length) {
+    const { prefix, depth } = pending.pop()!;
+    if (depth > 32) {
+      throw new Error("Upload nesting exceeds safe cleanup limit.");
+    }
+    for (let offset = 0;; offset += pageSize) {
+      const entries = await store.listUploads(prefix, offset);
+      if (!Array.isArray(entries) || entries.length > pageSize) {
+        throw new Error("Upload listing was incomplete.");
+      }
+      for (const entry of entries) {
+        if (
+          !entry || typeof entry.name !== "string" || !entry.name ||
+          /[\\/\u0000]/.test(entry.name) || entry.name === "." ||
+          entry.name === ".."
+        ) {
+          throw new Error("Unsafe upload path; cleanup stopped.");
+        }
+        const path = `${prefix}/${entry.name}`;
+        if (seen.has(path)) throw new Error("Upload listing made no progress.");
+        seen.add(path);
+        if (seen.size > maxObjects) {
+          throw new Error("Upload count exceeds safe cleanup limit.");
+        }
+        if (typeof entry.id === "string" && entry.id) files.push(path);
+        else if (entry.id == null && entry.metadata == null) {
+          pending.push({ prefix: path, depth: depth + 1 });
+        } else throw new Error("Unknown upload entry; cleanup stopped.");
+      }
+      if (entries.length < pageSize) break;
+    }
+  }
+  return files;
+}
+
+export async function deleteAccount(
+  user: DeletionUser,
+  tables: readonly string[],
+  store: DeletionStore,
+  billing: DeletionBilling,
+) {
+  validateUser(user);
+  // Complete read-only enumeration before the first irreversible/provider operation.
+  const ids = [...new Set(await store.subscriptionIds(user))];
+  if (ids.some((id) => !/^sub_[A-Za-z0-9_]+$/.test(id))) {
+    throw new Error("Invalid subscription reference; cleanup stopped.");
+  }
+  const uploads = await collectUploads(store, user.id);
+  for (const id of ids) await billing.verifyOwner(id, user);
+  for (const id of ids) await billing.cancel(id);
+  for (let offset = 0; offset < uploads.length; offset += pageSize) {
+    await store.removeUploads(uploads.slice(offset, offset + pageSize));
+  }
+  // A successful remove response is not proof of removal (or absence of concurrent uploads).
+  if ((await collectUploads(store, user.id)).length) {
+    throw new Error("Uploaded files remain; retry account deletion.");
+  }
+  const results: Record<string, string> = {
+    storage: `deleted ${uploads.length}`,
+  };
+  for (const table of tables) {
+    results[table] = `deleted ${await store.deleteRows(table, user)}`;
+  }
+  for (const table of tables) await store.assertRowsAbsent(table, user);
+  // Retain authentication on any earlier partial failure so the account can retry.
+  await store.deleteAuthentication(user.id);
+  results.authentication = "deleted";
+  return { success: true, results };
+}
