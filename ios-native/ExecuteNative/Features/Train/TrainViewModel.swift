@@ -2,6 +2,7 @@ import Foundation
 
 @MainActor
 final class TrainViewModel: ObservableObject {
+    @Published private(set) var masterRecord: BackendRow?
     @Published private(set) var activePlan: HomeAIPlan?
     @Published private(set) var workoutPlans: [EntityRecord<TrainWorkoutPlan>] = []
     @Published private(set) var workoutHistory: [EntityRecord<TrainWorkoutLog>] = []
@@ -42,13 +43,13 @@ final class TrainViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
-        generation = UUID(); activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = []; isInitialLoading = true
+        generation = UUID(); masterRecord = nil; activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = []; isInitialLoading = true
         self.user = user
         hasStarted = true
         await reload()
     }
 
-    func stop() { hasStarted = false; generation = UUID(); user = nil; activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = [] }
+    func stop() { hasStarted = false; generation = UUID(); user = nil; masterRecord = nil; activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = [] }
 
     func refresh() async { await reload(isRefresh: true) }
 
@@ -67,16 +68,28 @@ final class TrainViewModel: ObservableObject {
         )))
     }
 
-    var today: HomeOverviewDay? {
-        activePlan?.resolvedWeeklyOverview?.days?.first { $0.date == HomeDate.todayString }
-    }
+    var today: HomeOverviewDay? { projectedDay(HomeDate.todayString) }
 
     var upcomingDays: [HomeOverviewDay] {
-        let today = HomeDate.todayString
-        return (activePlan?.resolvedWeeklyOverview?.days ?? [])
-            .filter { ($0.date ?? today) >= today }
-            .prefix(7)
-            .map { $0 }
+        guard activePlan != nil, let start = DayPlanLogic.date(HomeDate.todayString) else { return [] }
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = calendar.timeZone; formatter.dateFormat = "yyyy-MM-dd"
+        return (0..<7).compactMap { offset in
+            calendar.date(byAdding: .day, value: offset, to: start).flatMap { projectedDay(formatter.string(from: $0)) }
+        }
+    }
+    private func projectedDay(_ date: String) -> HomeOverviewDay? {
+        guard let master = masterRecord?.data else { return activePlan?.resolvedWeeklyOverview?.days?.first { $0.date == date } }
+        var fields = DayPlanLogic.day(master, date: date).objectValue ?? [:]
+        fields["date"] = .string(date)
+        guard let rest = try? DayPlanLogic.isRest(master, date: date) else { return nil }
+        fields["day_type"] = .string(rest ? "rest" : "training"); fields["workout_needed"] = .bool(!rest)
+        if let override = DayPlanLogic.override(master, date: date), let label = override["label"] {
+            fields["training_type"] = label; fields["priority"] = label
+        } else if let supplied = try? DayPlanLogic.supplied(master, date: date, kind: .workout), let title = supplied["title"] ?? supplied["label"] {
+            fields["training_type"] = title; fields["priority"] = title
+        }
+        return try? JSONValue.object(fields).decoded(as: HomeOverviewDay.self)
     }
 
     func workout(for day: HomeOverviewDay) -> EntityRecord<TrainWorkoutPlan>? {
@@ -110,9 +123,11 @@ final class TrainViewModel: ObservableObject {
             let workoutRecords: [EntityRecord<TrainWorkoutPlan>] = try await dataService.listAll(.workoutPlans, isCurrent: { request == self.generation })
             let logRecords: [EntityRecord<TrainWorkoutLog>] = try await dataService.listAll(.workoutLogs, isCurrent: { request == self.generation })
             guard request == generation, !Task.isCancelled else { return }
-            activePlanID = selectActivePlan(planRecords)?.id
-            activePlan = selectActivePlan(planRecords)?.payload
-            workoutPlans = workoutRecords
+            let canonical = RecoverySelection.canonical(planRecords.filter { WorkoutRecoveryPrompt.owned($0.metadata, by: user) && $0.payload.planType == "daily" && $0.payload.status == "active" }.map(\.metadata))
+            masterRecord = canonical
+            activePlanID = canonical?.id
+            activePlan = planRecords.first { $0.id == canonical?.id }?.payload
+            workoutPlans = workoutRecords.filter { WorkoutRecoveryPrompt.owned($0.metadata, by: user) }
             workoutHistory = TrainHistoryDetails.completedRecords(logRecords, user: user)
         } catch {
             if request == generation { self.error = AppError.from(error, title: "Could not load training") }

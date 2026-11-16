@@ -68,11 +68,32 @@ enum DayPlanLogic {
         return date
     }
 
-    static func value(_ key: String, in master: JSONValue) -> JSONValue? { master[key] ?? master["plan_payload"]?[key] }
+    static func rollingDates(starting raw: String) -> [String] {
+        guard let start = date(raw) else { return [] }
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = calendar.timeZone; formatter.dateFormat = "yyyy-MM-dd"
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start).map { formatter.string(from: $0) } }
+    }
+
+    static func value(_ key: String, in master: JSONValue) -> JSONValue? {
+        if let root = master[key], root != .null { return root }
+        return master["plan_payload"]?[key]
+    }
     static func sameID(_ a: String?, _ b: UUID) -> Bool { a.flatMap(UUID.init(uuidString:)) == b }
 
     static func day(_ master: JSONValue, date target: String) -> JSONValue {
-        value("weekly_overview", in: master)?["days"]?.recoveryArray?.first { $0["date"]?.stringValue == target } ?? .object([:])
+        let days = value("weekly_overview", in: master)?["days"]?.recoveryArray ?? []
+        if let exact = days.first(where: { $0["date"]?.stringValue == target }) { return exact }
+        // BYO cadence is resolved by supplied(); copying a prior weekday's byo_session
+        // would incorrectly repeat rotating/training-days-only cycles.
+        guard value("byo_structured", in: master)?["workout"] == nil, let chosen = date(target) else { return .object([:]) }
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let repeated = days.first(where: { day in
+            guard let raw = day["date"]?.stringValue, let date = date(raw) else { return false }
+            return calendar.component(.weekday, from: date) == calendar.component(.weekday, from: chosen)
+        }), var fields = repeated.objectValue else { return .object([:]) }
+        fields["date"] = .string(target)
+        return .object(fields)
     }
 
     static func override(_ master: JSONValue, date target: String) -> JSONValue? {

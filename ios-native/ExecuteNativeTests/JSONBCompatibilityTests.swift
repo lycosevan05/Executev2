@@ -1829,3 +1829,61 @@ final class WorkoutHistoryTests: XCTestCase {
     }
     func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response { XCTFail("Use existing text boundary once"); throw CancellationError() }
 }
+
+
+final class SplitOverviewDisplayTests: XCTestCase {
+    private func day(edited: Bool? = true, title: String? = "User strength", type: String? = "Strength") -> JSONValue {
+        var fields: [String: JSONValue] = ["date": .string("2026-11-17"), "day_type": .string("training"), "workout_needed": .bool(true),
+            "priority": .string("Rest from your supplied training routine."), "day_focus": .string("Old recovery focus"),
+            "nutrition_focus": .string("Keep protein"), "recovery_focus": .string("Easy mobility")]
+        fields["edited_by_user"] = edited.map(JSONValue.bool)
+        fields["session_title"] = title.map(JSONValue.string); fields["training_type"] = type.map(JSONValue.string)
+        return .object(fields)
+    }
+    func testEditedTypedDayDisplaysAuthoredFocusWithoutChangingRawPlan() throws {
+        let raw = day()
+        let planJSON: JSONValue = .object(["weekly_overview": .object(["days": .array([raw])])])
+        let plan = try planJSON.decoded(as: HomeAIPlan.self)
+        let display = try XCTUnwrap(plan.resolvedWeeklyOverview?.days?.first)
+        XCTAssertEqual(display.priority, "User strength"); XCTAssertEqual(display.dayFocus, "User strength")
+        XCTAssertEqual(display.trainingType, "Strength"); XCTAssertEqual(display.nutritionFocus, "Keep protein"); XCTAssertEqual(display.recoveryFocus, "Easy mobility")
+        XCTAssertEqual(plan.weeklyOverview?.days?.first?.priority, "Rest from your supplied training routine.")
+        XCTAssertEqual(plan.weeklyOverview?.days?.first?.dayFocus, "Old recovery focus")
+        XCTAssertEqual(planJSON["weekly_overview"]?["days"]?.recoveryArray?.first, raw)
+    }
+    func testNestedOverviewAlsoProjectsAuthoredDay() throws {
+        let plan = try JSONValue.object(["plan_payload": .object(["weekly_overview": .object(["days": .array([day()])])])]).decoded(as: HomeAIPlan.self)
+        XCTAssertEqual(plan.resolvedWeeklyOverview?.days?.first?.priority, "User strength")
+        XCTAssertEqual(plan.planPayload?["weekly_overview"]?["days"]?.recoveryArray?.first?["priority"], .string("Rest from your supplied training routine."))
+    }
+    func testResetAndUneditedDaysPreserveOriginalAINarrative() throws {
+        for edited in [Optional<Bool>.none, false] {
+            let raw = day(edited: edited)
+            let typed = try raw.decoded(as: HomeOverviewDay.self)
+            XCTAssertEqual(typed.displayProjection, typed)
+            XCTAssertNil(HomeOverviewDisplay.authoredFocus(raw))
+            XCTAssertEqual(typed.displayProjection.priority, "Rest from your supplied training routine.")
+        }
+    }
+    func testBlankAuthoredTitleUsesTrainingTypeWithoutInventingAnEmptyFocus() throws {
+        let raw = day(title: " \n", type: "Manual mobility")
+        let typed = try raw.decoded(as: HomeOverviewDay.self)
+        XCTAssertEqual(typed.displayProjection.priority, "Manual mobility")
+        XCTAssertEqual(HomeOverviewDisplay.authoredFocus(raw), "Manual mobility")
+        let missing = try day(title: " ", type: "\n").decoded(as: HomeOverviewDay.self)
+        XCTAssertEqual(missing.displayProjection, missing)
+    }
+    func testRecoveryTaskUsesAuthoredFocusAndRetainsMasterAndExistingIntake() throws {
+        let raw = day()
+        let user = UUID()
+        let master = BackendRow(id: UUID(), ownerID: user, ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: nil, updatedDate: nil,
+            data: .object(["weekly_overview": .object(["days": .array([raw])]), "source": .string("plan_questionnaire_overview")]))
+        let oldDaily = BackendRow(id: UUID(), ownerID: user, ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: nil, updatedDate: nil,
+            data: .object(["date": .string("2026-11-17"), "calories_consumed": .number(1450), "workout_done": .bool(false)]))
+        let patch = try XCTUnwrap(RecoveryDailyProjection.patch(plan: master, date: "2026-11-17", existing: oldDaily))
+        let task = try XCTUnwrap(patch["planned_checklist_items"]?.recoveryArray?.first { $0["type"] == .string("workout") })
+        XCTAssertEqual(task["title"], .string("User strength")); XCTAssertEqual(task["description"], .string("User strength"))
+        XCTAssertNil(patch["calories_consumed"]); XCTAssertEqual(oldDaily.data["calories_consumed"], .number(1450))
+        XCTAssertEqual(master.data["weekly_overview"]?["days"]?.recoveryArray?.first, raw)
+    }
+}

@@ -82,7 +82,8 @@ struct HomeAIPlan: Codable, Sendable {
     }
 
     var resolvedWeeklyOverview: HomeWeeklyOverview? {
-        weeklyOverview ?? planPayload?.value(at: ["weekly_overview"])?.decodedIfPossible(as: HomeWeeklyOverview.self)
+        guard let overview = weeklyOverview ?? planPayload?.value(at: ["weekly_overview"])?.decodedIfPossible(as: HomeWeeklyOverview.self) else { return nil }
+        return HomeWeeklyOverview(days: overview.days?.map { $0.displayProjection })
     }
 
     var resolvedNutritionTargets: HomeNutritionTargets? {
@@ -107,10 +108,12 @@ struct HomeOverviewDay: Codable, Sendable, Equatable {
     let dayType: String?
     let workoutNeeded: Bool?
     let trainingType: String?
-    let priority: String?
-    let dayFocus: String?
+    var priority: String?
+    var dayFocus: String?
     let recoveryFocus: String?
     let nutritionFocus: String?
+    var editedByUser: Bool? = nil
+    var sessionTitle: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case date
@@ -121,6 +124,29 @@ struct HomeOverviewDay: Codable, Sendable, Equatable {
         case dayFocus = "day_focus"
         case recoveryFocus = "recovery_focus"
         case nutritionFocus = "nutrition_focus"
+        case editedByUser = "edited_by_user"
+        case sessionTitle = "session_title"
+    }
+
+    /// A display copy only: raw stored AI narrative remains intact for reset and persistence.
+    var displayProjection: Self {
+        guard editedByUser == true, let label = HomeOverviewDisplay.label(title: sessionTitle, type: trainingType) else { return self }
+        var copy = self
+        copy.priority = label; copy.dayFocus = label
+        return copy
+    }
+}
+
+/// Split mirrors intentionally alter four fields only. Readers must not present the old AI
+/// priority as the user's authored focus after an edit; reset/unedited days keep their narrative.
+enum HomeOverviewDisplay {
+    static func label(title: String?, type: String?) -> String? {
+        for text in [title, type].compactMap({ $0 }) where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
+        return nil
+    }
+    static func authoredFocus(_ day: JSONValue) -> String? {
+        guard day["edited_by_user"] == .bool(true) else { return nil }
+        return label(title: day["session_title"]?.stringValue, type: day["training_type"]?.stringValue)
     }
 }
 

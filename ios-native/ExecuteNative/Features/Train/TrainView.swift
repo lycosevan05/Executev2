@@ -44,7 +44,12 @@ private enum TrainDashboardTab: String, CaseIterable, Identifiable {
     }
 }
 
+private struct TrainSplitEditSelection: Identifiable { let date: String; var id: String { date } }
+
 struct TrainDashboardView: View {
+    @EnvironmentObject private var environment: AppEnvironment
+    @State private var buildingWeek = false
+    @State private var editingSplit: TrainSplitEditSelection?
     @ObservedObject var model: TrainViewModel
     @State private var selectedTab: TrainDashboardTab = .today
     @State private var search = ""
@@ -78,6 +83,12 @@ struct TrainDashboardView: View {
         .refreshable { await model.refresh() }
         .executeScreen()
         .navigationBarHidden(true)
+        .sheet(isPresented: $buildingWeek, onDismiss: { Task { await model.refresh() } }) {
+            WeekBuildView(kind: .workout, dates: DayPlanLogic.rollingDates(starting: HomeDate.todayString), environment: environment)
+        }
+        .sheet(item: $editingSplit, onDismiss: { Task { await model.refresh() } }) { selection in
+            NavigationStack { SplitDayEditorView(date: selection.date, environment: environment) }
+        }
     }
 
     private var header: some View {
@@ -114,6 +125,7 @@ struct TrainDashboardView: View {
     }
 
     @ViewBuilder private var todayContent: some View {
+        if model.activePlan != nil { weekBuildButton }
         if model.activePlan == nil {
             TrainEmptyState(openPlan: model.openPlan)
         } else if HomeCalculations.isRestDay(model.today) {
@@ -131,16 +143,26 @@ struct TrainDashboardView: View {
 
     @ViewBuilder private var splitContent: some View {
         TrainSectionHeading(title: "Weekly schedule", subtitle: "Your active plan, from today forward.")
+        if model.activePlan != nil { weekBuildButton }
         if model.upcomingDays.isEmpty {
             TrainMessageCard(text: "Your weekly training schedule will appear after your active plan is refreshed.")
         } else {
             ForEach(Array(model.upcomingDays.enumerated()), id: \.offset) { index, day in
                 TrainSplitRow(day: day, index: index, workout: model.workout(for: day))
+                if let date = day.date {
+                    Button("Edit weekly template for \(date)") { editingSplit = TrainSplitEditSelection(date: date) }
+                        .frame(minHeight: 44).accessibilityIdentifier("train.split.edit.\(date)")
+                }
                 if let date = day.date, !HomeCalculations.isRestDay(day) {
                     Button("Open workout for \(date)") { model.openDay(date) }
                 }
             }
         }
+    }
+
+    private var weekBuildButton: some View {
+        ExecuteSecondaryButton(title: "Build workouts for the week") { buildingWeek = true }
+            .accessibilityIdentifier("train.week-build")
     }
 
     @ViewBuilder private var libraryContent: some View {

@@ -88,7 +88,7 @@ enum RecoveryDailyProjection {
         let focus = day["recovery_focus"]?.stringValue ?? "Recovery focus"
         var checklist: [JSONValue] = []
         if day["workout_needed"]?.boolValue != false {
-            checklist.append(item("workout", title: day["session_title"]?.stringValue ?? "Complete workout", description: day["priority"]?.stringValue ?? "Complete today's workout"))
+            checklist.append(item("workout", title: day["session_title"]?.stringValue ?? "Complete workout", description: HomeOverviewDisplay.authoredFocus(day) ?? day["priority"]?.stringValue ?? "Complete today's workout"))
         }
         checklist.append(item("nutrition", title: "Hit nutrition target", description: day["nutrition_focus"]?.stringValue ?? "Stay aligned with your nutrition targets"))
         checklist.append(item("recovery", title: "Recovery focus", description: focus))

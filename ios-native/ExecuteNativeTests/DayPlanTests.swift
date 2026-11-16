@@ -7,7 +7,8 @@ final class DayPlanTests: XCTestCase {
     private let date = "2026-11-13"
     private func model(_ data: DayData, _ ai: DayAI, kind: DayPlanKind = .workout, defaults: UserDefaults? = nil,
                        premium: @escaping () -> Bool = { true }, canWrite: @escaping (UUID) -> Bool = { _ in true }) -> DayPlanViewModel {
-        DayPlanViewModel(kind: kind, date: date, data: data, ai: ai, cache: UserScopedCacheStore(suiteName: "DayCache.\(UUID())"),
+        data.fixtureUser = user
+        return DayPlanViewModel(kind: kind, date: date, data: data, ai: ai, cache: UserScopedCacheStore(suiteName: "DayCache.\(UUID())"),
             defaults: defaults ?? UserDefaults(suiteName: "DayDraft.\(UUID())")!, premium: premium, canWrite: canWrite)
     }
 
@@ -292,6 +293,7 @@ final class DayPlanTests: XCTestCase {
         let nutrition = NutritionViewModel(dataService: data, aiService: nil, cache: cache, realtimeService: nil, router: AppRouter())
         await nutrition.start(for: user)
         XCTAssertNil(nutrition.snapshot.mealPlan); XCTAssertEqual(nutrition.snapshot.dailyLogID, dailyID)
+        data.fixtureUser = user
         let train = TrainViewModel(dataService: data, router: AppRouter())
         await train.start(for: user)
         let day = HomeOverviewDay(date: date, dayType: "training", workoutNeeded: true, trainingType: "Strength", priority: nil, dayFocus: nil, recoveryFocus: nil, nutritionFocus: nil)
@@ -317,6 +319,7 @@ final class DayPlanTests: XCTestCase {
         let data = DayData(), router = AppRouter(), cache = UserScopedCacheStore(suiteName: "DayIncomplete.\(UUID())")
         let valid = DayData.child(master: data.masterID)
         data.rows[.workoutPlans] = [DayData.row(.object(["date": .string(date), "source_plan_id": .string(data.masterID.uuidString), "generation_batch_id": .string("fixture"), "exercises": .array([])])), valid]
+        data.fixtureUser = user
         let train = TrainViewModel(dataService: data, router: router)
         await train.start(for: user)
         let day = HomeOverviewDay(date: date, dayType: "training", workoutNeeded: true, trainingType: "Strength", priority: nil, dayFocus: nil, recoveryFocus: nil, nutritionFocus: nil)
@@ -355,6 +358,11 @@ private final class DayAI: AIResponding {
 
 @MainActor
 private final class DayData: EntityDataServicing {
+    var fixtureUser: ExecuteUser?
+    func scoped(_ row: BackendRow) -> BackendRow {
+        guard row.ownerID == nil, let user = fixtureUser else { return row }
+        return BackendRow(id: row.id, ownerID: user.id, ownerEmail: row.ownerEmail, createdBy: row.createdBy, userEmail: row.userEmail, createdDate: row.createdDate, updatedDate: row.updatedDate, data: row.data)
+    }
     let masterID = UUID()
     var rows: [EntityTable: [BackendRow]] = [:]
     var creates = 0, updates = 0
@@ -377,7 +385,7 @@ private final class DayData: EntityDataServicing {
         if table == failTable { throw URLError(.notConnectedToInternet) }
         if failSecondPage && offset > 0 { throw URLError(.networkConnectionLost) }
         onRead?(table)
-        return try (rows[table] ?? []).dropFirst(offset).prefix(limit).map { try EntityRecord(row: $0) }
+        return try (rows[table] ?? []).dropFirst(offset).prefix(limit).map { try EntityRecord(row: scoped($0)) }
     }
     func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload> {
         if failCreate { throw URLError(.notConnectedToInternet) }
@@ -390,4 +398,105 @@ private final class DayData: EntityDataServicing {
         updates += 1; XCTFail("Day generation never patches data"); throw URLError(.unsupportedURL)
     }
     func delete(_ table: EntityTable, id: UUID) async throws { XCTFail("Day generation never deletes records") }
+}
+
+
+@MainActor final class DayPlanOverrideIntegrationTests: XCTestCase {
+    let user = ExecuteUser(id: UUID(), email: "override@example.invalid", displayName: "Fixture")
+    let date = "2026-11-13"
+    private func install(_ override: JSONValue, in data: DayData) -> JSONValue {
+        var master = data.initialMaster.objectValue!; master["split_overrides"] = .object(["Friday": override])
+        data.rows[.aiPlans] = [DayData.row(.object(master), id: data.masterID)]
+        return .object(master)
+    }
+    private var authored: JSONValue { .object(["day_type": .string("training"), "label": .string("Authored strength"), "exercises": .array([.object(["name": .string("Exact exercise"), "sets": .number(2), "reps": .string("8–12")])])]) }
+    private func model(_ data: DayData, ai: AIResponding? = nil, defaults: UserDefaults? = nil, premium: @escaping () -> Bool = { false }) -> DayPlanViewModel {
+        data.fixtureUser = user
+        return DayPlanViewModel(kind: .workout, date: date, data: data, ai: ai, cache: UserScopedCacheStore(suiteName: "OverrideCache.\(UUID())"), defaults: defaults ?? UserDefaults(suiteName: "OverrideDraft.\(UUID())")!, premium: premium)
+    }
+    func testExactAuthoredExercisePreviewAndSaveNeedNeitherAIServiceNorPremium() async {
+        let data = DayData(), before = install(authored, in: data), m = model(data)
+        await m.start(for: user); XCTAssertFalse(m.requiresPremiumGeneration); await m.generate()
+        XCTAssertNil(m.error); XCTAssertEqual(m.preview?["name"], .string("Authored strength"))
+        XCTAssertEqual(m.preview?["exercises"]?.recoveryArray?.count, 1)
+        XCTAssertEqual(m.preview?["exercises"]?.recoveryArray?.first?["reps"], .string("8–12"))
+        XCTAssertEqual(m.preview?["generated_by_ai"], .bool(false)); XCTAssertEqual(m.preview?["source"], .string("user_split_override")); XCTAssertEqual(data.creates, 0)
+        await m.save(); XCTAssertNil(m.error); XCTAssertEqual(data.creates, 1); XCTAssertEqual(m.saved?.payload["status"], .string("planned")); XCTAssertEqual(data.rows[.aiPlans]?.first?.data, before)
+    }
+    func testTypeOnlyOverrideStillRequiresPremiumButRestNeedsNoGeneration() async {
+        let data = DayData(), ai = DayAI()
+        _ = install(.object(["day_type": .string("training"), "label": .string("Push focus"), "exercises": .array([])]), in: data)
+        let m = model(data, ai: ai); await m.start(for: user); await m.generate()
+        XCTAssertTrue(m.requiresPremiumGeneration); XCTAssertNotNil(m.error); XCTAssertEqual(ai.calls, 0); XCTAssertEqual(data.creates, 0)
+        _ = install(.object(["day_type": .string("rest"), "label": .string("Rest")]), in: data)
+        await m.refresh(); await m.generate(); XCTAssertNil(m.error); XCTAssertTrue(m.isRest); XCTAssertNil(m.preview); XCTAssertEqual(ai.calls, 0)
+    }
+    func testTypeOnlyOverrideControlsAIResultLabel() async {
+        let data = DayData(), ai = DayAI()
+        _ = install(.object(["day_type": .string("training"), "label": .string("Exact push focus"), "exercises": .array([])]), in: data)
+        let m = model(data, ai: ai, premium: { true }); await m.start(for: user); await m.generate()
+        XCTAssertNil(m.error); XCTAssertEqual(ai.calls, 1); XCTAssertEqual(m.preview?["name"], .string("Exact push focus")); XCTAssertEqual(m.preview?["type"], .string("Exact push focus")); XCTAssertEqual(m.preview?["generated_by_ai"], .bool(true))
+    }
+    func testOldAIBackedRestoredPreviewCannotReplaceAuthoredExercises() async throws {
+        let data = DayData(), master = install(authored, in: data), defaults = UserDefaults(suiteName: "OldOverride.\(UUID())")!
+        var payload = DayPlanTests.workout().objectValue!; payload["date"] = .string(date); payload["source_plan_id"] = .string(data.masterID.uuidString); payload["native_mutation_id"] = .string("old-ai-preview")
+        let draft = DayPlanDraft(masterID: data.masterID, master: master, context: .object([:]), payload: .object(payload), generatedAt: Date())
+        defaults.set(try JSONEncoder().encode(draft), forKey: "execute.cache.\(user.id.uuidString).day-plan.workout.\(date)")
+        let m = model(data, defaults: defaults); await m.start(for: user); await m.save()
+        XCTAssertNotNil(m.error); XCTAssertNotNil(m.preview); XCTAssertEqual(data.creates, 0)
+    }
+    func testAuthoredSaveLostAcknowledgmentReusesSameRecordAfterRelaunch() async {
+        let data = DayData(); _ = install(authored, in: data)
+        let defaults = UserDefaults(suiteName: "OverrideAck.\(UUID())")!, m = model(data, defaults: defaults)
+        await m.start(for: user); await m.generate(); data.loseCreate = true; await m.save()
+        XCTAssertNotNil(m.error); XCTAssertEqual(data.creates, 1)
+        let savedID = data.rows[.workoutPlans]?.first?.id, restored = model(data, defaults: defaults)
+        await restored.start(for: user); await restored.save()
+        XCTAssertNil(restored.error); XCTAssertEqual(restored.saved?.id, savedID); XCTAssertEqual(data.creates, 1)
+    }
+    func testRollingProjectionRepeatsAIWeekdaysButDoesNotCopyBYOCycleSession() throws {
+        let master = DayData.master(rest: true)
+        XCTAssertTrue(try DayPlanLogic.isRest(master, date: "2026-11-20"))
+        let oldSession: JSONValue = .object(["title": .string("Do not pin this session"), "exercises": .array([DayPlanTests.exercise("Old")])])
+        let rotating: JSONValue = .object(["date_range_start": .string("2026-11-13"), "weekly_overview": .object(["days": .array([.object(["date": .string("2026-11-13"), "byo_session": oldSession])])]), "byo_structured": .object(["workout": .object(["cadence": .object(["type": .string("cycle"), "advance": .string("calendar_days"), "cycle": .array([.object(["label": .string("A"), "exercises": .array([DayPlanTests.exercise("A")])]), .object(["label": .string("B"), "exercises": .array([DayPlanTests.exercise("B")])])])])])])])
+        XCTAssertNil(DayPlanLogic.day(rotating, date: "2026-11-20")["byo_session"])
+        XCTAssertEqual(try DayPlanLogic.supplied(rotating, date: "2026-11-20", kind: .workout)?["title"], .string("B"))
+    }
+    func testCanonicalOwnedMasterAgreesAcrossTrainAndDirectDayDespiteNewerGenericOrForeignRows() async {
+        let data = DayData(); data.fixtureUser = user
+        var canonical = data.initialMaster.objectValue!; canonical["source"] = .string("plan_questionnaire_overview")
+        let owned = BackendRow(id: data.masterID, ownerID: user.id, ownerEmail: nil, createdBy: nil, userEmail: nil, createdDate: Date(timeIntervalSince1970: 1), updatedDate: .now, data: .object(canonical))
+        let generic = DayData.row(data.initialMaster)
+        let foreign = BackendRow(id: UUID(), ownerID: UUID(), ownerEmail: user.email, createdBy: nil, userEmail: nil, createdDate: .distantFuture, updatedDate: .distantFuture, data: .object(canonical))
+        data.rows[.aiPlans] = [generic, foreign, owned]
+        let m = model(data); await m.start(for: user)
+        let train = TrainViewModel(dataService: data, router: AppRouter()); await train.start(for: user)
+        XCTAssertNil(m.error); XCTAssertEqual(m.master?.id, owned.id); XCTAssertEqual(train.masterRecord?.id, owned.id)
+        XCTAssertEqual(train.upcomingDays.count, 7)
+    }
+    func testForeignWorkoutEnvelopeNeverAppearsInTrainOrDailyReuse() async {
+        let data = DayData(); data.fixtureUser = user
+        let raw = DayData.child(master: data.masterID)
+        data.rows[.workoutPlans] = [BackendRow(id: raw.id, ownerID: UUID(), ownerEmail: user.email, createdBy: nil, userEmail: nil, createdDate: raw.createdDate, updatedDate: raw.updatedDate, data: raw.data)]
+        let m = model(data); await m.start(for: user)
+        let train = TrainViewModel(dataService: data, router: AppRouter()); await train.start(for: user)
+        XCTAssertNil(m.saved); XCTAssertTrue(train.workoutPlans.isEmpty)
+    }
+    func testRollingDatesCrossMonthAndInvalidDateDoesNotInventWeek() {
+        XCTAssertEqual(DayPlanLogic.rollingDates(starting: "2026-11-28"), ["2026-11-28", "2026-11-29", "2026-11-30", "2026-12-01", "2026-12-02", "2026-12-03", "2026-12-04"])
+        XCTAssertTrue(DayPlanLogic.rollingDates(starting: "2026-02-31").isEmpty)
+    }
+
+    func testNullRootFallsBackToNestedOverviewAndAuthoredBatchOnSave() async {
+        let data = DayData(); _ = install(authored, in: data)
+        var fields = data.rows[.aiPlans]!.first!.data.objectValue!
+        let overview = fields["weekly_overview"]!
+        fields["weekly_overview"] = .null; fields["generation_batch_id"] = .null
+        fields["plan_payload"] = .object(["weekly_overview": overview, "generation_batch_id": .string("nested-only-batch")])
+        data.rows[.aiPlans] = [DayData.row(.object(fields), id: data.masterID)]
+        XCTAssertEqual(DayPlanLogic.day(.object(fields), date: date)["date"], .string(date))
+        let m = model(data); await m.start(for: user); await m.generate(); await m.save()
+        XCTAssertNil(m.error); XCTAssertEqual(m.saved?.payload["generation_batch_id"], .string("nested-only-batch")); XCTAssertEqual(data.creates, 1)
+    }
+
 }

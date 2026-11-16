@@ -48,7 +48,8 @@ private struct NutritionScreen: View {
             presentation: presentation,
             isPremium: appState.premiumState.isPremium,
             captureContent: { kind in AnyView(FoodCaptureSheet(kind: kind, nutrition: model, environment: captureEnvironment)) },
-            recipesContent: { AnyView(RecipeLibrarySheet(environment: captureEnvironment, loggingDate: model.selectedDate)) }
+            recipesContent: { AnyView(RecipeLibrarySheet(environment: captureEnvironment, loggingDate: model.selectedDate)) },
+            weekContent: { AnyView(WeekBuildView(kind: .meals, dates: DayPlanLogic.rollingDates(starting: model.dateString), environment: captureEnvironment)) }
         )
         .task(id: signedInUser?.id) {
             if let signedInUser { await model.start(for: signedInUser) }
@@ -68,6 +69,7 @@ private enum NutritionSheet: String, Identifiable {
     case photo
     case barcode
     case recipes
+    case week
     var id: String { rawValue }
 }
 
@@ -77,9 +79,11 @@ struct NutritionDashboardView: View {
     let isPremium: Bool
     var captureContent: ((FoodCaptureKind) -> AnyView)? = nil
     var recipesContent: (() -> AnyView)? = nil
+    var weekContent: (() -> AnyView)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var activeSheet: NutritionSheet?
+    @State private var weekWasPresented = false
     @State private var pendingDelete: NutritionFoodLogRecord?
     @State private var pendingEdit: NutritionFoodLogRecord?
 
@@ -103,6 +107,11 @@ struct NutritionDashboardView: View {
 
                 ExecuteSecondaryButton(title: model.snapshot.mealPlan == nil ? "Build meals for this day" : "View meal plan details") {
                     model.openMealPlan()
+                }
+
+                if weekContent != nil {
+                    ExecuteSecondaryButton(title: "Build meals for the week") { weekWasPresented = true; activeSheet = .week }
+                        .accessibilityIdentifier("nutrition.week-build")
                 }
 
                 if let mealPlan = model.snapshot.mealPlan, !mealPlan.resolvedMeals.isEmpty {
@@ -147,7 +156,10 @@ struct NutritionDashboardView: View {
                     .padding(.top, ExecuteSpacing.xs)
             }
         }
-        .sheet(item: $activeSheet, onDismiss: model.clearAIEstimate) { sheet in
+        .sheet(item: $activeSheet, onDismiss: {
+            model.clearAIEstimate()
+            if weekWasPresented { weekWasPresented = false; Task { await model.refresh() } }
+        }) { sheet in
             switch sheet {
             case .manual:
                 NutritionManualEntrySheet(model: model)
@@ -158,6 +170,8 @@ struct NutritionDashboardView: View {
                 else { Text("Food capture is unavailable in this preview.") }
             case .recipes:
                 if let recipesContent { recipesContent() }
+            case .week:
+                if let weekContent { weekContent() }
             }
         }
         .sheet(item: $pendingEdit) { record in NutritionManualEntrySheet(model: model, editing: record) }

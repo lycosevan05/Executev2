@@ -34,7 +34,7 @@ private struct DayPlanScreen: View {
                     if model.kind == .workout { workout(payload) } else { meals(payload) }
                 }
                 if model.preview != nil {
-                    ExecutePrimaryButton(title: "Save \(model.kind.title.lowercased())") { Task { await model.save() } }.disabled(model.busy || !appState.premiumState.isPremium)
+                    ExecutePrimaryButton(title: "Save \(model.kind.title.lowercased())") { Task { await model.save() } }.disabled(model.busy)
                         .accessibilityIdentifier("day-plan.save")
                     ExecuteSecondaryButton(title: "Discard preview") { model.discard(); Task { await model.refresh() } }.disabled(model.busy)
                 } else if let saved = model.saved {
@@ -56,9 +56,9 @@ private struct DayPlanScreen: View {
                     Text("Build this date when you need it. Generation creates a preview; Save adds it to your plan. Planned sessions and meals are separate from completed workouts and food intake.")
                         .font(ExecuteTypography.body(14))
                     ExecutePrimaryButton(title: "Generate \(model.kind.title.lowercased()) preview") { Task { await model.generate() } }
-                        .disabled(model.busy || !appState.premiumState.isPremium).accessibilityIdentifier("day-plan.generate")
+                        .disabled(model.busy || (model.requiresPremiumGeneration && !appState.premiumState.isPremium)).accessibilityIdentifier("day-plan.generate")
                 }
-                if !appState.premiumState.isPremium {
+                if model.requiresPremiumGeneration && !appState.premiumState.isPremium {
                     Text("Generating and saving personalized daily plans requires Premium.").font(ExecuteTypography.body(13))
                     ExecuteSecondaryButton(title: "Premium & Billing") { router.navigate(to: .billing) }
                 }
