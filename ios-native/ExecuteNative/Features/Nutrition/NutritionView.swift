@@ -25,6 +25,7 @@ enum NutritionPresentation: Equatable {
 private struct NutritionScreen: View {
     @ObservedObject private var appState: AppState
     @StateObject private var model: NutritionViewModel
+    @StateObject private var grocerySession = GrocerySessionState()
     private let presentation: NutritionPresentation
     private let captureEnvironment: AppEnvironment
 
@@ -49,12 +50,27 @@ private struct NutritionScreen: View {
             isPremium: appState.premiumState.isPremium,
             captureContent: { kind in AnyView(FoodCaptureSheet(kind: kind, nutrition: model, environment: captureEnvironment)) },
             recipesContent: { AnyView(RecipeLibrarySheet(environment: captureEnvironment, loggingDate: model.selectedDate)) },
-            weekContent: { AnyView(WeekBuildView(kind: .meals, dates: DayPlanLogic.rollingDates(starting: model.dateString), environment: captureEnvironment)) }
+            weekContent: { AnyView(WeekBuildView(kind: .meals, dates: DayPlanLogic.rollingDates(starting: model.dateString), environment: captureEnvironment)) },
+            browseWeekContent: { AnyView(NutritionWeekView(environment: captureEnvironment, startDate: HomeDate.todayString, onSelectDate: selectWeekDate)) },
+            groceryContent: { AnyView(GroceryView(date: HomeDate.todayString, environment: captureEnvironment, session: grocerySession)) },
+            hydrationContent: { date in AnyView(NutritionWeekHydrationView(environment: captureEnvironment, date: date).id(date)) }
         )
         .task(id: signedInUser?.id) {
             if let signedInUser { await model.start(for: signedInUser) }
         }
+        .onChange(of: signedInUser?.id) { _ in grocerySession.activate(nil) }
         .onDisappear { Task { await model.stop() } }
+    }
+
+    private func selectWeekDate(_ value: String) {
+        // Daily navigation uses the local calendar; UTC midnight would select the prior day west of UTC.
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: value) else { return }
+        Task { await model.selectDate(date) }
     }
 
     private var signedInUser: ExecuteUser? {
@@ -70,6 +86,8 @@ private enum NutritionSheet: String, Identifiable {
     case barcode
     case recipes
     case week
+    case browseWeek
+    case groceries
     var id: String { rawValue }
 }
 
@@ -80,6 +98,9 @@ struct NutritionDashboardView: View {
     var captureContent: ((FoodCaptureKind) -> AnyView)? = nil
     var recipesContent: (() -> AnyView)? = nil
     var weekContent: (() -> AnyView)? = nil
+    var browseWeekContent: (() -> AnyView)? = nil
+    var groceryContent: (() -> AnyView)? = nil
+    var hydrationContent: ((String) -> AnyView)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var activeSheet: NutritionSheet?
@@ -100,6 +121,16 @@ struct NutritionDashboardView: View {
                 }
 
                 NutritionSummaryCard(model: model)
+
+                if let hydrationContent { hydrationContent(model.dateString) }
+                if browseWeekContent != nil {
+                    ExecuteSecondaryButton(title: "My Week & nutrition history") { activeSheet = .browseWeek }
+                        .accessibilityIdentifier("nutrition.saved-week")
+                }
+                if groceryContent != nil {
+                    ExecuteSecondaryButton(title: "Weekly groceries") { activeSheet = .groceries }
+                        .accessibilityIdentifier("nutrition.groceries")
+                }
 
                 if recipesContent != nil {
                     ExecuteSecondaryButton(title: "My cookbook") { activeSheet = .recipes }
@@ -172,6 +203,10 @@ struct NutritionDashboardView: View {
                 if let recipesContent { recipesContent() }
             case .week:
                 if let weekContent { weekContent() }
+            case .browseWeek:
+                if let browseWeekContent { browseWeekContent() }
+            case .groceries:
+                if let groceryContent { groceryContent() }
             }
         }
         .sheet(item: $pendingEdit) { record in NutritionManualEntrySheet(model: model, editing: record) }

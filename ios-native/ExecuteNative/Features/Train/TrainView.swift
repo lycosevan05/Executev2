@@ -172,6 +172,7 @@ struct TrainDashboardView: View {
         HStack(spacing: ExecuteSpacing.xs) {
             Image(systemName: "magnifyingglass").foregroundStyle(ExecuteColor.mist)
             TextField("Search exercises or muscles", text: $search).font(ExecuteTypography.body(14)).textFieldStyle(.plain)
+                .accessibilityIdentifier("train.library.search")
         }
         .padding(ExecuteSpacing.sm)
         .background(ExecuteColor.parchmentLight)
@@ -182,11 +183,14 @@ struct TrainDashboardView: View {
             HStack(spacing: ExecuteSpacing.xs) {
                 ForEach(TrainLibraryExercise.categories, id: \.self) { value in
                     Button { category = value } label: {
-                        Text(value).font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(category == value ? ExecuteColor.charcoal : ExecuteColor.olive).padding(.horizontal, ExecuteSpacing.sm).frame(minHeight: 30).background(category == value ? ExecuteColor.chartreuse : ExecuteColor.parchmentLight).clipShape(Capsule())
+                        Text(value).font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(category == value ? ExecuteColor.charcoal : ExecuteColor.olive).padding(.horizontal, ExecuteSpacing.sm).frame(minHeight: 44).background(category == value ? ExecuteColor.chartreuse : ExecuteColor.parchmentLight).clipShape(Capsule())
                     }.buttonStyle(ExecutePressStyle())
+                        .accessibilityAddTraits(category == value ? .isSelected : [])
+                        .accessibilityIdentifier("train.library.category.\(value)")
                 }
             }
         }
+        if exercises.isEmpty { Text("No exercises match this search and category.").font(ExecuteTypography.body(14)) }
         ForEach(exercises) { exercise in TrainLibraryRow(exercise: exercise) }
     }
 
@@ -282,28 +286,6 @@ private struct TrainSplitRow: View {
     }
 }
 
-private struct TrainLibraryExercise: Identifiable {
-    let id: String
-    let name: String
-    let muscles: String
-    let category: String
-    let equipment: String
-
-    static let all: [TrainLibraryExercise] = [
-        .init(id: "bench", name: "Barbell Bench Press", muscles: "Chest, triceps, shoulders", category: "Push", equipment: "Barbell"),
-        .init(id: "press", name: "Overhead Press", muscles: "Shoulders, triceps, core", category: "Push", equipment: "Barbell"),
-        .init(id: "row", name: "Barbell Row", muscles: "Lats, rhomboids, biceps", category: "Pull", equipment: "Barbell"),
-        .init(id: "pullup", name: "Pull-Up", muscles: "Lats, biceps, rear delts", category: "Pull", equipment: "Pull-up bar"),
-        .init(id: "squat", name: "Barbell Squat", muscles: "Quads, glutes, core", category: "Legs", equipment: "Barbell"),
-        .init(id: "rdl", name: "Romanian Deadlift", muscles: "Hamstrings, glutes", category: "Legs", equipment: "Barbell or dumbbells"),
-        .init(id: "lunge", name: "Walking Lunge", muscles: "Quads, glutes, hamstrings", category: "Legs", equipment: "Dumbbells"),
-        .init(id: "plank", name: "Plank", muscles: "Core, shoulders", category: "Core", equipment: "None"),
-        .init(id: "deadbug", name: "Dead Bug", muscles: "Deep core, transverse abs", category: "Core", equipment: "None"),
-        .init(id: "swing", name: "Kettlebell Swing", muscles: "Glutes, hamstrings, core", category: "Cardio", equipment: "Kettlebell")
-    ]
-    static let categories = ["All", "Push", "Pull", "Legs", "Core", "Cardio"]
-}
-
 private struct TrainLibraryRow: View {
     let exercise: TrainLibraryExercise
     var body: some View {
@@ -312,7 +294,9 @@ private struct TrainLibraryRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(exercise.name).font(ExecuteTypography.label(14).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
                 Text(exercise.muscles).font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.olive)
-                Text(exercise.equipment).font(ExecuteTypography.caption(10)).foregroundStyle(ExecuteColor.mist)
+                Text(exercise.equipment).font(ExecuteTypography.caption(10)).foregroundStyle(ExecuteColor.olive)
+                Text(exercise.difficulty).font(ExecuteTypography.caption(10)).foregroundStyle(ExecuteColor.olive)
+                Text(exercise.notes).font(ExecuteTypography.body(12)).foregroundStyle(ExecuteColor.olive).fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Text(exercise.category).font(ExecuteTypography.caption(9).weight(.bold)).foregroundStyle(ExecuteColor.chartreuseDark).padding(.horizontal, 7).padding(.vertical, 4).background(ExecuteHomeStyle.accentWash).clipShape(Capsule())
