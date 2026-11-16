@@ -143,6 +143,7 @@ final class WorkoutSessionViewModel: ObservableObject {
     @Published private(set) var reps: [Int: Int] = [:]
     @Published private(set) var skippedExercises: Set<String> = []
     @Published private(set) var notes = ""
+    @Published private(set) var completedRecord: BackendRow?
     @Published private(set) var summary: WorkoutSessionSummary?
     @Published private(set) var isSaving = false
     @Published private(set) var isCompleting = false
@@ -346,7 +347,7 @@ final class WorkoutSessionViewModel: ObservableObject {
             patch["pain_notes"] = .string(checkIn.painNotes.trimmingCharacters(in: .whitespacesAndNewlines))
             patch["rating"] = .number(Double(Int((Double(checkIn.rpe) / 2).rounded())))
 
-            let _: EntityRecord<WorkoutSessionLog> = try await dataService.update(.workoutLogs, id: logID, patch: .object(patch))
+            let saved: EntityRecord<WorkoutSessionLog> = try await dataService.update(.workoutLogs, id: logID, patch: .object(patch))
             try await synchronizeDailyLog(
                 dataService: dataService,
                 workout: workout,
@@ -367,6 +368,7 @@ final class WorkoutSessionViewModel: ObservableObject {
                 pain: checkIn.pain,
                 painNotes: checkIn.painNotes
             )
+            completedRecord = saved.metadata
             stage = .summary
         } catch {
             self.error = AppError.from(error, title: "Could not complete workout")
@@ -556,5 +558,59 @@ final class WorkoutSessionViewModel: ObservableObject {
     private func fail(title: String, message: String) {
         error = AppError(title: title, message: message)
         stage = .session
+    }
+}
+
+
+/// Read-only summary guidance: completion is already saved before this model runs.
+@MainActor
+final class WorkoutRecoveryGuidanceModel: ObservableObject {
+    @Published private(set) var text: String?
+    @Published private(set) var error: String?
+    @Published private(set) var generating = false
+    @Published private(set) var session: BackendRow?
+    private let repository: RecoveryRepository
+    private let ai: AIResponding
+    private let active: (UUID) -> Bool
+    private var generation = UUID()
+    init(repository: RecoveryRepository, ai: AIResponding, active: @escaping (UUID) -> Bool) {
+        self.repository = repository; self.ai = ai; self.active = active
+    }
+    func stop() { generation = UUID(); generating = false; text = nil; error = nil; session = nil }
+    func generate(user: ExecuteUser, record: BackendRow) async {
+        guard !generating, active(user.id) else { return }
+        let request = UUID(); generation = request; generating = true; text = nil; error = nil
+        defer { if request == generation { generating = false } }
+        do {
+            guard WorkoutRecoveryPrompt.owned(record, by: user), WorkoutRecoveryPrompt.completed(record) else { throw CancellationError() }
+            session = record
+            let identity = try repository.identity(for: user)
+            func validate() throws {
+                guard self.generation == request, self.active(user.id) else { throw CancellationError() }
+                try self.repository.validate(identity)
+            }
+            var context: [EntityTable: [BackendRow]] = [:]
+            for table in [EntityTable.workoutLogs, .aiPlans, .userProfiles, .workoutProfiles, .nutritionProfiles, .goals, .injuryProfiles, .foodLogs, .dailyLogs, .readinessCheckIns] {
+                try validate()
+                let rows = try await repository.rows(table, fields: [:], identity: identity)
+                try validate()
+                context[table] = rows.filter { WorkoutRecoveryPrompt.owned($0, by: user) }
+            }
+            guard let fresh = context[.workoutLogs]?.first(where: { $0.id == record.id }), WorkoutRecoveryPrompt.completed(fresh) else { throw CancellationError() }
+            session = fresh
+            let prompt = try WorkoutRecoveryPrompt.request(session: fresh, records: context)
+            try validate()
+            let result = try await ai.textResponse(prompt)
+            try validate()
+            let clean = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty, clean.split(whereSeparator: { $0.isWhitespace }).count <= 80 else {
+                throw AppError(title: "Guidance unavailable", message: "Response did not match the summary contract.")
+            }
+            text = clean
+        } catch {
+            guard request == generation, active(user.id), !Task.isCancelled else { return }
+            if error is CancellationError { self.error = "Reload this workout before requesting guidance." }
+            else { self.error = "Personalized guidance is unavailable. Your saved workout is unchanged." }
+        }
     }
 }

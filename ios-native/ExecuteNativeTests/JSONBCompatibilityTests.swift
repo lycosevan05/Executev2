@@ -1702,3 +1702,130 @@ final class WorkoutHistoryTests: XCTestCase {
         XCTAssertTrue(model.workoutHistory.isEmpty); XCTAssertNil(model.activePlan); XCTAssertEqual(data.writes, 0)
     }
 }
+
+
+@MainActor final class WorkoutRecoveryGuidanceTests: XCTestCase {
+    let user = ExecuteUser(id: UUID(), email: "summary@example.invalid", displayName: "Fixture")
+    private func setup() -> (WorkoutGuidanceRepository, WorkoutGuidanceAI, BackendRow) {
+        let repo = WorkoutGuidanceRepository(), ai = WorkoutGuidanceAI()
+        let record = PreferenceData.row(["status": .string("completed"), "date": .string("2026-11-13"), "workout_name": .string("Saved rows"), "session_rpe": .number(6), "pain_flag": .string("No"), "user_notes": .string("Saved session note")], owner: user.id)
+        repo.records[.workoutLogs] = [record]
+        return (repo, ai, record)
+    }
+    func testFreshContextSessionAndSavedPlanDistinctionWithoutAnyWrite() async throws {
+        let (repo, ai, record) = setup()
+        repo.records[.userProfiles] = [PreferenceData.row(["weight_kg": .number(80), "coaching_style": .string("structured")], owner: user.id)]
+        repo.records[.nutritionProfiles] = [PreferenceData.row(["protein_target_g": .number(175), "allergies": .string("peanuts")], owner: user.id)]
+        repo.records[.goals] = [PreferenceData.row(["status": .string("active"), "title": .string("Build strength")], owner: user.id)]
+        repo.records[.injuryProfiles] = [PreferenceData.row(["is_active": .bool(true), "limitation": .string("Knee")], owner: user.id)]
+        repo.records[.workoutLogs]?.append(PreferenceData.row(["status": .string("in_progress"), "date": .string("2026-11-12"), "workout_name": .string("DRAFT_DO_NOT_COUNT")], owner: user.id))
+        repo.records[.workoutLogs]?.append(PreferenceData.row(["status": .string("completed"), "date": .string("2026-11-16"), "workout_name": .string("FUTURE_DO_NOT_COUNT")], owner: user.id))
+        repo.records[.userProfiles]?.append(PreferenceData.row(["private": .string("FOREIGN_DO_NOT_SEND")], owner: UUID()))
+        let before = repo.records
+        let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { $0 == self.user.id })
+        await m.generate(user: user, record: record)
+        XCTAssertEqual(m.text, ai.response); XCTAssertNil(m.error); XCTAssertFalse(m.generating)
+        let prompt = try XCTUnwrap(ai.requests.first?.prompt)
+        for value in ["Saved rows", "Saved session note", "175", "peanuts", "structured", "Build strength", "Knee", "session_rpe", "at most 80 words", "never proof of completion"] { XCTAssertTrue(prompt.contains(value), value) }
+        for value in ["DRAFT_DO_NOT_COUNT", "FUTURE_DO_NOT_COUNT", "FOREIGN_DO_NOT_SEND"] { XCTAssertFalse(prompt.contains(value), value) }
+        XCTAssertEqual(repo.records, before); XCTAssertEqual(repo.writes, 0)
+    }
+    func testProviderFailureIsRedactedAndRetryDoesNotRewriteCompletion() async {
+        let (repo, ai, record) = setup(); ai.fail = true
+        let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { _ in true })
+        await m.generate(user: user, record: record)
+        XCTAssertNil(m.text); XCTAssertNotNil(m.error); XCTAssertFalse(m.error?.contains("PRIVATE_PROVIDER_DETAIL") ?? true)
+        ai.fail = false; await m.generate(user: user, record: record)
+        XCTAssertEqual(ai.requests.count, 2); XCTAssertEqual(m.text, ai.response); XCTAssertNil(m.error); XCTAssertEqual(repo.writes, 0)
+    }
+    func testBlankOrOversizeReplyUsesUnavailableStateAndCanRetry() async {
+        let (repo, ai, record) = setup(); let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { _ in true })
+        for value in ["  ", String(repeating: "word ", count: 81)] {
+            ai.response = value; await m.generate(user: user, record: record)
+            XCTAssertNil(m.text); XCTAssertNotNil(m.error); XCTAssertFalse(m.generating)
+        }
+        XCTAssertEqual(repo.writes, 0)
+    }
+    func testForeignOrDraftSessionNeverCallsAI() async {
+        let (repo, ai, record) = setup(); let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { _ in true })
+        let foreign = PreferenceData.row(record.data.objectValue!, owner: UUID())
+        await m.generate(user: user, record: foreign)
+        let draft = PreferenceData.row(["status": .string("in_progress")], owner: user.id)
+        await m.generate(user: user, record: draft)
+        XCTAssertTrue(ai.requests.isEmpty); XCTAssertEqual(repo.writes, 0)
+    }
+    func testSessionRevokedDuringReadNeverCallsAI() async {
+        let (repo, ai, record) = setup(); let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { _ in true })
+        repo.afterRead = { repo.valid = false }
+        await m.generate(user: user, record: record)
+        XCTAssertTrue(ai.requests.isEmpty); XCTAssertNil(m.text); XCTAssertEqual(repo.writes, 0)
+    }
+    func testLateAIResultAfterStopCannotRestoreOldAccountGuidance() async {
+        let (repo, ai, record) = setup(); let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { _ in true })
+        ai.beforeReply = { m.stop() }
+        await m.generate(user: user, record: record)
+        XCTAssertNil(m.text); XCTAssertNil(m.error); XCTAssertNil(m.session); XCTAssertFalse(m.generating)
+    }
+    func testDuplicateRequestWhileGeneratingIsIgnored() async {
+        let (repo, ai, record) = setup(); let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { _ in true })
+        ai.beforeReply = { await m.generate(user: self.user, record: record) }
+        await m.generate(user: user, record: record)
+        XCTAssertEqual(ai.requests.count, 1); XCTAssertEqual(m.text, ai.response); XCTAssertEqual(repo.writes, 0)
+    }
+    func testPainWarningIsIndependentOfProviderResult() async {
+        let (repo, ai, _) = setup(); ai.fail = true
+        let record = PreferenceData.row(["status": .string("completed"), "pain_flag": .string("Yes, concerning")], owner: user.id)
+        repo.records[.workoutLogs] = [record]
+        let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { _ in true })
+        await m.generate(user: user, record: record)
+        XCTAssertTrue(WorkoutRecoveryPrompt.painWarning(m.session)?.contains("before your next session") == true)
+        XCTAssertNotNil(m.error); XCTAssertNil(WorkoutRecoveryPrompt.painWarning(nil))
+    }
+    func testReadFailureDoesNotInvokeProviderOrWrite() async {
+        let (repo, ai, record) = setup(); repo.failRead = true
+        let m = WorkoutRecoveryGuidanceModel(repository: repo, ai: ai, active: { _ in true })
+        await m.generate(user: user, record: record)
+        XCTAssertTrue(ai.requests.isEmpty); XCTAssertNotNil(m.error); XCTAssertEqual(repo.writes, 0)
+    }
+    func testSuccessfulCompletionExposesAcknowledgedRecordAndFeedbackForSummary() async throws {
+        let data = PreferenceData()
+        let plan = PreferenceData.row(["name": .string("Rows"), "date": .string(HomeDate.todayString), "exercises": .array([.object(["name": .string("Row"), "sets": .number(1), "reps": .number(8)])])], owner: user.id)
+        data.rows[.workoutPlans] = [plan]; data.replace(.userProfiles, ["units": .string("metric"), "weight_kg": .number(80)], owner: user.id)
+        let route = WorkoutSessionRoute(workoutID: plan.id, logID: nil, startedAt: nil, sourcePlanID: nil, generationBatchID: nil, weeklyPlanID: nil, isResuming: false)
+        let m = WorkoutSessionViewModel(route: route, dataService: data, router: AppRouter())
+        await m.start(for: user); m.updateNotes("Saved completion note")
+        var check = WorkoutSessionCheckIn(); check.feeling = "Good"; check.exertionLevel = "Moderate"; check.performance = "As expected"; check.pain = "No"
+        await m.complete(using: check)
+        XCTAssertEqual(m.stage, .summary); XCTAssertEqual(m.completedRecord?.id, data.rows[.workoutLogs]?.first?.id)
+        XCTAssertEqual(m.completedRecord?.data["status"], .string("completed")); XCTAssertEqual(m.summary?.notes, "Saved completion note"); XCTAssertEqual(m.summary?.feeling, "Good")
+    }
+}
+
+@MainActor private final class WorkoutGuidanceRepository: RecoveryRepository {
+    var records: [EntityTable: [BackendRow]] = [:]
+    var valid = true, failRead = false
+    var writes = 0
+    var afterRead: (() -> Void)?
+    func identity(for user: ExecuteUser) throws -> RecoveryIdentity { guard valid else { throw CancellationError() }; return RecoveryIdentity(user: user, token: "fixture-only") }
+    func validate(_ identity: RecoveryIdentity) throws { guard valid else { throw CancellationError() } }
+    func rows(_ table: EntityTable, fields: [String: String], identity: RecoveryIdentity) async throws -> [BackendRow] {
+        if failRead { throw URLError(.notConnectedToInternet) }
+        let rows = records[table] ?? []; afterRead?(); return rows
+    }
+    func recent(_ table: EntityTable, through date: String, identity: RecoveryIdentity) async throws -> [BackendRow] { XCTFail("Guidance reads complete owned context"); return [] }
+    func write(_ table: EntityTable, id: UUID?, patch: JSONValue, identity: RecoveryIdentity) async throws -> BackendRow {
+        writes += 1; XCTFail("Summary guidance must never write"); throw CancellationError()
+    }
+}
+@MainActor private final class WorkoutGuidanceAI: AIResponding {
+    var requests: [LLMRequest] = []
+    var fail = false
+    var response = "Consider recovery after Saved rows, consistent with your recorded strength goal."
+    var beforeReply: (() async -> Void)?
+    func textResponse(_ request: LLMRequest) async throws -> String {
+        requests.append(request); await beforeReply?()
+        if fail { throw AppError(title: "Provider error", message: "PRIVATE_PROVIDER_DETAIL") }
+        return response
+    }
+    func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response { XCTFail("Use existing text boundary once"); throw CancellationError() }
+}

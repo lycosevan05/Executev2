@@ -174,7 +174,7 @@ struct TrainDashboardView: View {
             TrainMessageCard(text: "Completed workouts will appear here.")
         } else {
             ForEach(model.workoutHistory) { record in
-                TrainHistoryRow(log: record.payload, expanded: expandedLogID == record.id) {
+                TrainHistoryRow(log: record.payload, record: record.metadata, expanded: expandedLogID == record.id) {
                     expandedLogID = expandedLogID == record.id ? nil : record.id
                 }
             }
@@ -303,7 +303,9 @@ private struct TrainLibraryRow: View {
 }
 
 private struct TrainHistoryRow: View {
+    @State private var guidancePresented = false
     let log: TrainWorkoutLog
+    let record: BackendRow
     let expanded: Bool
     let toggle: () -> Void
 
@@ -329,6 +331,10 @@ private struct TrainHistoryRow: View {
             .accessibilityHint("Shows saved exercises, sets, reps, weights and notes.")
             if expanded {
                 Divider()
+                Button("Review recovery guidance") { guidancePresented = true }
+                    .font(ExecuteTypography.label(13).weight(.semibold))
+                    .padding(ExecuteSpacing.sm)
+                    .frame(minHeight: 44)
                 TrainHistoryDetailView(details: TrainHistoryDetails(log: log))
                     .padding(ExecuteSpacing.sm)
             }
@@ -336,6 +342,14 @@ private struct TrainHistoryRow: View {
         .background(ExecuteColor.parchmentLight.opacity(0.94))
         .clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.cardRadius, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: ExecuteHomeStyle.cardRadius, style: .continuous).stroke(ExecuteColor.warmBorder.opacity(0.48), lineWidth: 1) }
+        .sheet(isPresented: $guidancePresented) {
+            NavigationStack {
+                ScrollView { WorkoutRecoveryGuidanceView(record: record).padding(ExecuteSpacing.md) }
+                    .navigationTitle("Recovery guidance")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { guidancePresented = false } } }
+            }
+        }
     }
 }
 
@@ -1147,6 +1161,10 @@ private struct WorkoutSessionSummaryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(ExecuteSpacing.md)
                 }
+                if let record = model.completedRecord {
+                    WorkoutRecoveryGuidanceView(record: record)
+                        .padding(.horizontal, ExecuteSpacing.md)
+                }
                 Spacer(minLength: ExecuteSpacing.md)
                 Button(action: model.finishSummary) {
                     Text("Back to Train")
@@ -1276,5 +1294,60 @@ private struct WorkoutCustomExerciseSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+
+private struct WorkoutRecoveryGuidanceView: View {
+    let record: BackendRow
+    @EnvironmentObject private var environment: AppEnvironment
+    var body: some View { WorkoutRecoveryGuidanceScreen(record: record, environment: environment).id(record.id) }
+}
+
+private struct WorkoutRecoveryGuidanceScreen: View {
+    let record: BackendRow
+    @ObservedObject private var appState: AppState
+    @StateObject private var model: WorkoutRecoveryGuidanceModel
+    init(record: BackendRow, environment: AppEnvironment) {
+        self.record = record
+        _appState = ObservedObject(wrappedValue: environment.appState)
+        _model = StateObject(wrappedValue: WorkoutRecoveryGuidanceModel(repository: environment.makeRecoveryRepository(),
+            ai: environment.aiService ?? MockAIService(), active: { environment.appState.allowsDraftWrites(for: $0) }))
+    }
+    private var user: ExecuteUser? {
+        if case .signedIn(let user) = appState.launchState { return user }
+        return nil
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
+            Label("Recovery guidance", systemImage: "sparkles").font(ExecuteTypography.label(15).weight(.bold)).accessibilityAddTraits(.isHeader)
+            Text(record.data["workout_name"]?.stringValue ?? "Saved workout").font(ExecuteTypography.body(14))
+            if let date = record.data["date"]?.stringValue { Text("Session date: \(date)").font(ExecuteTypography.caption(12)) }
+            Text("Uses your current profile and activity recorded through this workout’s date.").font(ExecuteTypography.caption(12))
+            if let warning = WorkoutRecoveryPrompt.painWarning(model.session ?? record) {
+                Text(warning).font(ExecuteTypography.body(14).weight(.semibold)).accessibilityLabel(warning)
+            }
+            if model.generating { ProgressView("Generating recovery guidance…") }
+            if let text = model.text {
+                Text(text).font(ExecuteTypography.body(15)).textSelection(.enabled)
+                Text("AI-generated guidance").font(ExecuteTypography.caption(11))
+            }
+            if let error = model.error {
+                Text(error).font(ExecuteTypography.body(13))
+                Text("General recovery guidance").font(ExecuteTypography.label(13).weight(.semibold))
+                Text(WorkoutRecoveryPrompt.fallback).font(ExecuteTypography.body(14))
+                Button("Retry guidance") { if let user { Task { await model.generate(user: user, record: record) } } }
+                    .frame(minHeight: 44)
+                    .disabled(model.generating)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(ExecuteSpacing.md)
+        .background(ExecuteColor.chartreuse.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .task(id: user?.id) { model.stop(); if let user { await model.generate(user: user, record: record) } }
+        .onChange(of: user?.id) { _ in model.stop() }
+        .onDisappear { model.stop() }
     }
 }
