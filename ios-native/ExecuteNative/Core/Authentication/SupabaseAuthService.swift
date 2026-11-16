@@ -6,6 +6,13 @@ final class SupabaseAuthService: AuthServicing {
     private let client: SupabaseClient
     private let configuration: AppConfiguration
     private let operations = AuthOperationQueue()
+    private struct SessionAcknowledgment {
+        let userID: UUID
+        let digest: String
+    }
+    private var pendingCallbacks: [String: SessionAcknowledgment] = [:]
+    private var callbackOrder: [String] = []
+    private var completedCallbacks: Set<String> = []
 
     init(client: SupabaseClient, configuration: AppConfiguration) {
         self.client = client
@@ -34,39 +41,88 @@ final class SupabaseAuthService: AuthServicing {
     func verifyEmailOTP(email: String, token: String) async throws -> ExecuteUser {
         try await operations.enqueue {
             let response = try await self.client.auth.verifyOTP(email: email, token: token, type: .email)
-            guard response.session != nil else {
+            guard let session = response.session else {
                 throw AppError(title: "Sign-in incomplete", message: "The verification did not create a session. Request a new code and try again.")
             }
-            let persisted: Session
-            do { persisted = try await self.client.auth.session }
-            catch {
-                throw AppError(title: "Sign-in could not be saved", message: "Your session could not be saved securely on this device. Sign-in has not completed.")
-            }
-            guard persisted.user.id == response.user.id else {
-                throw AppError(title: "Sign-in changed", message: "Another sign-in replaced this attempt. Close and reopen Execute to continue.")
-            }
-            return Self.user(from: persisted.user)
+            let user = try await self.acknowledgedUser(matching: Self.acknowledgment(session))
+            self.fencePendingCallbacks()
+            return user
         }
     }
 
     func authorizationURL(for provider: OAuthProvider) async throws -> URL {
         let supabaseProvider: Provider = provider == .apple ? .apple : .google
-        return try client.auth.getOAuthSignInURL(provider: supabaseProvider, redirectTo: configuration.callbackURL)
-    }
-
-    func handleCallbackURL(_ url: URL) async throws -> ExecuteUser? {
-        try await operations.enqueue {
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            if let code = components?.queryItems?.first(where: { $0.name == "code" })?.value {
-                let session = try await self.client.auth.exchangeCodeForSession(authCode: code)
-                return Self.user(from: session.user)
-            }
-            return try await self.restoredUser()
+        return try await operations.enqueue {
+            self.fencePendingCallbacks()
+            // The SDK writes its PKCE verifier here. Do not let an older exchange clear a newer verifier.
+            return try self.client.auth.getOAuthSignInURL(provider: supabaseProvider, redirectTo: self.configuration.callbackURL)
         }
     }
 
+    func handleCallbackURL(_ url: URL) async throws -> ExecuteUser? {
+        guard let identity = try callbackIdentity(url) else { return nil }
+        let code = try AuthCallbackInput.code(url, expected: configuration.callbackURL)
+        do {
+            return try await operations.enqueue {
+                guard !self.completedCallbacks.contains(identity) else { return nil }
+                if self.pendingCallbacks[identity] == nil {
+                    let session = try await self.client.auth.exchangeCodeForSession(authCode: code)
+                    self.pendingCallbacks[identity] = Self.acknowledgment(session)
+                    self.callbackOrder.append(identity)
+                    if self.callbackOrder.count > 32 {
+                        let expired = self.callbackOrder.removeFirst()
+                        self.pendingCallbacks[expired] = nil
+                        self.completedCallbacks.remove(expired)
+                    }
+                }
+                // A returned Session is not proof that the SDK stored it. A retry verifies the
+                // same acknowledgment without exchanging the one-use code a second time.
+                let user = try await self.acknowledgedUser(matching: self.pendingCallbacks[identity]!)
+                self.pendingCallbacks[identity] = nil
+                self.completedCallbacks.insert(identity)
+                return user
+            }
+        } catch let error as AppError {
+            throw error
+        } catch {
+            // SDK/provider errors may contain callback details. Never echo them to UI or logs.
+            throw AppError(title: "Sign-in could not be completed", message: "The sign-in response could not be verified or the connection was interrupted. Start sign-in again.")
+        }
+    }
+
+    func callbackIdentity(_ url: URL) throws -> String? {
+        try AuthCallbackInput.identity(url, expected: configuration.callbackURL)
+    }
+
+    private static func acknowledgment(_ session: Session) -> SessionAcknowledgment {
+        SessionAcknowledgment(userID: session.user.id, digest: AuthCallbackInput.digest(session.accessToken + "\u{0}" + session.refreshToken))
+    }
+
+    private func acknowledgedUser(matching expected: SessionAcknowledgment) async throws -> ExecuteUser {
+        let persisted: Session
+        do { persisted = try await client.auth.session }
+        catch {
+            throw AppError(title: "Sign-in could not be saved", message: "Your session could not be saved securely on this device. Start sign-in again.")
+        }
+        guard persisted.user.id == expected.userID, Self.acknowledgment(persisted).digest == expected.digest else {
+            throw AppError(title: "Sign-in changed", message: "The saved session did not match this sign-in. Start sign-in again.")
+        }
+        return Self.user(from: persisted.user)
+    }
+
     func signOut() async throws {
-        try await operations.enqueue { try await self.client.auth.signOut() }
+        try await operations.enqueue {
+            self.fencePendingCallbacks()
+            try await self.client.auth.signOut()
+            guard self.client.auth.currentSession == nil else {
+                throw AppError(title: "Sign-out could not be saved", message: "The saved session is still present on this device. Try signing out again.")
+            }
+        }
+    }
+
+    private func fencePendingCallbacks() {
+        completedCallbacks.formUnion(pendingCallbacks.keys)
+        pendingCallbacks.removeAll()
     }
 
     private static func user(from user: User) -> ExecuteUser {

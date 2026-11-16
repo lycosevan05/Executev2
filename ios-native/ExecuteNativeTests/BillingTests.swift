@@ -539,22 +539,36 @@ private final class DelayedBillingAuth: AuthServicing {
     var callbackGate: BillingGate?
     var signOutGate: BillingGate?
     var signOutCount = 0
+    var callbackCount = 0
+    var callbackError: Error?
+    var callbackUser: ExecuteUser? = billingUserA
+    var restoredUser: ExecuteUser? = billingUserA
+    var authorizationGate: BillingGate?
 
     func restoreSession() async throws -> ExecuteUser? {
         let failure = restoreError
         if let gate = restoreGate { restoreGate = nil; await gate.suspend() }
         if let failure { throw failure }
-        return billingUserA
+        return restoredUser
     }
     func sendEmailOTP(to email: String) async throws {}
     func verifyEmailOTP(email: String, token: String) async throws -> ExecuteUser {
         if let gate = verifyGate { verifyGate = nil; await gate.suspend() }
         return email == billingUserA.email ? billingUserA : billingUserB
     }
-    func authorizationURL(for provider: OAuthProvider) async throws -> URL { URL(string: "https://example.com")! }
+    func authorizationURL(for provider: OAuthProvider) async throws -> URL {
+        if let gate = authorizationGate { authorizationGate = nil; await gate.suspend() }
+        return URL(string: "https://example.com")!
+    }
+    func callbackIdentity(_ url: URL) throws -> String? {
+        try AuthCallbackInput.identity(url, expected: URL(string: "com.executelabs.execute.native-dev://login-callback")!)
+    }
     func handleCallbackURL(_ url: URL) async throws -> ExecuteUser? {
+        callbackCount += 1
+        let failure = callbackError
         if let gate = callbackGate { callbackGate = nil; await gate.suspend() }
-        return billingUserA
+        if let failure { throw failure }
+        return callbackUser
     }
     func signOut() async throws {
         signOutCount += 1
@@ -714,5 +728,93 @@ final class BillingAuthenticationRaceTests: XCTestCase {
         do { try await queue.enqueue { throw offline }; XCTFail("Expected network error") } catch {}
         let email = try await queue.enqueue { billingUserB.email }
         XCTAssertEqual(email, billingUserB.email)
+    }
+}
+
+@MainActor final class AuthCallbackStateTests: XCTestCase {
+    private let url = URL(string: "com.executelabs.execute.native-dev://login-callback?code=fixture-code")!
+    private func state(_ auth: DelayedBillingAuth, router: AppRouter = AppRouter()) -> AppState {
+        AppState(authService: auth, cache: UserScopedCacheStore(suiteName: "CallbackState.\(UUID())"), router: router,
+            subscriptionService: MockSubscriptionService(), configurationError: nil)
+    }
+    func testUnexpectedLinksDoNotInvalidatePendingVerification() async throws {
+        let auth = DelayedBillingAuth(), gate = BillingGate(); let model = state(auth)
+        await model.start(); auth.verifyGate = gate
+        let verify = Task { try await model.verifyEmailOTP(email: billingUserB.email, token: "fixture") }
+        await gate.waitUntilEntered()
+        for text in ["https://example.invalid/?code=fixture-code", "com.executelabs.execute.native-dev://login-callback?error=denied", "com.executelabs.execute.native-dev://login-callback?code=unexpected-fixture"] {
+            await model.handleOpenURL(URL(string: text)!)
+        }
+        gate.release(); try await verify.value
+        XCTAssertEqual(model.launchState, .signedIn(billingUserB)); XCTAssertEqual(auth.callbackCount, 0)
+    }
+    func testMalformedIdleCallbackShowsSafeFailureWithoutCallingSDK() async {
+        let auth = DelayedBillingAuth(); auth.restoredUser = nil
+        let model = state(auth); await model.start()
+        await model.handleOpenURL(URL(string: "com.executelabs.execute.native-dev://login-callback?error=denied&error_description=private-fixture-detail")!)
+        guard case let .failed(error) = model.launchState else { return XCTFail("Expected a safe sign-in failure") }
+        XCTAssertFalse(error.message.contains("private-fixture-detail")); XCTAssertEqual(auth.callbackCount, 0)
+    }
+    func testDuplicateDeliveryDoesNotInvalidateOriginalCallback() async {
+        let auth = DelayedBillingAuth(), gate = BillingGate(); auth.callbackGate = gate
+        let model = state(auth), url = url
+        let first = Task { await model.handleOpenURL(url) }; await gate.waitUntilEntered()
+        await model.handleOpenURL(url)
+        XCTAssertEqual(auth.callbackCount, 1)
+        gate.release(); await first.value
+        XCTAssertEqual(model.launchState, .signedIn(billingUserA))
+    }
+    func testCompletedCallbackCannotReviveAccountAfterSignOut() async {
+        let auth = DelayedBillingAuth()
+        let actual = state(auth); await actual.handleOpenURL(url); await actual.signOut()
+        await actual.handleOpenURL(url)
+        XCTAssertEqual(actual.launchState, .signedOut); XCTAssertEqual(auth.callbackCount, 1)
+        XCTAssertFalse(actual.premiumState.isPremium)
+    }
+    func testStaleCallbackResultIsRememberedWithoutActivatingAfterNewAccount() async throws {
+        let auth = DelayedBillingAuth(), gate = BillingGate(); auth.callbackGate = gate
+        let model = state(auth), url = url
+        let callback = Task { await model.handleOpenURL(url) }; await gate.waitUntilEntered()
+        try await model.verifyEmailOTP(email: billingUserB.email, token: "fixture")
+        gate.release(); await callback.value
+        XCTAssertEqual(model.launchState, .signedIn(billingUserB))
+        await model.signOut(); await model.handleOpenURL(url)
+        XCTAssertEqual(model.launchState, .signedOut); XCTAssertEqual(auth.callbackCount, 1)
+    }
+    func testFailedCallbackPreservesValidAccountAndNavigation() async {
+        let auth = DelayedBillingAuth(), router = AppRouter(); let model = state(auth, router: router)
+        await model.start(); router.navigate(to: .profile(section: nil))
+        auth.callbackError = AppError(title: "Fixture error", message: "Non-secret fixture")
+        await model.handleOpenURL(url)
+        XCTAssertEqual(model.launchState, .signedIn(billingUserA)); XCTAssertTrue(model.allowsDraftWrites(for: billingUserA.id))
+        XCTAssertEqual(router.pathBinding(for: .home).wrappedValue, [.profile(section: nil)])
+    }
+    func testSuccessfulAccountSwitchClearsPreviousAccountNavigation() async {
+        let auth = DelayedBillingAuth(), router = AppRouter(); let model = state(auth, router: router)
+        await model.start(); router.select(.nutrition); router.navigate(to: .profile(section: nil))
+        auth.callbackUser = billingUserB; await model.handleOpenURL(url)
+        XCTAssertEqual(model.launchState, .signedIn(billingUserB)); XCTAssertEqual(router.selectedTab, .home)
+        XCTAssertTrue(router.pathBinding(for: .nutrition).wrappedValue.isEmpty)
+    }
+    func testNewAuthenticationPreventsLateAuthorizationSheet() async throws {
+        let auth = DelayedBillingAuth(), gate = BillingGate(); auth.authorizationGate = gate
+        let model = state(auth)
+        let start = Task { try await model.authorizationURL(for: .google) }; await gate.waitUntilEntered()
+        try await model.verifyEmailOTP(email: billingUserB.email, token: "fixture")
+        gate.release()
+        do { _ = try await start.value; XCTFail("Superseded authorization started") } catch is CancellationError {} catch { XCTFail("Unexpected error") }
+        XCTAssertEqual(model.launchState, .signedIn(billingUserB))
+    }
+    func testColdLaunchRestoreDoesNotInvalidateCallbackAlreadyInProgress() async {
+        let auth = DelayedBillingAuth(), gate = BillingGate(); auth.restoredUser = nil; auth.callbackGate = gate
+        let model = state(auth), url = url
+        let callback = Task { await model.handleOpenURL(url) }; await gate.waitUntilEntered()
+        await model.start(); gate.release(); await callback.value
+        XCTAssertEqual(model.launchState, .signedIn(billingUserA))
+    }
+    func testEmptyColdLaunchCallbackDoesNotLeaveLaunchingForever() async {
+        let auth = DelayedBillingAuth(); auth.callbackUser = nil
+        let model = state(auth); await model.handleOpenURL(url)
+        XCTAssertEqual(model.launchState, .signedOut)
     }
 }

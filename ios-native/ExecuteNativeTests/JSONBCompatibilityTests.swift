@@ -918,47 +918,80 @@ private final class AuthFixtureStorage: AuthLocalStorage, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: Data] = [:]
     private var attempts = 0
-    private let rejectWrites: Bool
+    private var rejectWrites: Bool
+    private var rejectRemovals = false
+    private var hideSessionReads = false
+    private var hideReadsAfterWrite = false
     init(rejectWrites: Bool = false) { self.rejectWrites = rejectWrites }
     var writeAttempts: Int { lock.lock(); defer { lock.unlock() }; return attempts }
+    func configure(rejectWrites: Bool? = nil, rejectRemovals: Bool? = nil, hideReads: Bool? = nil, hideAfterWrite: Bool? = nil) {
+        lock.lock(); defer { lock.unlock() }
+        if let rejectWrites { self.rejectWrites = rejectWrites }
+        if let rejectRemovals { self.rejectRemovals = rejectRemovals }
+        if let hideReads { hideSessionReads = hideReads }
+        if let hideAfterWrite { hideReadsAfterWrite = hideAfterWrite }
+    }
     func store(key: String, value: Data) throws {
         lock.lock(); defer { lock.unlock() }
         attempts += 1
         if rejectWrites { throw AppError(title: "Fixture storage denied", message: "Non-secret fixture") }
         values[key] = value
+        if key == "native-auth-fixture", hideReadsAfterWrite { hideSessionReads = true }
     }
     func retrieve(key: String) throws -> Data? {
-        lock.lock(); defer { lock.unlock() }; return values[key]
+        lock.lock(); defer { lock.unlock() }
+        if key == "native-auth-fixture", hideSessionReads { return nil }
+        return values[key]
     }
     func remove(key: String) throws {
-        lock.lock(); defer { lock.unlock() }; values[key] = nil
+        lock.lock(); defer { lock.unlock() }
+        if rejectRemovals, key == "native-auth-fixture" { throw URLError(.cannotRemoveFile) }
+        values[key] = nil
     }
 }
 
 private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
     static let userID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+    static let callbackUserID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+    static let traffic = CallbackFixtureTraffic()
     override class func canInit(with request: URLRequest) -> Bool {
-        ["auth-session.invalid", "auth-user-only.invalid"].contains(request.url?.host ?? "")
+        let host = request.url?.host ?? ""
+        return ["auth-session.invalid", "auth-user-only.invalid"].contains(host) || host.hasSuffix(".auth-fixture.invalid")
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        guard let url = request.url, url.path == "/auth/v1/verify" else {
+        guard let url = request.url, ["/auth/v1/verify", "/auth/v1/token", "/auth/v1/logout"].contains(url.path) else {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
-        let user: [String: Any] = ["id": Self.userID.uuidString, "aud": "authenticated", "role": "authenticated",
+        let isCallback = url.path == "/auth/v1/token"
+        let callbackNumber = isCallback ? Self.traffic.record(url.host!) : 0
+        let verifyNumber = url.path == "/auth/v1/verify" ? Self.traffic.record(url.host! + ".verify") : 0
+        let failed = isCallback && (callbackNumber > 1 || url.host!.hasPrefix("provider-error."))
+        let id = isCallback && !url.host!.hasPrefix("same-owner.") ? Self.callbackUserID : Self.userID
+        let user: [String: Any] = ["id": id.uuidString, "aud": "authenticated", "role": "authenticated",
             "email": "fixture@example.invalid", "app_metadata": [:], "user_metadata": [:],
             "created_at": "2026-11-09T00:00:00Z", "updated_at": "2026-11-09T00:00:00Z"]
-        let body: [String: Any] = url.host == "auth-user-only.invalid" ? user : [
-            "access_token": "fixture-access-not-a-real-token", "refresh_token": "fixture-refresh-not-a-real-token",
+        let session: [String: Any] = [
+            "access_token": isCallback ? "fixture-oauth-access-not-real" : "fixture-access-\(verifyNumber)-not-real",
+            "refresh_token": isCallback ? "fixture-oauth-refresh-not-real" : "fixture-refresh-\(verifyNumber)-not-real",
             "token_type": "bearer", "expires_in": 3600, "expires_at": Int(Date().timeIntervalSince1970) + 3600, "user": user]
+        let body: [String: Any] = failed ? ["error": "invalid_grant", "error_description": "private-fixture-response-must-not-escape"]
+            : url.path == "/auth/v1/logout" ? [:] : url.host == "auth-user-only.invalid" ? user : session
         do {
-            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            let response = HTTPURLResponse(url: url, statusCode: failed ? 400 : 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: try JSONSerialization.data(withJSONObject: body))
             client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() { }
+}
+
+private final class CallbackFixtureTraffic: @unchecked Sendable {
+    private let lock = NSLock()
+    private var counts: [String: Int] = [:]
+    func record(_ host: String) -> Int { lock.lock(); defer { lock.unlock() }; counts[host, default: 0] += 1; return counts[host]! }
+    func count(_ host: String) -> Int { lock.lock(); defer { lock.unlock() }; return counts[host, default: 0] }
 }
 
 @MainActor
@@ -1320,5 +1353,135 @@ final class DailyActivityChecklistTests: XCTestCase {
         XCTAssertFalse(OAuthCoordinator.isUserCancellation(NSError(domain: "com.apple.AuthenticationServices.WebAuthenticationSession", code: 2)))
         XCTAssertFalse(OAuthCoordinator.isUserCancellation(NSError(domain: "unrelated-domain", code: 1)))
         XCTAssertFalse(OAuthCoordinator.isUserCancellation(URLError(.cancelled)))
+    }
+}
+
+@MainActor final class AuthCallbackTests: XCTestCase {
+    private let expected = URL(string: "fixture://login-callback")!
+    private let callback = URL(string: "fixture://login-callback?code=fixture-only-code")!
+    private func service(storage: AuthFixtureStorage, kind: String = "callback", host: String? = nil) -> (SupabaseAuthService, String) {
+        let host = host ?? "\(kind).\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let url = URL(string: "https://\(host)")!
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [AuthFixtureProtocol.self]
+        let client = SupabaseClient(supabaseURL: url, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: storage, storageKey: "native-auth-fixture", autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: URLSession(configuration: config))))
+        return (SupabaseAuthService(client: client, configuration: AppConfiguration(supabaseURL: url, supabaseAnonKey: "public-fixture-only", revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "fixture")), host)
+    }
+    func testCallbackOriginAndCanonicalIdentityRejectOtherRoutesAndCredentials() throws {
+        for text in ["https://login-callback?code=fixture", "other://login-callback?code=fixture", "fixture://login-callback.evil?code=fixture", "fixture://login-callback/path?code=fixture", "fixture://user@login-callback?code=fixture", "fixture://login-callback:80?code=fixture"] {
+            let url = try XCTUnwrap(URL(string: text)); XCTAssertNil(try AuthCallbackInput.identity(url, expected: expected))
+        }
+        let equivalent = URL(string: "FIXTURE://LOGIN-CALLBACK/?state=opaque&code=fixture-only-code")!
+        XCTAssertEqual(try AuthCallbackInput.code(equivalent, expected: expected), "fixture-only-code")
+        XCTAssertEqual(try AuthCallbackInput.identity(equivalent, expected: expected), try AuthCallbackInput.identity(callback, expected: expected))
+        XCTAssertEqual(try AuthCallbackInput.identity(callback, expected: expected)?.count, 64)
+    }
+    func testIncompleteDeniedMixedAndDuplicateResponsesNeverRestoreExistingSession() async throws {
+        let (service, host) = service(storage: AuthFixtureStorage())
+        _ = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        for suffix in ["", "?code=", "?code=one&code=two", "?error=access_denied&error_description=private-fixture-detail", "?code=one#access_token=fixture", "?code=one&access_token=fixture", "?code=one%20two", "?code=%00", "?code=" + String(repeating: "x", count: 4097)] {
+            do { _ = try await service.handleCallbackURL(URL(string: expected.absoluteString + suffix)!); XCTFail("Invalid response activated a stored account") }
+            catch let error as AppError { XCTAssertEqual(error.title, "Sign-in response could not be verified"); XCTAssertFalse(error.message.contains("private-fixture-detail")) }
+            catch { XCTFail("Expected a redacted app error") }
+        }
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(host), 0)
+        let current = try await service.restoreSession(); XCTAssertEqual(current?.id, AuthFixtureProtocol.userID)
+    }
+    func testUnrelatedURLDoesNotReadOrReturnExistingAccount() async throws {
+        let (service, host) = service(storage: AuthFixtureStorage())
+        _ = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        let result = try await service.handleCallbackURL(URL(string: "https://example.invalid/?code=fixture-only-code")!)
+        XCTAssertNil(result); XCTAssertEqual(AuthFixtureProtocol.traffic.count(host), 0)
+    }
+    func testExchangedSessionRestoresAndDuplicateCodeNeverReexchangesOrRevivesAfterSignOut() async throws {
+        let storage = AuthFixtureStorage(), pair = service(storage: storage)
+        _ = try await pair.0.authorizationURL(for: .google)
+        let user = try await pair.0.handleCallbackURL(callback); XCTAssertEqual(user?.id, AuthFixtureProtocol.callbackUserID)
+        let duplicate = try await pair.0.handleCallbackURL(callback); XCTAssertNil(duplicate)
+        let newClient = service(storage: storage, host: pair.1).0
+        let restored = try await newClient.restoreSession(); XCTAssertEqual(restored?.id, user?.id)
+        // The fixture server consumes one code per unique host, including across client recreation.
+        do { _ = try await newClient.handleCallbackURL(callback); XCTFail("Server-rejected replay must not fall back to the restored account") } catch {}
+        try await pair.0.signOut()
+        let replay = try await pair.0.handleCallbackURL(callback); XCTAssertNil(replay)
+        let signedOut = try await pair.0.restoreSession(); XCTAssertNil(signedOut)
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(pair.1), 2)
+    }
+    func testMissingStoredOAuthSessionCannotAcknowledgeRemoteSuccess() async throws {
+        let storage = AuthFixtureStorage(), pair = service(storage: storage)
+        _ = try await pair.0.authorizationURL(for: .apple); storage.configure(rejectWrites: true)
+        do { _ = try await pair.0.handleCallbackURL(callback); XCTFail("Unstored response activated") }
+        catch let error as AppError { XCTAssertEqual(error.title, "Sign-in could not be saved") }
+        catch { XCTFail("Expected storage acknowledgment error") }
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(pair.1), 1)
+    }
+    func testOldAccountAndSameOwnerOldTokensCannotAcknowledgeOAuthWriteFailure() async throws {
+        for kind in ["callback", "same-owner"] {
+            let storage = AuthFixtureStorage(), pair = service(storage: storage, kind: kind)
+            _ = try await pair.0.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+            _ = try await pair.0.authorizationURL(for: .google); storage.configure(rejectWrites: true)
+            do { _ = try await pair.0.handleCallbackURL(callback); XCTFail("Stale saved session acknowledged new exchange") }
+            catch let error as AppError { XCTAssertEqual(error.title, "Sign-in changed") }
+            catch { XCTFail("Expected exact-session mismatch") }
+        }
+    }
+    func testAcknowledgmentRetryReadsSameSavedSessionWithoutReusingOneUseCode() async throws {
+        let storage = AuthFixtureStorage(), pair = service(storage: storage)
+        _ = try await pair.0.authorizationURL(for: .google); storage.configure(hideAfterWrite: true)
+        do { _ = try await pair.0.handleCallbackURL(callback); XCTFail("Hidden acknowledgment accepted") } catch {}
+        storage.configure(hideReads: false, hideAfterWrite: false)
+        let reconciled = try await pair.0.handleCallbackURL(callback)
+        XCTAssertEqual(reconciled?.id, AuthFixtureProtocol.callbackUserID)
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(pair.1), 1)
+        let duplicate = try await pair.0.handleCallbackURL(callback); XCTAssertNil(duplicate)
+    }
+    func testConcurrentDuplicateServiceCallsExchangeOnlyOnce() async throws {
+        let pair = service(storage: AuthFixtureStorage())
+        _ = try await pair.0.authorizationURL(for: .google)
+        let callback = callback
+        async let first = pair.0.handleCallbackURL(callback)
+        async let second = pair.0.handleCallbackURL(callback)
+        let values = try await (first, second)
+        let users = [values.0, values.1].compactMap { $0 }
+        XCTAssertEqual(users.count, 1); XCTAssertEqual(AuthFixtureProtocol.traffic.count(pair.1), 1)
+    }
+    func testProviderErrorDetailsAreRedactedRatherThanReplacingStoredSession() async throws {
+        let pair = service(storage: AuthFixtureStorage(), kind: "provider-error")
+        _ = try await pair.0.authorizationURL(for: .google)
+        do { _ = try await pair.0.handleCallbackURL(callback); XCTFail("Fixture provider error ignored") }
+        catch let error as AppError {
+            XCTAssertEqual(error.title, "Sign-in could not be completed")
+            XCTAssertFalse(error.message.contains("private-fixture")); XCTAssertFalse(error.message.contains("fixture-only-code"))
+        } catch { XCTFail("SDK details must be replaced by a safe app error") }
+    }
+    func testSignOutNewOTPAndNewOAuthFenceUnacknowledgedCallbackRetry() async throws {
+        for action in ["logout", "otp", "oauth"] {
+            let storage = AuthFixtureStorage(), pair = service(storage: storage)
+            _ = try await pair.0.authorizationURL(for: .google); storage.configure(hideAfterWrite: true)
+            do { _ = try await pair.0.handleCallbackURL(callback); XCTFail("Hidden acknowledgment accepted") } catch {}
+            storage.configure(hideReads: false, hideAfterWrite: false)
+            if action == "logout" { try await pair.0.signOut() }
+            if action == "otp" { _ = try await pair.0.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code") }
+            if action == "oauth" { _ = try await pair.0.authorizationURL(for: .apple) }
+            let stale = try await pair.0.handleCallbackURL(callback); XCTAssertNil(stale)
+            XCTAssertEqual(AuthFixtureProtocol.traffic.count(pair.1), 1)
+        }
+    }
+    func testSignOutCannotClaimSuccessWhenSDKCannotRemoveSavedSession() async throws {
+        let storage = AuthFixtureStorage(), pair = service(storage: storage)
+        _ = try await pair.0.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        storage.configure(rejectRemovals: true)
+        do { try await pair.0.signOut(); XCTFail("Saved session remained after claimed signout") }
+        catch let error as AppError { XCTAssertEqual(error.title, "Sign-out could not be saved") }
+        catch { XCTFail("Expected signout acknowledgment error") }
+    }
+    func testSameOwnerOldOTPTokensCannotAcknowledgeNewUnstoredOTPResponse() async throws {
+        let storage = AuthFixtureStorage(), pair = service(storage: storage)
+        _ = try await pair.0.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        storage.configure(rejectWrites: true)
+        do { _ = try await pair.0.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code"); XCTFail("Old same-owner credentials accepted as a new saved verification") }
+        catch let error as AppError { XCTAssertEqual(error.title, "Sign-in changed") }
+        catch { XCTFail("Expected exact-session mismatch") }
     }
 }

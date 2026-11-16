@@ -32,6 +32,9 @@ final class MockAuthService: AuthServicing {
         return user
     }
     func authorizationURL(for provider: OAuthProvider) async throws -> URL { URL(string: "https://example.com")! }
+    func callbackIdentity(_ url: URL) throws -> String? {
+        try AuthCallbackInput.identity(url, expected: URL(string: "com.executelabs.execute.native-dev://login-callback")!)
+    }
     func handleCallbackURL(_ url: URL) async throws -> ExecuteUser? { restoredUser }
     func signOut() async throws {
         restoredUser = nil

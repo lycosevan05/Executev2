@@ -31,6 +31,9 @@ final class AppState: ObservableObject {
     private var sessionGeneration = UUID()
     private var authenticationGeneration = UUID()
     private var deletingUserIDs: Set<UUID> = []
+    private var authenticationRequestsInFlight: Set<UUID> = []
+    private var callbacksInFlight: Set<String> = []
+    private var completedCallbacks: [String] = []
 
     func allowsDraftWrites(for userID: UUID) -> Bool {
         signedInUserID == userID && !deletingUserIDs.contains(userID)
@@ -59,6 +62,8 @@ final class AppState: ObservableObject {
     func start() async {
         guard !didStart else { return }
         didStart = true
+        // A cold-launch callback already owns authentication. Session restoration must not invalidate it.
+        guard callbacksInFlight.isEmpty, authenticationRequestsInFlight.isEmpty else { return }
         let attempt = beginAuthenticationAttempt()
 #if DEBUG
         startupLogger.debug("[Startup] Bootstrap started")
@@ -109,25 +114,55 @@ final class AppState: ObservableObject {
 
     func verifyEmailOTP(email: String, token: String) async throws {
         let attempt = beginAuthenticationAttempt()
+        authenticationRequestsInFlight.insert(attempt)
+        defer { authenticationRequestsInFlight.remove(attempt) }
         let user = try await authService.verifyEmailOTP(email: email, token: token)
         guard authenticationGeneration == attempt else { throw CancellationError() }
         await activate(user)
     }
 
     func authorizationURL(for provider: OAuthProvider) async throws -> URL {
-        try await authService.authorizationURL(for: provider)
+        let attempt = beginAuthenticationAttempt()
+        authenticationRequestsInFlight.insert(attempt)
+        defer { authenticationRequestsInFlight.remove(attempt) }
+        let url = try await authService.authorizationURL(for: provider)
+        guard authenticationGeneration == attempt else { throw CancellationError() }
+        return url
     }
 
     func handleOpenURL(_ url: URL) async {
+        guard configurationError == nil, authenticationRequestsInFlight.isEmpty else { return }
+        let identity: String
+        do {
+            guard let candidate = try authService.callbackIdentity(url) else { return }
+            identity = candidate
+        } catch {
+            // Invalid input cannot supersede a pending sign-in or disturb a valid account.
+            guard callbacksInFlight.isEmpty else { return }
+            if case .signedIn = launchState { return }
+            launchState = .failed(AppError.from(error, title: "Sign-in could not be completed"))
+            return
+        }
+        guard !callbacksInFlight.contains(identity), !completedCallbacks.contains(identity) else { return }
+        callbacksInFlight.insert(identity)
+        defer { callbacksInFlight.remove(identity) }
         let attempt = beginAuthenticationAttempt()
         do {
             let callbackUser = try await authService.handleCallbackURL(url)
+            if callbackUser != nil {
+                completedCallbacks.append(identity)
+                if completedCallbacks.count > 32 { completedCallbacks.removeFirst() }
+            }
             guard authenticationGeneration == attempt else { return }
             if let user = callbackUser {
                 await activate(user)
+            } else if case .launching = launchState {
+                launchState = .signedOut
             }
         } catch {
             guard authenticationGeneration == attempt else { return }
+            // An unsuccessful callback must not replace an already valid account.
+            if case .signedIn = launchState { return }
             launchState = .failed(AppError.from(error, title: "Sign-in could not be completed"))
         }
     }
@@ -136,6 +171,8 @@ final class AppState: ObservableObject {
         authenticationGeneration = UUID()
         sessionGeneration = UUID()
         let session = sessionGeneration
+        authenticationRequestsInFlight.insert(session)
+        defer { authenticationRequestsInFlight.remove(session) }
         let userID = signedInUserID
         subscriptionRefreshTask?.cancel()
         // Supabase removes its local session before the logout network request.
@@ -187,6 +224,7 @@ final class AppState: ObservableObject {
     }
 
     private func activate(_ user: ExecuteUser) async {
+        if signedInUserID != user.id { router.reset() }
         authenticationGeneration = UUID()
         sessionGeneration = UUID()
         let session = sessionGeneration
