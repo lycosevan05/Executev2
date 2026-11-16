@@ -132,7 +132,8 @@ struct AuthenticationView: View {
                 let callback = try await oauth.start(url: url, callbackScheme: environment.configuration?.callbackScheme ?? "")
                 await environment.appState.handleOpenURL(callback)
             } catch {
-                self.error = AppError.from(error, title: "Could not start \(provider.rawValue.capitalized) sign-in")
+                self.error = OAuthCoordinator.isUserCancellation(error) ? nil
+                    : AppError.from(error, title: "Could not start \(provider.rawValue.capitalized) sign-in")
             }
         }
     }
@@ -141,6 +142,12 @@ struct AuthenticationView: View {
 @MainActor
 final class OAuthCoordinator: NSObject, ObservableObject {
     private var session: ASWebAuthenticationSession?
+
+    static func isUserCancellation(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == ASWebAuthenticationSessionError.errorDomain
+            && error.code == ASWebAuthenticationSessionError.Code.canceledLogin.rawValue
+    }
 
     func start(url: URL, callbackScheme: String) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in

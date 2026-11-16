@@ -1285,3 +1285,40 @@ final class DailyActivityChecklistTests: XCTestCase {
         XCTAssertFalse(log.activityDateLabel.contains("15"))
     }
 }
+
+@MainActor final class LegalLinkTests: XCTestCase {
+    func testUnavailableEmailHandlerPreservesExactContactAndAllowsAnotherAttempt() {
+        let model = LegalLinkModel()
+        var destinations: [URL] = []
+        model.open(.contact(.privacy)) { url, complete in destinations.append(url); complete(false) }
+        XCTAssertEqual(model.failedLink, .contact(.privacy))
+        XCTAssertEqual(model.failedLink?.copyText, "privacy@executelabs.ca")
+        XCTAssertEqual(destinations.first?.absoluteString, "mailto:privacy@executelabs.ca")
+        XCTAssertTrue(model.failedLink?.failureMessage.contains("Copy") == true)
+        model.open(.contact(.terms)) { url, complete in destinations.append(url); complete(true) }
+        XCTAssertNil(model.failedLink)
+        XCTAssertEqual(destinations.last?.absoluteString, "mailto:support@executelabs.ca")
+    }
+    func testEULAHandoffAndUnavailableBrowserUseSameRetainedHTTPSDestination() {
+        let model = LegalLinkModel()
+        var completion: (@MainActor (Bool) -> Void)?
+        var destination: URL?
+        model.open(.appleEULA) { url, complete in destination = url; completion = complete }
+        XCTAssertNil(model.failedLink)
+        completion?(false)
+        XCTAssertEqual(model.failedLink, .appleEULA)
+        XCTAssertEqual(model.failedLink?.copyText, "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")
+        XCTAssertEqual(destination?.scheme, "https"); XCTAssertEqual(destination?.host, "www.apple.com")
+        model.open(.appleEULA) { _, complete in complete(true) }
+        XCTAssertNil(model.failedLink)
+    }
+}
+
+@MainActor final class AuthenticationCancellationTests: XCTestCase {
+    func testOnlyExplicitWebAuthenticationUserCancellationIsSilent() {
+        XCTAssertTrue(OAuthCoordinator.isUserCancellation(NSError(domain: "com.apple.AuthenticationServices.WebAuthenticationSession", code: 1)))
+        XCTAssertFalse(OAuthCoordinator.isUserCancellation(NSError(domain: "com.apple.AuthenticationServices.WebAuthenticationSession", code: 2)))
+        XCTAssertFalse(OAuthCoordinator.isUserCancellation(NSError(domain: "unrelated-domain", code: 1)))
+        XCTAssertFalse(OAuthCoordinator.isUserCancellation(URLError(.cancelled)))
+    }
+}
