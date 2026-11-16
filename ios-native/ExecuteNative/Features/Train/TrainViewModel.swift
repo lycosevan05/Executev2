@@ -91,7 +91,7 @@ final class TrainViewModel: ObservableObject {
     }
 
     private func reload(isRefresh: Bool = false) async {
-        guard let dataService else {
+        guard let dataService, let user else {
             isInitialLoading = false
             return
         }
@@ -108,12 +108,12 @@ final class TrainViewModel: ObservableObject {
             // actor rather than sending the service through child tasks.
             let planRecords: [EntityRecord<HomeAIPlan>] = try await dataService.listAll(.aiPlans, isCurrent: { request == self.generation })
             let workoutRecords: [EntityRecord<TrainWorkoutPlan>] = try await dataService.listAll(.workoutPlans, isCurrent: { request == self.generation })
-            let logRecords: [EntityRecord<TrainWorkoutLog>] = try await dataService.list(.workoutLogs, orderBy: "-updated_date", limit: 50)
+            let logRecords: [EntityRecord<TrainWorkoutLog>] = try await dataService.listAll(.workoutLogs, isCurrent: { request == self.generation })
             guard request == generation, !Task.isCancelled else { return }
             activePlanID = selectActivePlan(planRecords)?.id
             activePlan = selectActivePlan(planRecords)?.payload
             workoutPlans = workoutRecords
-            workoutHistory = logRecords.filter { $0.payload.status?.lowercased() == "completed" || $0.payload.completedAt != nil }
+            workoutHistory = TrainHistoryDetails.completedRecords(logRecords, user: user)
         } catch {
             if request == generation { self.error = AppError.from(error, title: "Could not load training") }
         }
@@ -360,7 +360,12 @@ final class WorkoutSessionViewModel: ObservableObject {
                 setsCompleted: completedSetCount,
                 exercisesCompleted: completedExercises,
                 estimatedCalories: calories,
-                rpe: checkIn.rpe
+                rpe: checkIn.rpe,
+                notes: notes,
+                feeling: checkIn.feeling,
+                performance: checkIn.performance,
+                pain: checkIn.pain,
+                painNotes: checkIn.painNotes
             )
             stage = .summary
         } catch {

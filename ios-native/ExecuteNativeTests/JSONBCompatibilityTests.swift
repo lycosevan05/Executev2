@@ -1614,3 +1614,91 @@ final class DailyActivityChecklistTests: XCTestCase {
         }
     }
 }
+
+
+final class WorkoutHistoryTests: XCTestCase {
+    private func details(_ fields: [String: JSONValue]) throws -> TrainHistoryDetails {
+        TrainHistoryDetails(log: try JSONValue.object(fields).decoded(as: TrainWorkoutLog.self))
+    }
+    func testSavedOrderDuplicateNamesSparseSetsAndTextArePreserved() throws {
+        let exercise: JSONValue = .object(["name": .string("Rows"), "completedSetIndices": .array([.number(2), .number(0), .number(2)]), "reps": .string("8–12"), "weight": .number(22.5), "notes": .string("Saved\nnotes")])
+        let d = try details(["exercise_logs": .array([exercise, exercise]), "weight_unit_system": .string("imperial"), "user_notes": .string("Session\nnotes")])
+        XCTAssertEqual(d.exercises.map(\.id), [0, 1]); XCTAssertEqual(d.exercises.map(\.name), ["Rows", "Rows"])
+        XCTAssertEqual(d.exercises[0].completedSetNumbers, [1, 3]); XCTAssertEqual(d.exercises[0].setsLabel, "2 sets completed")
+        XCTAssertEqual(d.exercises[0].repsLabel, "8–12"); XCTAssertEqual(d.exercises[0].weightLabel, "22.5 lb")
+        XCTAssertEqual(d.exercises[0].notes, "Saved\nnotes"); XCTAssertEqual(d.notes, "Session\nnotes")
+        XCTAssertEqual(d.log.exerciseLogs, .array([exercise, exercise]))
+    }
+    func testMissingZeroAndUnknownUnitsStayDistinct() throws {
+        let d = try details(["exercise_logs": .array([.object([:]), .object(["weight": .number(0), "completedSetIndices": .array([])])])])
+        XCTAssertEqual(d.exercises[0].weightLabel, "Not recorded"); XCTAssertEqual(d.exercises[0].setsLabel, "Sets not recorded")
+        XCTAssertEqual(d.exercises[1].weightLabel, "0 (unit not recorded)"); XCTAssertEqual(d.exercises[1].setsLabel, "0 sets completed")
+        for (unit, expected) in [("metric", "15 kg"), ("imperial", "15 lb"), ("unknown", "15 (unit unavailable)")] {
+            XCTAssertEqual(try details(["weight_unit_system": .string(unit), "exercise_logs": .array([.object(["weight": .number(15)])])]).exercises[0].weightLabel, expected)
+        }
+    }
+    func testMalformedLegacyDetailsFailVisiblyWithoutInventedValues() throws {
+        XCTAssertNotNil(try details([:]).exerciseMessage)
+        XCTAssertEqual(try details(["exercise_logs": .string("invalid")]).exerciseMessage, "Saved exercise details are unavailable.")
+        XCTAssertTrue(try details(["exercise_logs": .array([.null])]).exercises[0].unavailable)
+        for marker in [JSONValue.number(-1), .number(0.5), .number(Double.greatestFiniteMagnitude), .string("invalid")] {
+            let e = try details(["exercise_logs": .array([.object(["completedSetIndices": .array([marker])])])]).exercises[0]
+            XCTAssertNil(e.completedSetNumbers); XCTAssertEqual(e.setsLabel, "Some set details are unavailable")
+        }
+        XCTAssertNil(TrainHistoryDetails.number(.infinity)); XCTAssertNil(TrainHistoryDetails.number(-1)); XCTAssertNotNil(TrainHistoryDetails.number(Double.greatestFiniteMagnitude))
+    }
+    func testFeedbackMetricsAndEmptyNotesDoNotInventFeedback() throws {
+        let d = try details(["session_rpe": .number(6), "post_workout_feeling": .string("Good"), "performance_rating": .string("As expected"), "pain_flag": .string("No"), "user_notes": .string("  "), "pain_notes": .string("Knee"), "skipped_exercises": .array([.string("Plank"), .null])])
+        XCTAssertEqual(d.metrics.first { $0.title == "RPE" }?.value, "6/10")
+        XCTAssertEqual(d.metrics.first { $0.title == "Feeling" }?.value, "Good")
+        XCTAssertNil(d.notes); XCTAssertEqual(d.painNotes, "Knee"); XCTAssertEqual(d.skippedExercises, ["Plank"])
+        XCTAssertEqual(d.metrics.first { $0.title == "Duration" }?.value, "Not recorded")
+    }
+    func testOwnershipCompletionAndRecentLimitAreAppliedAfterReadingRecords() throws {
+        let user = ExecuteUser(id: UUID(), email: "history@example.invalid", displayName: "QA")
+        func record(_ fields: [String: JSONValue], owner: UUID?, email: String? = nil, date: Date = .now) throws -> EntityRecord<TrainWorkoutLog> {
+            try EntityRecord(row: BackendRow(id: UUID(), ownerID: owner, ownerEmail: email, createdBy: nil, userEmail: nil, createdDate: date, updatedDate: date, data: .object(fields)))
+        }
+        let completed: [String: JSONValue] = ["status": .string("completed")]
+        let own = try record(completed, owner: user.id)
+        let legacy = try record(["completed_at": .string("2026-11-13T12:00:00Z")], owner: nil, email: user.email.uppercased())
+        let foreign = try record(completed, owner: UUID(), email: user.email)
+        let orphan = try record(completed, owner: nil)
+        let draft = try record(["status": .string("in_progress"), "completed_at": .string("2026-11-13T12:00:00Z")], owner: user.id)
+        let selected = TrainHistoryDetails.completedRecords([foreign, orphan, draft, legacy, own], user: user)
+        XCTAssertEqual(Set(selected.map(\.id)), Set([legacy.id, own.id]))
+        let many = try (0..<60).map { try record(completed, owner: user.id, date: Date(timeIntervalSince1970: Double($0))) }
+        XCTAssertEqual(TrainHistoryDetails.completedRecords(many, user: user).map(\.id), Array(many.reversed().prefix(50)).map(\.id))
+    }
+}
+
+
+@MainActor final class WorkoutHistoryLoadingTests: XCTestCase {
+    private let user = ExecuteUser(id: UUID(), email: "history@example.invalid", displayName: "QA")
+    func testCompletedHistoryBehindMoreThanOnePageOfDraftsLoadsWithoutWrites() async {
+        let data = PreferenceData()
+        let completed = PreferenceData.row(["status": .string("completed"), "workout_name": .string("Saved session")], owner: user.id)
+        data.rows[.workoutLogs] = (0..<501).map { _ in PreferenceData.row(["status": .string("in_progress")], owner: user.id) } + [completed]
+        let before = data.rows
+        let model = TrainViewModel(dataService: data, router: AppRouter()); await model.start(for: user)
+        XCTAssertEqual(model.workoutHistory.map(\.id), [completed.id]); XCTAssertNil(model.error)
+        XCTAssertEqual(data.rows, before); XCTAssertEqual(data.writes, 0); XCTAssertEqual(data.creates, 0)
+    }
+    func testFailedRefreshRetainsHistoryAndStopClearsItWithoutWrites() async {
+        let data = PreferenceData()
+        let completed = PreferenceData.row(["status": .string("completed")], owner: user.id)
+        data.rows[.workoutLogs] = [completed]
+        let model = TrainViewModel(dataService: data, router: AppRouter()); await model.start(for: user)
+        data.failRead = true; await model.refresh()
+        XCTAssertNotNil(model.error); XCTAssertEqual(model.workoutHistory.map(\.id), [completed.id])
+        model.stop(); XCTAssertTrue(model.workoutHistory.isEmpty); XCTAssertEqual(data.writes, 0)
+    }
+    func testStoppedReadCannotRestoreOldAccountHistory() async {
+        let data = PreferenceData()
+        data.rows[.workoutLogs] = [PreferenceData.row(["status": .string("completed")], owner: user.id)]
+        let model = TrainViewModel(dataService: data, router: AppRouter())
+        data.beforeRead = { model.stop() }
+        await model.start(for: user)
+        XCTAssertTrue(model.workoutHistory.isEmpty); XCTAssertNil(model.activePlan); XCTAssertEqual(data.writes, 0)
+    }
+}

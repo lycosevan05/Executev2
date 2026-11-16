@@ -49,6 +49,7 @@ struct TrainDashboardView: View {
     @State private var selectedTab: TrainDashboardTab = .today
     @State private var search = ""
     @State private var category = "All"
+    @State private var expandedLogID: UUID?
 
     var body: some View {
         ScrollView {
@@ -170,9 +171,16 @@ struct TrainDashboardView: View {
     @ViewBuilder private var historyContent: some View {
         TrainSectionHeading(title: "Completed sessions", subtitle: "Your recent training record.")
         if model.workoutHistory.isEmpty {
-            TrainMessageCard(text: "Finish a native workout session and it will appear here.")
+            TrainMessageCard(text: "Completed workouts will appear here.")
         } else {
-            ForEach(model.workoutHistory) { record in TrainHistoryRow(log: record.payload) }
+            ForEach(model.workoutHistory) { record in
+                TrainHistoryRow(log: record.payload, expanded: expandedLogID == record.id) {
+                    expandedLogID = expandedLogID == record.id ? nil : record.id
+                }
+            }
+            .onChange(of: model.workoutHistory.map(\.id)) { ids in
+                if let expandedLogID, !ids.contains(expandedLogID) { self.expandedLogID = nil }
+            }
         }
     }
 }
@@ -296,20 +304,85 @@ private struct TrainLibraryRow: View {
 
 private struct TrainHistoryRow: View {
     let log: TrainWorkoutLog
+    let expanded: Bool
+    let toggle: () -> Void
+
     var body: some View {
-        HStack(spacing: ExecuteSpacing.sm) {
-            Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(ExecuteColor.chartreuseDark).frame(width: 34, height: 34).background(ExecuteHomeStyle.accentWash).clipShape(Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text(log.workoutName ?? "Workout").font(ExecuteTypography.label(14).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
-                Text(log.activityDateLabel).font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.olive)
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: toggle) {
+                HStack(spacing: ExecuteSpacing.sm) {
+                    Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(ExecuteColor.chartreuseDark).frame(width: 34, height: 34).background(ExecuteHomeStyle.accentWash).clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(log.workoutName ?? "Workout").font(ExecuteTypography.label(14).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal).fixedSize(horizontal: false, vertical: true)
+                        Text(log.activityDateLabel).font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.olive)
+                    }
+                    Spacer()
+                    Text(TrainHistoryDetails.number(log.durationMinutes).map { "\($0) min" } ?? "Done").font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.chartreuseDark)
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down").foregroundStyle(ExecuteColor.olive)
+                }
+                .padding(ExecuteSpacing.sm)
+                .contentShape(Rectangle())
             }
-            Spacer()
-            Text(log.durationMinutes.map { "\(Int($0)) min" } ?? "Done").font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.chartreuseDark)
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(expanded ? "Collapse" : "Expand") \(log.workoutName ?? "Workout"), \(log.activityDateLabel)")
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Shows saved exercises, sets, reps, weights and notes.")
+            if expanded {
+                Divider()
+                TrainHistoryDetailView(details: TrainHistoryDetails(log: log))
+                    .padding(ExecuteSpacing.sm)
+            }
         }
-        .padding(ExecuteSpacing.sm)
         .background(ExecuteColor.parchmentLight.opacity(0.94))
         .clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.cardRadius, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: ExecuteHomeStyle.cardRadius, style: .continuous).stroke(ExecuteColor.warmBorder.opacity(0.48), lineWidth: 1) }
+    }
+}
+
+private struct TrainHistoryDetailView: View {
+    let details: TrainHistoryDetails
+    var body: some View {
+        VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
+            Text("Recorded exercises").font(ExecuteTypography.label(13).weight(.bold)).accessibilityAddTraits(.isHeader)
+            if let message = details.exerciseMessage { Text(message).font(ExecuteTypography.body(12)).foregroundStyle(ExecuteColor.olive) }
+            ForEach(details.exercises) { exercise in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(exercise.position + 1). \(exercise.name)").font(ExecuteTypography.label(13).weight(.semibold))
+                    if exercise.unavailable {
+                        Text("Saved exercise details are unavailable.").font(ExecuteTypography.body(12))
+                    } else {
+                        Text(exercise.setsLabel).font(ExecuteTypography.body(12))
+                        if let numbers = exercise.completedSetNumbers, !numbers.isEmpty {
+                            Text("Completed sets: " + numbers.map(String.init).joined(separator: ", ")).font(ExecuteTypography.caption(11))
+                        }
+                        Text("Reps: \(exercise.repsLabel)").font(ExecuteTypography.body(12))
+                        Text("Weight: \(exercise.weightLabel)").font(ExecuteTypography.body(12))
+                        if let notes = exercise.notes { Text(notes).font(ExecuteTypography.body(12)).textSelection(.enabled) }
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+            Divider()
+            ForEach(details.metrics) { metric in
+                HStack(alignment: .top) {
+                    Text(metric.title).foregroundStyle(ExecuteColor.olive)
+                    Spacer()
+                    Text(metric.value).multilineTextAlignment(.trailing)
+                }.font(ExecuteTypography.body(12))
+            }
+            if !details.skippedExercises.isEmpty {
+                Text("Skipped exercises: " + details.skippedExercises.joined(separator: ", ")).font(ExecuteTypography.body(12))
+            }
+            Text("Session notes").font(ExecuteTypography.label(13).weight(.bold)).accessibilityAddTraits(.isHeader)
+            Text(details.notes ?? "No session notes recorded.").font(ExecuteTypography.body(12)).textSelection(.enabled)
+            if let notes = details.painNotes {
+                Text("Pain notes").font(ExecuteTypography.label(13).weight(.bold)).accessibilityAddTraits(.isHeader)
+                Text(notes).font(ExecuteTypography.body(12)).textSelection(.enabled)
+            }
+        }
+        .foregroundStyle(ExecuteColor.charcoal)
     }
 }
 
@@ -1035,45 +1108,58 @@ private struct WorkoutSessionSummaryView: View {
     @ObservedObject var model: WorkoutSessionViewModel
 
     var body: some View {
-        VStack(spacing: ExecuteSpacing.lg) {
-            Spacer()
-            Image(systemName: "checkmark")
-                .font(.system(size: 28, weight: .bold))
-                .foregroundStyle(ExecuteColor.charcoal)
-                .frame(width: 68, height: 68)
-                .background(ExecuteColor.chartreuse)
-                .clipShape(Circle())
-            VStack(spacing: ExecuteSpacing.xs) {
-                Text("Workout complete")
-                    .font(ExecuteTypography.title(26))
-                    .foregroundStyle(WorkoutSessionPalette.primaryText)
-                Text(model.summary?.workoutName ?? model.workoutName)
-                    .font(ExecuteTypography.body(14))
-                    .foregroundStyle(WorkoutSessionPalette.secondaryText)
-                    .multilineTextAlignment(.center)
-            }
-
-            if let summary = model.summary {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: ExecuteSpacing.sm) {
-                    summaryMetric(value: "\(summary.durationMinutes)", label: "MINUTES")
-                    summaryMetric(value: "\(summary.setsCompleted)", label: "SETS")
-                    summaryMetric(value: "\(summary.exercisesCompleted)", label: "EXERCISES")
-                    summaryMetric(value: "\(summary.estimatedCalories)", label: "CALORIES")
-                }
-                .padding(.horizontal, ExecuteSpacing.xl)
-            }
-            Spacer()
-            Button(action: model.finishSummary) {
-                Text("Back to Train")
-                    .font(ExecuteTypography.label(15).weight(.bold))
+        ScrollView {
+            VStack(spacing: ExecuteSpacing.lg) {
+                Spacer(minLength: ExecuteSpacing.md)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 28, weight: .bold))
                     .foregroundStyle(ExecuteColor.charcoal)
-                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .frame(width: 68, height: 68)
                     .background(ExecuteColor.chartreuse)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .clipShape(Circle())
+                VStack(spacing: ExecuteSpacing.xs) {
+                    Text("Workout complete")
+                        .font(ExecuteTypography.title(26))
+                        .foregroundStyle(WorkoutSessionPalette.primaryText)
+                    Text(model.summary?.workoutName ?? model.workoutName)
+                        .font(ExecuteTypography.body(14))
+                        .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                        .multilineTextAlignment(.center)
+                }
+
+                if let summary = model.summary {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: ExecuteSpacing.sm) {
+                        summaryMetric(value: "\(summary.durationMinutes)", label: "MINUTES")
+                        summaryMetric(value: "\(summary.setsCompleted)", label: "SETS")
+                        summaryMetric(value: "\(summary.exercisesCompleted)", label: "EXERCISES")
+                        summaryMetric(value: "\(summary.estimatedCalories)", label: "CALORIES")
+                        summaryMetric(value: "\(summary.rpe)/10", label: "RPE")
+                    }
+                    .padding(.horizontal, ExecuteSpacing.xl)
+                    VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
+                        ForEach([TrainHistoryMetric(title: "Feeling", value: summary.feeling ?? "Not recorded"), .init(title: "Performance", value: summary.performance ?? "Not recorded"), .init(title: "Pain reported", value: summary.pain ?? "Not recorded")]) { metric in
+                            Text("\(metric.title): \(metric.value)").font(ExecuteTypography.body(13))
+                        }
+                        if let notes = TrainHistoryDetails.text(summary.notes) { Text("Session notes").font(ExecuteTypography.label(13).weight(.bold)); Text(notes).font(ExecuteTypography.body(13)).textSelection(.enabled) }
+                        if let notes = TrainHistoryDetails.text(summary.painNotes) { Text("Pain notes").font(ExecuteTypography.label(13).weight(.bold)); Text(notes).font(ExecuteTypography.body(13)).textSelection(.enabled) }
+                    }
+                    .foregroundStyle(WorkoutSessionPalette.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(ExecuteSpacing.md)
+                }
+                Spacer(minLength: ExecuteSpacing.md)
+                Button(action: model.finishSummary) {
+                    Text("Back to Train")
+                        .font(ExecuteTypography.label(15).weight(.bold))
+                        .foregroundStyle(ExecuteColor.charcoal)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(ExecuteColor.chartreuse)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(ExecutePressStyle())
+                .padding(.horizontal, ExecuteSpacing.md)
+                .padding(.bottom, ExecuteSpacing.md)
             }
-            .buttonStyle(ExecutePressStyle())
-            .padding(.horizontal, ExecuteSpacing.md)
-            .padding(.bottom, ExecuteSpacing.md)
         }
     }
 

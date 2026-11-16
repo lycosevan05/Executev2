@@ -55,6 +55,16 @@ struct TrainWorkoutLog: Codable, Sendable {
     let estimatedCaloriesBurned: Double?
     let exertionLevel: String?
     let rating: Double?
+    // History reads legacy payloads without requiring every exercise field or rewriting them.
+    var exerciseLogs: JSONValue? = nil
+    var userNotes: JSONValue? = nil
+    var weightUnitSystem: JSONValue? = nil
+    var sessionRPE: JSONValue? = nil
+    var postWorkoutFeeling: JSONValue? = nil
+    var performanceRating: JSONValue? = nil
+    var painFlag: JSONValue? = nil
+    var painNotes: JSONValue? = nil
+    var skippedExercises: JSONValue? = nil
 
     enum CodingKeys: String, CodingKey {
         case date, status
@@ -70,6 +80,15 @@ struct TrainWorkoutLog: Codable, Sendable {
         case estimatedCaloriesBurned = "estimated_calories_burned"
         case exertionLevel = "exertion_level"
         case rating
+        case exerciseLogs = "exercise_logs"
+        case userNotes = "user_notes"
+        case weightUnitSystem = "weight_unit_system"
+        case sessionRPE = "session_rpe"
+        case postWorkoutFeeling = "post_workout_feeling"
+        case performanceRating = "performance_rating"
+        case painFlag = "pain_flag"
+        case painNotes = "pain_notes"
+        case skippedExercises = "skipped_exercises"
     }
 }
 
@@ -213,6 +232,11 @@ struct WorkoutSessionSummary: Equatable, Sendable {
     let exercisesCompleted: Int
     let estimatedCalories: Int
     let rpe: Int
+    var notes: String? = nil
+    var feeling: String? = nil
+    var performance: String? = nil
+    var pain: String? = nil
+    var painNotes: String? = nil
 }
 
 struct WorkoutRepTarget: Equatable, Sendable {
@@ -331,4 +355,120 @@ extension JSONValue {
         case .null, .array, .object: return nil
         }
     }
+}
+
+
+/// Read-only projection: saved values and order win over today's plan/profile preferences.
+struct TrainHistoryMetric: Identifiable, Equatable {
+    let title: String
+    let value: String
+    var id: String { title }
+}
+
+struct TrainHistoryDetails {
+    let log: TrainWorkoutLog
+
+    static func completedRecords(_ records: [EntityRecord<TrainWorkoutLog>], user: ExecuteUser) -> [EntityRecord<TrainWorkoutLog>] {
+        records.filter { record in
+            let owned: Bool
+            if let owner = record.ownerID { owned = owner == user.id }
+            else { owned = [record.ownerEmail, record.metadata.createdBy, record.metadata.userEmail].compactMap { $0 }.contains { !$0.isEmpty && $0.caseInsensitiveCompare(user.email) == .orderedSame } }
+            let status = record.payload.status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return owned && (status == "completed" || (status == nil || status == "") && record.payload.completedAt != nil)
+        }.sorted {
+            let first = $0.payload.completedAt ?? $0.updatedDate ?? $0.createdDate ?? .distantPast
+            let second = $1.payload.completedAt ?? $1.updatedDate ?? $1.createdDate ?? .distantPast
+            return first == second ? $0.id.uuidString < $1.id.uuidString : first > second
+        }.prefix(50).map { $0 }
+    }
+
+    var exercises: [TrainHistoryExercise] {
+        guard case let .array(values) = log.exerciseLogs else { return [] }
+        return values.enumerated().map { TrainHistoryExercise(position: $0.offset, raw: $0.element, savedUnits: log.weightUnitSystem?.stringValue) }
+    }
+    var exerciseMessage: String? {
+        switch log.exerciseLogs {
+        case .none, .some(.null): return "No exercise details were recorded."
+        case .some(.array(let values)): return values.isEmpty ? "No exercise details were recorded." : nil
+        default: return "Saved exercise details are unavailable."
+        }
+    }
+    var metrics: [TrainHistoryMetric] {
+        var values = [
+            TrainHistoryMetric(title: "Duration", value: Self.number(log.durationMinutes).map { "\($0) min" } ?? "Not recorded"),
+            .init(title: "Sets completed", value: Self.number(log.setsCompleted) ?? "Not recorded"),
+            .init(title: "Exercises completed", value: Self.number(log.exercisesCompleted) ?? "Not recorded"),
+            .init(title: "Estimated calories", value: Self.number(log.estimatedCaloriesBurned).map { "~\($0) kcal" } ?? "Not recorded")
+        ]
+        for (title, value) in [("Exertion", log.exertionLevel), ("RPE", Self.scalar(log.sessionRPE).map { "\($0)/10" }),
+            ("Rating", Self.number(log.rating).map { "\($0)/5" }), ("Feeling", Self.scalar(log.postWorkoutFeeling)),
+            ("Performance", Self.scalar(log.performanceRating)), ("Pain reported", Self.scalar(log.painFlag))] {
+            if let text = Self.text(value) { values.append(.init(title: title, value: text)) }
+        }
+        return values
+    }
+    var notes: String? { Self.text(log.userNotes?.stringValue) }
+    var painNotes: String? { Self.text(log.painNotes?.stringValue) }
+    var skippedExercises: [String] {
+        guard case let .array(values) = log.skippedExercises else { return [] }
+        return values.compactMap { Self.text($0.stringValue) }
+    }
+    static func text(_ value: String?) -> String? {
+        guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return value
+    }
+    static func number(_ value: Double?) -> String? {
+        guard let value, value.isFinite, value >= 0 else { return nil }
+        return value.formatted(.number.grouping(.never).precision(.fractionLength(0...3)))
+    }
+    static func scalar(_ value: JSONValue?) -> String? {
+        switch value {
+        case .number(let value): return number(value)
+        case .string(let value): return text(value)
+        default: return nil
+        }
+    }
+}
+
+struct TrainHistoryExercise: Identifiable {
+    let position: Int
+    let raw: JSONValue
+    let savedUnits: String?
+    var id: Int { position }
+    var name: String { TrainHistoryDetails.text(raw["name"]?.stringValue) ?? "Exercise \(position + 1)" }
+    var unavailable: Bool { raw.objectValue == nil }
+    var completedSetNumbers: [Int]? {
+        guard case let .array(markers) = raw["completedSetIndices"] else { return nil }
+        var numbers = Set<Int>()
+        for marker in markers {
+            let index: Int?
+            switch marker {
+            case .number(let value): index = Int(exactly: value)
+            case .string(let value): index = Int(value)
+            default: index = nil
+            }
+            guard let index, index >= 0, index < Int.max else { return nil }
+            numbers.insert(index + 1)
+        }
+        return numbers.sorted()
+    }
+    var setsLabel: String {
+        guard let numbers = completedSetNumbers else {
+            return raw["completedSetIndices"] == nil || raw["completedSetIndices"] == .null ? "Sets not recorded" : "Some set details are unavailable"
+        }
+        return "\(numbers.count) set\(numbers.count == 1 ? "" : "s") completed"
+    }
+    var repsLabel: String { TrainHistoryDetails.scalar(raw["reps"]) ?? "Not recorded" }
+    var weightLabel: String {
+        guard let value = TrainHistoryDetails.scalar(raw["weight"]) else { return "Not recorded" }
+        // Preserve descriptive legacy loads too; never convert old numbers using current profile units.
+        if case .string(let string) = raw["weight"], Double(string) == nil { return string }
+        switch savedUnits {
+        case "metric": return "\(value) kg"
+        case "imperial": return "\(value) lb"
+        case .none: return "\(value) (unit not recorded)"
+        default: return "\(value) (unit unavailable)"
+        }
+    }
+    var notes: String? { TrainHistoryDetails.text(raw["notes"]?.stringValue) }
 }
