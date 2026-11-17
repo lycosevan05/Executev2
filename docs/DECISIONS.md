@@ -515,3 +515,8 @@ W45 is functionally accepted by source comparison and normal native Insights/Pro
 ## 2026-11-16 — Accept consolidated daily-data workflows; retain W41 metadata failure
 
 E25 closes W27/W35/W36/W37/W38/W42/W43/W44 through normal provider/UI/correction/relaunch and final owner-filtered17-table CSV comparison after allUI.36/45accepted,9open,9separate release gates.51baseline→70final,all51oldIDsretain,49capturedrows exact,19expectednew. Scoped local agent comparisons are not separate live connections. Home custom completion overwrites original checklist metadata and invents an old completion timestamp; W41 stays open for a targeted fresh-raw-data fix. Guarded one-row QA restoration/rollback prepared but no SQL repair executed; existing verification authorization remains SELECT-only.
+
+
+## 2026-11-16 — Persist only the selected Home checklist completion
+
+The E25 final CSV exposed whole-list display serialization overwriting saved checklist metadata and inventing timestamps for unrelated completed tasks.09e84d8/0623676 read fresh owned raw data, merge only the selected task completion, preserve all other objects/order/unknown fields and use the existing durable receipt mechanism. Stale rendered completion fails closed instead of undoing concurrent activity; legacy status-only completion decodes correctly.23affected tests pass (17customization,6HomeLogic;7new regressions). W41 remains open until normal candidate/focused live preservation and reviewed QA metadata restoration are independently verified. No SQL repair executed.
