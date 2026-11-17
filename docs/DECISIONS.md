@@ -520,3 +520,8 @@ E25 closes W27/W35/W36/W37/W38/W42/W43/W44 through normal provider/UI/correction
 ## 2026-11-16 — Persist only the selected Home checklist completion
 
 The E25 final CSV exposed whole-list display serialization overwriting saved checklist metadata and inventing timestamps for unrelated completed tasks.09e84d8/0623676 read fresh owned raw data, merge only the selected task completion, preserve all other objects/order/unknown fields and use the existing durable receipt mechanism. Stale rendered completion fails closed instead of undoing concurrent activity; legacy status-only completion decodes correctly.23affected tests pass (17customization,6HomeLogic;7new regressions). W41 remains open until normal candidate/focused live preservation and reviewed QA metadata restoration are independently verified. No SQL repair executed.
+
+
+## 2026-11-16 — Close W41 after controlled restoration and corrected persistence
+
+User separately approved the exact guarded one-row QA restoration, manually applied it, and the browser returned the restored row. Subsequent accidental rerun safely aborted; no second repair. Corrected0623676 normal UI check/uncheck/relaunch and final17-table CSV prove69otherrecords exact, originalworkout/nutritionmetadata exact/no fabricatedtimestamp, customhistory retained and onlytargetcompletion/receipt changed. W41 accepted;37/45accepted,8open,9release gates. Normalupdated_date is outside captured data comparison. No broader SQL-write/deployment/billing/deletion authority inferred.
