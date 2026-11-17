@@ -560,3 +560,8 @@ E32 closes W16 after actual three-focus provider previews, corrected Nutrition-o
 ## 2026-11-17 — Decode AI envelopes without repeating the provider invocation
 
 A structured-response decoding or transport failure previously invoked invoke-llm a second time. Use one generic Decodable wrapper around the original SDK response, first decoding the requested type and then supported text/output_text envelopes from that same payload. Preserve decoder strategies and exact large integers without a JSONValue/Double conversion; propagate transport/cancellation errors without retry. Five focused methods pass, four new. Normal Debug simulator/device builds and host signatures pass; the now-available usual paired iPhone accepts normal installation. No physical workflow acceptance or release-gate closure is inferred. W17 manual synthetic-answer entry remains pending; no replacement Generate/Save, counts38/45 accepted, seven open, nine gates.
+
+
+## 2026-11-17 — Accept supplied-plan replacement with independent preservation
+
+E34 closes W17 after actual scanned import, exact9-prescription/MWF45min fidelity, one reviewed replacement Save, relaunch and independent17-table comparison. Oldmasterstatus and workoutprofiletype are the only expected changes;19shared root/nestedfields agree, rawfour-week instruction retained. Separate populated-account export is byte-identical across70records. Counts39/45 accepted, six open, nine gates. E35 separately validates current3919394 optimized Release simulator/signature/no-debug-flags; no production archive or Release hardware acceptance inferred. Physical private sign-in/readback remains manual.
