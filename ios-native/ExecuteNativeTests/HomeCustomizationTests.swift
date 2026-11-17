@@ -5,7 +5,7 @@ import XCTest
     private let user = ExecuteUser(id: UUID(), email: "home-custom@example.invalid", displayName: "Fixture")
     private func model(_ repo: TrackFixtureRepository, defaults: UserDefaults? = nil) async -> HomeViewModel {
         let defaults = defaults ?? UserDefaults(suiteName: "HomeCustomization.\(UUID())")!
-        let cache = UserScopedCacheStore(defaults: defaults)
+        let cache = UserScopedCacheStore(suiteName: "HomeCustomization.Cache.\(UUID())")
         await cache.activate(userID: repo.user.id)
         let model = HomeViewModel(dataService: nil, cache: cache, realtimeService: nil, router: AppRouter(), defaults: defaults,
             canTrackGoals: { _ in true }, customizationRepository: repo)
@@ -104,14 +104,15 @@ import XCTest
         XCTAssertEqual(repo.writes, 0); XCTAssertTrue(model.snapshot.customChecklistItems.isEmpty); XCTAssertNil(model.customizationError)
     }
     func testPendingActionStaysWithOriginalAccountAndDeletionPurgesIt() async {
-        let repo = TrackFixtureRepository(user: user), defaults = UserDefaults(suiteName: "HomeCustomization.Owners.\(UUID())")!
+        let suite = "HomeCustomization.Owners.\(UUID())"
+        let repo = TrackFixtureRepository(user: user), defaults = UserDefaults(suiteName: suite)!
         let model = await model(repo, defaults: defaults); repo.failBeforeWrite = true
         let outcome12 = await model.addCustomChecklistItem(label: "A pending draft", days: [], endsOn: nil); XCTAssertFalse(outcome12)
         XCTAssertNotNil(model.customizationIntent)
         let b = ExecuteUser(id: UUID(), email: "b@example.invalid", displayName: "B")
         repo.user = b; await model.start(for: b)
         XCTAssertNil(model.customizationIntent); XCTAssertNil(model.customizationError)
-        let cache = UserScopedCacheStore(defaults: defaults); await cache.activate(userID: b.id); await cache.purge(userID: user.id)
+        let cache = UserScopedCacheStore(suiteName: suite); await cache.activate(userID: b.id); await cache.purge(userID: user.id)
         XCTAssertNil(defaults.data(forKey: HomeCustomizationIntent.key(user.id)))
         XCTAssertEqual(repo.writes, 0)
     }
@@ -123,8 +124,9 @@ import XCTest
         XCTAssertNil(model.customizationIntent); XCTAssertEqual(repo.writes, 0)
     }
     func testRevokedWriteAuthorityCannotRecreatePurgedLocalPreferences() async {
-        let repo = TrackFixtureRepository(user: user), defaults = UserDefaults(suiteName: "HomeCustomization.Revoked.\(UUID())")!
-        let cache = UserScopedCacheStore(defaults: defaults); await cache.activate(userID: user.id)
+        let suite = "HomeCustomization.Revoked.\(UUID())"
+        let repo = TrackFixtureRepository(user: user), defaults = UserDefaults(suiteName: suite)!
+        let cache = UserScopedCacheStore(suiteName: suite); await cache.activate(userID: user.id)
         var allowed = true
         let model = HomeViewModel(dataService: nil, cache: cache, realtimeService: nil, router: AppRouter(), defaults: defaults,
             canTrackGoals: { _ in allowed }, customizationRepository: repo)

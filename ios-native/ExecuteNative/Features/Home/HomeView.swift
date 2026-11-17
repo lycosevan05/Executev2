@@ -27,14 +27,15 @@ private struct HomeScreen: View {
             cache: environment.cache,
             realtimeService: environment.realtimeService,
             router: environment.router,
-            canTrackGoals: { environment.appState.allowsDraftWrites(for: $0) }
+            canTrackGoals: { environment.appState.allowsDraftWrites(for: $0) },
+            customizationRepository: environment.makeRecoveryRepository()
         ))
     }
 
     var body: some View {
         HomeDashboardView(model: model)
             .task(id: signedInUser?.id) {
-                if let signedInUser { await model.start(for: signedInUser) }
+                if let signedInUser { await model.start(for: signedInUser) } else { await model.stop() }
             }
             .onReceive(NotificationCenter.default.publisher(for: .recoveryDidChange)) { notification in
                 guard notification.object as? UUID == signedInUser?.id else { return }
