@@ -555,3 +555,8 @@ E31 live Nutrition preview revealed workouts despite the retained nutrition-only
 ## 2026-11-17 — Accept first-plan setup separately from supplied-plan replacement
 
 E32 closes W16 after actual three-focus provider previews, corrected Nutrition-only behavior, exact unsaved preview restore, one reviewed Save, normal saved-plan relaunch/Home readback and independent exact-owner17-group CSV review.0→5records are the master,threequestionnaireprofiles andonequestionnairegoal; noactivity. Keep W17 scanned-PDF replacement/save/duration mapping separate despite valid OCR subcase. Counts38/45accepted,7open,9gates; provider incomplete responses remain safely rejected and final hardware/error gates stay open.
+
+
+## 2026-11-17 — Decode AI envelopes without repeating the provider invocation
+
+A structured-response decoding or transport failure previously invoked invoke-llm a second time. Use one generic Decodable wrapper around the original SDK response, first decoding the requested type and then supported text/output_text envelopes from that same payload. Preserve decoder strategies and exact large integers without a JSONValue/Double conversion; propagate transport/cancellation errors without retry. Five focused methods pass, four new. Normal Debug simulator/device builds and host signatures pass; the now-available usual paired iPhone accepts normal installation. No physical workflow acceptance or release-gate closure is inferred. W17 manual synthetic-answer entry remains pending; no replacement Generate/Save, counts38/45 accepted, seven open, nine gates.

@@ -1887,3 +1887,84 @@ final class SplitOverviewDisplayTests: XCTestCase {
         XCTAssertEqual(master.data["weekly_overview"]?["days"]?.recoveryArray?.first, raw)
     }
 }
+
+
+/// Real SDK function serialization/decoding with local URLProtocol responses only.
+@MainActor final class AIServiceSingleInvocationTests: XCTestCase {
+    private struct Answer: Decodable, Sendable, Equatable { let answer: String }
+    private struct PreciseAnswer: Decodable, Sendable { let sequence: Int64; let date: Date }
+    private var request: LLMRequest { LLMRequest(prompt: "Synthetic fixture only", fileURLs: [], maxOutputTokens: 10, responseJSONSchema: nil, schemaName: nil) }
+    private func service(shape: String) -> (SupabaseAIService, String) {
+        let host = "\(shape).\(UUID().uuidString.lowercased()).ai-fixture.invalid"
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AIServiceFixtureProtocol.self]
+        let client = SupabaseClient(supabaseURL: URL(string: "https://\(host)")!, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: AuthFixtureStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: URLSession(configuration: configuration))))
+        return (SupabaseAIService(functions: SupabaseEdgeFunctionService(client: client)), host)
+    }
+    func testDirectStructuredResponseUsesOneInvocationAndPreservesDecoderStrategyAndInteger() async throws {
+        let (ai, host) = service(shape: "precise")
+        let result = try await ai.structuredResponse(request, as: PreciseAnswer.self)
+        XCTAssertEqual(result.sequence, 9_007_199_254_740_993)
+        XCTAssertEqual(result.date, ISO8601DateFormatter().date(from: "2026-11-17T00:00:00Z"))
+        XCTAssertEqual(AIServiceFixtureProtocol.traffic.count(host), 1)
+    }
+    func testTextAndOutputTextEnvelopesDecodeWithoutSecondInvocation() async throws {
+        for shape in ["text", "output"] {
+            let (ai, host) = service(shape: shape)
+            let result = try await ai.structuredResponse(request, as: Answer.self)
+            XCTAssertEqual(result, Answer(answer: "ready"))
+            XCTAssertEqual(AIServiceFixtureProtocol.traffic.count(host), 1)
+        }
+    }
+    func testMalformedTypedAndWrappedResponsesNeverInvokeProviderAgain() async {
+        for shape in ["wrong", "malformed", "invalid-json"] {
+            let (ai, host) = service(shape: shape)
+            do { let _: Answer = try await ai.structuredResponse(request, as: Answer.self); XCTFail("Expected malformed response failure") }
+            catch { }
+            XCTAssertEqual(AIServiceFixtureProtocol.traffic.count(host), 1)
+        }
+    }
+    func testTransportAndCancellationErrorsPropagateWithoutRepeatingInvocation() async {
+        for code in [URLError.Code.notConnectedToInternet, .cancelled] {
+            let fixture = DeletionFunctionFixture(); fixture.failure = URLError(code)
+            let ai = SupabaseAIService(functions: fixture)
+            do { let _: Answer = try await ai.structuredResponse(request, as: Answer.self); XCTFail("Expected original transport failure") }
+            catch let error as URLError { XCTAssertEqual(error.code, code) }
+            catch { XCTFail("Transport error was replaced: \(error)") }
+            XCTAssertEqual(fixture.calls, 1)
+        }
+        let cancelled = DeletionFunctionFixture(); cancelled.failure = CancellationError()
+        do { let _: Answer = try await SupabaseAIService(functions: cancelled).structuredResponse(request, as: Answer.self); XCTFail("Expected cancellation") }
+        catch is CancellationError { }
+        catch { XCTFail("Cancellation was replaced: \(error)") }
+        XCTAssertEqual(cancelled.calls, 1)
+    }
+}
+
+private final class AIServiceFixtureProtocol: URLProtocol, @unchecked Sendable {
+    static let traffic = CallbackFixtureTraffic()
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".ai-fixture.invalid") == true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url, let host = url.host, url.path == "/functions/v1/invoke-llm", request.httpMethod == "POST" else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        _ = Self.traffic.record(host)
+        let body: Data
+        switch host.components(separatedBy: ".")[0] {
+        case "precise": body = Data(#"{"sequence":9007199254740993,"date":"2026-11-17T00:00:00Z"}"#.utf8)
+        case "text": body = try! JSONSerialization.data(withJSONObject: ["text": "```json\n{\"answer\":\"ready\"}\n```"])
+        case "output": body = try! JSONSerialization.data(withJSONObject: ["output_text": "{\"answer\":\"ready\"}"])
+        case "wrong": body = Data(#"{"unrelated":true}"#.utf8)
+        case "invalid-json": body = Data("not-json".utf8)
+        default: body = Data(#"{"output_text":"not valid JSON"}"#.utf8)
+        }
+        let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() { }
+}

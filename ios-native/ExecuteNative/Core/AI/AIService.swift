@@ -54,14 +54,9 @@ final class SupabaseAIService: AIResponding {
     init(functions: EdgeFunctionInvoking) { self.functions = functions }
 
     func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
-        do {
-            return try await functions.invoke("invoke-llm", request: request, response: Response.self)
-        } catch {
-            // Some older records and model responses are wrapped in markdown or an alternate JSON shape.
-            let wrapped: LLMTextResponse = try await functions.invoke("invoke-llm", request: request, response: LLMTextResponse.self)
-            guard let text = wrapped.resolvedText else { throw error }
-            return try AIResponseNormalizer.decode(Response.self, from: text)
-        }
+        let response: StructuredAIResponse<Response> = try await functions.invoke(
+            "invoke-llm", request: request, response: StructuredAIResponse<Response>.self)
+        return response.value
     }
 
     func textResponse(_ request: LLMRequest) async throws -> String {
@@ -71,6 +66,23 @@ final class SupabaseAIService: AIResponding {
             throw AppError(title: "AI returned no response", message: "The secure AI service returned an empty result.")
         }
         return text
+    }
+}
+
+/// Decode both supported shapes from the same response. Retrying a decode must never
+/// repeat the provider request, including when transport or cancellation already failed.
+private struct StructuredAIResponse<Value: Decodable & Sendable>: Decodable, Sendable {
+    let value: Value
+    init(from decoder: Decoder) throws {
+        do {
+            value = try Value(from: decoder)
+        } catch {
+            let originalError = error
+            guard let wrapped = try? LLMTextResponse(from: decoder), let text = wrapped.resolvedText else {
+                throw originalError
+            }
+            value = try AIResponseNormalizer.decode(Value.self, from: text)
+        }
     }
 }
 
