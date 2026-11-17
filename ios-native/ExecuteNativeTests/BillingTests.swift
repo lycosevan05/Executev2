@@ -818,3 +818,36 @@ final class BillingAuthenticationRaceTests: XCTestCase {
         XCTAssertEqual(model.launchState, .signedOut)
     }
 }
+
+
+final class ProfilePremiumPresentationTests: XCTestCase {
+    private let now = ISO8601DateFormatter().date(from: "2026-11-17T22:50:00Z")!
+
+    func testPastOrEqualBackendPeriodKeepsAccessWithoutHistoricalActiveThroughCopy() {
+        for period in ["2026-06-03T20:02:32.000Z", "2026-11-17T22:50:00Z"] {
+            let row = BillingSubscription(userID: "synthetic@example.invalid", plan: "premium", status: "active", currentPeriodEnd: period)
+            let state = PremiumState.resolve(server: row, live: .free, now: now)
+            XCTAssertTrue(state.isPremium)
+            XCTAssertEqual(state.expirationDate, row.periodEnd)
+            XCTAssertEqual(ProfilePremiumPresentation.detail(for: state, now: now), "Your premium access is active")
+        }
+    }
+
+    func testFutureLiveGrantStillWinsOverPastBackendAndShowsItsDate() {
+        let row = BillingSubscription(userID: "synthetic@example.invalid", plan: "premium", status: "active", currentPeriodEnd: "2026-06-03T20:02:32.000Z")
+        let future = ISO8601DateFormatter().date(from: "2026-11-24T07:23:00Z")!
+        let live = PremiumState(isPremium: true, entitlementIdentifier: "Execute Performance Premium", expirationDate: future)
+        let state = PremiumState.resolve(server: row, live: live, now: now)
+        XCTAssertTrue(state.isPremium)
+        XCTAssertEqual(state.expirationDate, future)
+        XCTAssertEqual(ProfilePremiumPresentation.detail(for: state, now: now), "Active through \(future.formatted(.dateTime.month(.abbreviated).day().year()))")
+    }
+
+    func testUnknownPremiumPeriodAndFreeCopyRemainUnchanged() {
+        let row = BillingSubscription(userID: "synthetic@example.invalid", plan: "premium", status: "trialing")
+        let state = PremiumState.resolve(server: row, live: nil, now: now)
+        XCTAssertTrue(state.isPremium); XCTAssertNil(state.expirationDate)
+        XCTAssertEqual(ProfilePremiumPresentation.detail(for: state, now: now), "Your premium access is active")
+        XCTAssertEqual(ProfilePremiumPresentation.detail(for: .free, now: now), "AI plans, guidance and performance insights")
+    }
+}

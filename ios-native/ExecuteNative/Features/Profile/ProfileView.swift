@@ -496,11 +496,7 @@ private struct ProfilePremiumCard: View {
     }
 
     private var premiumDetail: String {
-        guard state.isPremium else { return "AI plans, guidance and performance insights" }
-        if let expirationDate = state.expirationDate {
-            return "Active through \(expirationDate.formatted(.dateTime.month(.abbreviated).day().year()))"
-        }
-        return "Your premium access is active"
+        ProfilePremiumPresentation.detail(for: state)
     }
 }
 

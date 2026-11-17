@@ -146,3 +146,14 @@ struct ProfilePreferenceField: Identifiable {
     }
     private func invalid() -> AppError { AppError(title: "Preference needs review", message: "Check \(title.lowercased()). Unsupported saved values are preserved until reviewed.") }
 }
+
+
+/// Profile copy reflects the resolved access state without presenting a historical
+/// billing period as a future access guarantee. Entitlement resolution is unchanged.
+enum ProfilePremiumPresentation {
+    static func detail(for state: PremiumState, now: Date = Date()) -> String {
+        guard state.isPremium else { return "AI plans, guidance and performance insights" }
+        guard let expiration = state.expirationDate, expiration > now else { return "Your premium access is active" }
+        return "Active through \(expiration.formatted(.dateTime.month(.abbreviated).day().year()))"
+    }
+}
