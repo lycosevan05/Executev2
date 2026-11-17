@@ -9,14 +9,63 @@ import UniformTypeIdentifiers
     private let date = "2026-11-15"
     private func expect(_ expected: Bool, _ actual: Bool, file: StaticString = #filePath, line: UInt = #line) { XCTAssertEqual(actual, expected, file: file, line: line) }
     private func model(_ data: CaptureData, defaults: UserDefaults? = nil, ai: CaptureAI? = nil, lookup: CaptureLookup? = nil,
-                       photo: @escaping () -> Bool = { true }, allowed: @escaping (UUID) -> Bool = { _ in true }) -> FoodCaptureModel {
-        let model = FoodCaptureModel(data: data, ai: ai, lookup: lookup ?? CaptureLookup(), defaults: defaults ?? UserDefaults(suiteName: "CaptureTest.\(UUID())")!, canUsePhoto: photo, canAct: allowed)
+                       photo: @escaping () -> Bool = { true }, repository: RecoveryRepository? = nil, allowed: @escaping (UUID) -> Bool = { _ in true }) -> FoodCaptureModel {
+        let model = FoodCaptureModel(data: data, ai: ai, lookup: lookup ?? CaptureLookup(), defaults: defaults ?? UserDefaults(suiteName: "CaptureTest.\(UUID())")!, providerRepository: repository, canUsePhoto: photo, canAct: allowed)
         model.start(user: user, date: date); return model
     }
     private func product(_ values: [String: JSONValue] = [:]) -> JSONValue {
         .object(["product_name": .string("Synthetic cereal"), "serving_size": .string("25 g"), "nutriments": .object([
             "energy-kcal_100g": .number(400), "proteins_100g": .number(10), "carbohydrates_100g": .number(50), "fat_100g": .number(15)
         ].merging(values) { _, new in new })])
+    }
+
+    func testPhotoSDKOnlyAccountSwitchBeforeModelStopSuppressesLateSuccessAndFailure() async {
+        for fail in [false, true] {
+            let data = CaptureData(), ai = CaptureAI(), repository = CaptureProviderSession(user: user)
+            let capture = model(data, ai: ai, repository: repository)
+            ai.failResponse = fail
+            ai.beforeCompletion = { repository.user = ExecuteUser(id: UUID(), email: "other@example.invalid", displayName: "Other") }
+            await capture.estimatePhoto(Data([1]))
+            XCTAssertNil(capture.review); XCTAssertNil(capture.error); XCTAssertFalse(capture.isWorking)
+            XCTAssertEqual(ai.requests.count, 1); XCTAssertEqual(data.creates, 0)
+        }
+    }
+
+    func testBarcodeSDKOnlyTokenChangeBeforeModelStopSuppressesLateSuccessAndFailure() async {
+        for fail in [false, true] {
+            let data = CaptureData(), lookup = CaptureLookup(), repository = CaptureProviderSession(user: user)
+            let capture = model(data, lookup: lookup, repository: repository)
+            lookup.failResponse = fail
+            lookup.beforeCompletion = { repository.token = "refreshed-fixture" }
+            await capture.findProduct("3017620422003")
+            XCTAssertNil(capture.review); XCTAssertNil(capture.error); XCTAssertFalse(capture.isWorking)
+            XCTAssertEqual(lookup.calls, 1); XCTAssertEqual(data.creates, 0)
+        }
+    }
+
+    func testProviderRequestsDoNotStartWhenSDKOwnerAlreadyDiffers() async {
+        let data = CaptureData(), ai = CaptureAI(), lookup = CaptureLookup(), repository = CaptureProviderSession(user: user)
+        let capture = model(data, ai: ai, lookup: lookup, repository: repository)
+        repository.user = ExecuteUser(id: UUID(), email: "other@example.invalid", displayName: "Other")
+        await capture.estimatePhoto(Data([1]))
+        await capture.findProduct("3017620422003")
+        XCTAssertEqual(ai.requests.count, 0); XCTAssertEqual(lookup.calls, 0)
+        XCTAssertNil(capture.review); XCTAssertNil(capture.error); XCTAssertFalse(capture.isWorking)
+    }
+
+    func testUnchangedSDKIdentityPublishesProviderSuccessAndFailureWithoutWrites() async {
+        for fail in [false, true] {
+            let data = CaptureData(), ai = CaptureAI(), lookup = CaptureLookup(), repository = CaptureProviderSession(user: user)
+            let capture = model(data, ai: ai, lookup: lookup, repository: repository)
+            ai.failResponse = fail; lookup.failResponse = fail
+            await capture.estimatePhoto(Data([1]))
+            XCTAssertEqual(capture.review == nil, fail); XCTAssertEqual(capture.error != nil, fail)
+            capture.clearReview()
+            await capture.findProduct("3017620422003")
+            XCTAssertEqual(capture.review == nil, fail); XCTAssertEqual(capture.error != nil, fail)
+            XCTAssertEqual(ai.requests.count, 1); XCTAssertEqual(lookup.calls, 1)
+            XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+        }
     }
 
     func testCancelledTextEstimateCannotReappearAfterDismissal() async {
@@ -421,7 +470,15 @@ import UniformTypeIdentifiers
 
 @MainActor private final class CaptureLookup: FoodProductLookingUp {
     static let review = FoodCaptureReview(draft: NutritionEntryDraft(name: "SYNTHETIC QA packaged food", mealType: .snack, calories: 100, protein: 5, carbs: 10, fats: 2, method: .barcode), portion: "1 serving (25 g)", source: "Fixture product data", barcode: "3017620422003")
-    func product(code: String) async throws -> FoodCaptureReview { Self.review }
+    var beforeCompletion: (() async -> Void)?
+    var failResponse = false
+    var calls = 0
+    func product(code: String) async throws -> FoodCaptureReview {
+        calls += 1
+        await beforeCompletion?()
+        if failResponse { throw URLError(.timedOut) }
+        return Self.review
+    }
 }
 
 @MainActor private final class CaptureAI: AIResponding {
@@ -468,4 +525,26 @@ import UniformTypeIdentifiers
         rows[table]![index] = row; updates += 1; return try EntityRecord(row: row)
     }
     func delete(_ table: EntityTable, id: UUID) async throws { XCTAssertEqual(table, .foodLogs); rows[table]?.removeAll { $0.id == id } }
+}
+
+@MainActor private final class CaptureProviderSession: RecoveryRepository {
+    var user: ExecuteUser
+    var token = "original-fixture"
+    init(user: ExecuteUser) { self.user = user }
+    func identity(for user: ExecuteUser) throws -> RecoveryIdentity {
+        guard self.user.id == user.id else { throw CancellationError() }
+        return RecoveryIdentity(user: user, token: token)
+    }
+    func validate(_ identity: RecoveryIdentity) throws {
+        guard identity.user.id == user.id, identity.token == token else { throw CancellationError() }
+    }
+    func rows(_ table: EntityTable, fields: [String: String], identity: RecoveryIdentity) async throws -> [BackendRow] {
+        XCTFail("Provider publication must not read saved records"); throw CancellationError()
+    }
+    func recent(_ table: EntityTable, through date: String, identity: RecoveryIdentity) async throws -> [BackendRow] {
+        XCTFail("Provider publication must not read saved history"); throw CancellationError()
+    }
+    func write(_ table: EntityTable, id: UUID?, patch: JSONValue, identity: RecoveryIdentity) async throws -> BackendRow {
+        XCTFail("Provider publication must not write records"); throw CancellationError()
+    }
 }

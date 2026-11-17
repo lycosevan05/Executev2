@@ -35,6 +35,7 @@ struct FoodCaptureSheet: View {
         captureDate = nutrition.dateString; captureDateLabel = nutrition.dateLabel
         _appState = ObservedObject(wrappedValue: environment.appState)
         _capture = StateObject(wrappedValue: FoodCaptureModel(data: environment.dataService, ai: environment.aiService,
+            providerRepository: environment.makeRecoveryRepository(),
             canUsePhoto: { environment.appState.premiumState.isPremium },
             canAct: { environment.appState.allowsDraftWrites(for: $0) }))
     }

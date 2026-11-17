@@ -1,4 +1,5 @@
 import XCTest
+import Supabase
 @testable import ExecuteNative
 
 @MainActor
@@ -265,4 +266,214 @@ private final class TextFoodRepository: RecoveryRepository, EntityDataServicing 
     }
     func delete(_ table: EntityTable, id: UUID) async throws { storage[table]?.removeAll { $0.id == id } }
 
+}
+
+
+@MainActor final class NutritionSessionTests: XCTestCase {
+    func testSDKSwitchDuringReadRejectsRowsAndErrorsWithoutOverwritingNextOwnersCache() async throws {
+        for fail in [false, true] {
+            let fixture = try await NutritionSessionFixture(); defer { fixture.close() }
+            var nextCache = NutritionSnapshot.empty(date: fixture.model.dateString)
+            nextCache.targets = .init(calories: 3333, protein: 133, carbs: 233, fats: 73)
+            fixture.data.beforeReturn = { table in
+                guard table == .foodLogs else { return }
+                try await fixture.signIn(NutritionSessionAuthProtocol.ownerB)
+                await fixture.cache.activate(userID: NutritionSessionAuthProtocol.ownerB.id)
+                try await fixture.cache.write(nextCache, for: fixture.key, userID: NutritionSessionAuthProtocol.ownerB.id)
+                if fail { throw URLError(.networkConnectionLost) }
+            }
+            // The model still belongs to A: do not call stop/start to simulate SwiftUI processing the SDK event.
+            await fixture.model.start(for: fixture.owner)
+            XCTAssertEqual(fixture.client.auth.currentSession?.user.id, NutritionSessionAuthProtocol.ownerB.id)
+            XCTAssertEqual(fixture.model.snapshot, .empty(date: fixture.model.dateString))
+            XCTAssertNil(fixture.model.error); XCTAssertFalse(fixture.model.isRefreshing)
+            XCTAssertFalse(fixture.model.isInitialLoading)
+            let cached = await fixture.cache.read(fixture.key, as: NutritionSnapshot.self, userID: NutritionSessionAuthProtocol.ownerB.id)
+            guard case .fresh(let saved) = cached else { return XCTFail("B cache lost") }
+            XCTAssertEqual(saved, nextCache); XCTAssertEqual(fixture.data.writes, 0)
+        }
+    }
+
+    func testCachedRestoreRequiresCapturedCacheOwnerAndCurrentSDKIdentity() async throws {
+        for switchSDK in [false, true] {
+            let fixture = try await NutritionSessionFixture(); defer { fixture.close() }
+            var nextCache = NutritionSnapshot.empty(date: fixture.model.dateString)
+            nextCache.targets = .init(calories: 3333, protein: 133, carbs: 233, fats: 73)
+            await fixture.cache.activate(userID: NutritionSessionAuthProtocol.ownerB.id)
+            try await fixture.cache.write(nextCache, for: fixture.key, userID: NutritionSessionAuthProtocol.ownerB.id)
+            if switchSDK { try await fixture.signIn(NutritionSessionAuthProtocol.ownerB) }
+            fixture.data.beforeReturn = { _ in throw URLError(.notConnectedToInternet) }
+            await fixture.model.start(for: fixture.owner)
+            XCTAssertEqual(fixture.model.snapshot, .empty(date: fixture.model.dateString))
+            if switchSDK { XCTAssertNil(fixture.model.error) } else { XCTAssertNotNil(fixture.model.error) }
+            let cached = await fixture.cache.read(fixture.key, as: NutritionSnapshot.self, userID: NutritionSessionAuthProtocol.ownerB.id)
+            guard case .fresh(let saved) = cached else { return XCTFail("B cache lost") }
+            XCTAssertEqual(saved, nextCache); XCTAssertEqual(fixture.data.writes, 0)
+        }
+    }
+
+    func testSDKSwitchDuringEstimateDiscardsProviderResultAndFailure() async throws {
+        for fail in [false, true] {
+            let fixture = try await NutritionSessionFixture(); defer { fixture.close() }
+            await fixture.model.start(for: fixture.owner)
+            fixture.ai.beforeReturn = { try await fixture.signIn(NutritionSessionAuthProtocol.ownerB) }
+            fixture.ai.fail = fail
+            await fixture.model.analyze("Synthetic oats")
+            XCTAssertEqual(fixture.client.auth.currentSession?.user.id, NutritionSessionAuthProtocol.ownerB.id)
+            XCTAssertNil(fixture.model.aiEstimate); XCTAssertNil(fixture.model.error)
+            XCTAssertFalse(fixture.model.isAnalyzing); XCTAssertEqual(fixture.data.writes, 0)
+        }
+    }
+
+    func testForeignNutritionRowsCannotPublishOrPopulateCache() async throws {
+        let fixture = try await NutritionSessionFixture(); defer { fixture.close() }
+        fixture.data.rows[.foodLogs] = [fixture.data.food(owner: NutritionSessionAuthProtocol.ownerB)]
+        await fixture.model.start(for: fixture.owner)
+        XCTAssertNotNil(fixture.model.error)
+        XCTAssertEqual(fixture.model.snapshot, .empty(date: fixture.model.dateString))
+        let cached = await fixture.cache.read(fixture.key, as: NutritionSnapshot.self, userID: fixture.owner.id)
+        guard case .missing = cached else { return XCTFail("Foreign rows populated A cache") }
+        XCTAssertEqual(fixture.data.writes, 0)
+    }
+
+    func testOlderReloadFailureCannotReplaceNewerSuccessfulSnapshot() async throws {
+        let fixture = try await NutritionSessionFixture(); defer { fixture.close() }
+        fixture.data.beforeReturn = { table in
+            guard table == .foodLogs else { return }
+            fixture.data.beforeReturn = nil
+            fixture.data.rows[.foodLogs] = [fixture.data.food(calories: 200)]
+            await fixture.model.refresh()
+            throw URLError(.networkConnectionLost)
+        }
+        await fixture.model.start(for: fixture.owner)
+        XCTAssertEqual(fixture.model.totals.calories, 200)
+        XCTAssertNil(fixture.model.error); XCTAssertFalse(fixture.model.isRefreshing)
+        XCTAssertFalse(fixture.model.isInitialLoading)
+    }
+
+    func testUnchangedSDKOwnerLoadsCachesRestoresAndAnalyzesNormally() async throws {
+        let fixture = try await NutritionSessionFixture(); defer { fixture.close() }
+        await fixture.model.start(for: fixture.owner)
+        XCTAssertEqual(fixture.model.totals.calories, 100); XCTAssertNil(fixture.model.error)
+        let cached = await fixture.cache.read(fixture.key, as: NutritionSnapshot.self, userID: fixture.owner.id)
+        guard case .fresh(let saved) = cached else { return XCTFail("Owned snapshot was not cached") }
+        XCTAssertEqual(saved, fixture.model.snapshot)
+        await fixture.model.stop()
+        fixture.data.beforeReturn = { _ in throw URLError(.notConnectedToInternet) }
+        await fixture.model.start(for: fixture.owner)
+        XCTAssertEqual(fixture.model.snapshot, saved) // Same-owner offline cache remains usable.
+        XCTAssertNotNil(fixture.model.error)
+        await fixture.model.analyze("Synthetic oats")
+        XCTAssertEqual(fixture.model.aiEstimate?.drafts(mealType: .snack).first?.calories, 100)
+        XCTAssertNil(fixture.model.error); XCTAssertFalse(fixture.model.isAnalyzing)
+        XCTAssertEqual(fixture.data.writes, 0)
+    }
+}
+
+@MainActor private final class NutritionSessionFixture {
+    let owner = NutritionSessionAuthProtocol.ownerA
+    let client: SupabaseClient
+    let cache: UserScopedCacheStore
+    let data: NutritionSessionData
+    let ai = NutritionSessionAI()
+    let model: NutritionViewModel
+    private let session: URLSession
+    private let suite = "NutritionSession.\(UUID())"
+    private let defaults: UserDefaults
+    var key: CacheKey { CacheKey("nutrition", model.dateString) }
+    init() async throws {
+        defaults = UserDefaults(suiteName: suite)!
+        cache = UserScopedCacheStore(suiteName: suite)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [NutritionSessionAuthProtocol.self]
+        session = URLSession(configuration: configuration)
+        client = SupabaseClient(supabaseURL: URL(string: "https://\(UUID().uuidString.lowercased()).nutrition-session.invalid")!,
+            supabaseKey: "public-fixture-only", options: .init(
+                auth: .init(storage: NutritionSessionAuthStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+                global: .init(session: session)))
+        data = NutritionSessionData(user: owner)
+        model = NutritionViewModel(dataService: data, aiService: ai, cache: cache, realtimeService: nil, router: AppRouter(),
+            initialDate: Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 17, hour: 12))!,
+            textFoodRepository: SupabaseRecoveryRepository(client: client), textFoodDefaults: defaults)
+        try await signIn(owner); await cache.activate(userID: owner.id)
+    }
+    func signIn(_ user: ExecuteUser) async throws {
+        _ = try await client.auth.verifyOTP(email: user.email, token: "fixture-only", type: .email)
+        XCTAssertEqual(client.auth.currentSession?.user.id, user.id)
+    }
+    func close() { session.invalidateAndCancel(); defaults.removePersistentDomain(forName: suite) }
+}
+
+@MainActor private final class NutritionSessionAI: AIResponding {
+    var beforeReturn: (() async throws -> Void)?
+    var fail = false
+    func structuredResponse<R: Decodable & Sendable>(_ request: LLMRequest, as type: R.Type) async throws -> R {
+        try await beforeReturn?()
+        if fail { throw URLError(.networkConnectionLost) }
+        let estimate = NutritionAIEstimate(foods: [.init(name: "Synthetic oats", portion: "1 bowl", calories: 100, protein: 5, carbs: 15, fats: 2)],
+            totalCalories: 100, totalProtein: 5, totalCarbs: 15, totalFats: 2)
+        return try JSONDecoder.execute.decode(R.self, from: JSONEncoder.execute.encode(estimate))
+    }
+    func textResponse(_ request: LLMRequest) async throws -> String { throw URLError(.unsupportedURL) }
+}
+
+@MainActor private final class NutritionSessionData: EntityDataServicing {
+    let user: ExecuteUser
+    var rows: [EntityTable: [BackendRow]] = [:]
+    var beforeReturn: ((EntityTable) async throws -> Void)?
+    var writes = 0
+    init(user: ExecuteUser) { self.user = user; rows[.foodLogs] = [food()] }
+    func food(owner: ExecuteUser? = nil, calories: Double = 100) -> BackendRow {
+        let owner = owner ?? user
+        return BackendRow(id: UUID(), ownerID: owner.id, ownerEmail: owner.email, createdBy: owner.email, userEmail: owner.email,
+            createdDate: Date(), updatedDate: Date(), data: .object(["date": .string("2026-11-17"), "notes": .string("Synthetic oats"),
+                "total_calories": .number(calories), "total_protein_g": .number(5), "total_carbs_g": .number(15), "total_fats_g": .number(2)]))
+    }
+    func list<P: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<P>] {
+        try await beforeReturn?(table)
+        return try (rows[table] ?? []).prefix(limit).map { try EntityRecord(row: $0) }
+    }
+    func create<P: Codable & Sendable>(_ table: EntityTable, payload: P, user: ExecuteUser) async throws -> EntityRecord<P> { writes += 1; throw URLError(.unsupportedURL) }
+    func update<P: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<P> { writes += 1; throw URLError(.unsupportedURL) }
+    func delete(_ table: EntityTable, id: UUID) async throws { writes += 1; throw URLError(.unsupportedURL) }
+}
+
+private final class NutritionSessionAuthStorage: AuthLocalStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+    func store(key: String, value: Data) throws { lock.lock(); defer { lock.unlock() }; values[key] = value }
+    func retrieve(key: String) throws -> Data? { lock.lock(); defer { lock.unlock() }; return values[key] }
+    func remove(key: String) throws { lock.lock(); defer { lock.unlock() }; values[key] = nil }
+}
+
+private final class NutritionSessionAuthProtocol: URLProtocol, @unchecked Sendable {
+    static let ownerA = ExecuteUser(id: UUID(uuidString: "52000000-0000-0000-0000-000000000001")!, email: "nutrition-a@example.invalid", displayName: "A")
+    static let ownerB = ExecuteUser(id: UUID(uuidString: "52000000-0000-0000-0000-000000000002")!, email: "nutrition-b@example.invalid", displayName: "B")
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".nutrition-session.invalid") == true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url, url.path == "/auth/v1/verify" else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        do {
+            var body = request.httpBody ?? Data()
+            if body.isEmpty, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 1024)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    guard count > 0 else { break }; body.append(buffer, count: count)
+                }
+            }
+            let input = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            let owner = input?["email"] as? String == Self.ownerB.email ? Self.ownerB : Self.ownerA
+            let response: [String: Any] = ["access_token": "fixture-\(owner.id)-not-real", "refresh_token": "fixture-refresh-not-real",
+                "token_type": "bearer", "expires_in": 3600, "expires_at": Int(Date().timeIntervalSince1970) + 3600,
+                "user": ["id": owner.id.uuidString, "aud": "authenticated", "role": "authenticated", "email": owner.email,
+                    "app_metadata": [:], "user_metadata": [:], "created_at": "2026-11-16T00:00:00Z", "updated_at": "2026-11-16T00:00:00Z"]]
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: try JSONSerialization.data(withJSONObject: response))
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() { }
 }

@@ -351,6 +351,72 @@ import Supabase
     }
 }
 
+@MainActor final class HomeReadBoundaryTests: XCTestCase {
+    func testUnchangedRepositoryIdentityPublishesOwnedReadAndCachesIt() async throws {
+        try await exerciseRead()
+    }
+    func testRepositoryIdentitySwitchBeforeModelStopDiscardsReadAndCachePublication() async throws {
+        try await exerciseRead(switchIdentity: true)
+    }
+    func testRepositoryIdentitySwitchSuppressesLateReadFailure() async throws {
+        try await exerciseRead(switchIdentity: true, failing: true)
+    }
+    func testForeignReadRowsCannotEnterDashboardOrCache() async throws {
+        try await exerciseRead(foreignRows: true)
+    }
+    private func exerciseRead(switchIdentity: Bool = false, failing: Bool = false, foreignRows: Bool = false) async throws {
+        let a = ExecuteUser(id: UUID(), email: "home-read-a@example.invalid", displayName: "A")
+        let b = ExecuteUser(id: UUID(), email: "home-read-b@example.invalid", displayName: "B")
+        let rowID = UUID(), rowOwner = foreignRows ? b : a
+        let body = try JSONSerialization.data(withJSONObject: [["id": rowID.uuidString, "owner_id": rowOwner.id.uuidString,
+            "data": ["date": HomeDate.todayString, "calories_consumed": 206]]])
+        let host = "\(UUID().uuidString.lowercased()).home-cancellation.invalid"
+        let fixture = HomeCancellationFixture(body: body)
+        HomeCancellationProtocol.registry.set(fixture, host: host)
+        defer { fixture.releaseRead(failing: true); HomeCancellationProtocol.registry.set(nil, host: host) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HomeCancellationProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = SupabaseClient(supabaseURL: URL(string: "https://\(host)")!, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: HomeCancellationStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: session)))
+        let suite = "HomeReadBoundary.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let cache = UserScopedCacheStore(suiteName: suite); await cache.activate(userID: a.id)
+        // Real SDK transport plus the existing repository identity seam, not an SDK auth-session mutation.
+        let repository = TrackFixtureRepository(user: a)
+        let model = HomeViewModel(dataService: SupabaseDataService(client: client), cache: cache, realtimeService: nil,
+            router: AppRouter(), defaults: defaults, canTrackGoals: { _ in true }, customizationRepository: repository)
+        let suspended = expectation(description: "Actual dashboard SDK read waits before publication")
+        fixture.blockRead(table: "daily_logs") { suspended.fulfill() }
+        let loading = Task { await model.start(for: a) }
+        await fulfillment(of: [suspended], timeout: 3)
+        if switchIdentity { repository.user = b } // Model/AppState still retain A throughout.
+        fixture.releaseRead(failing: failing)
+        await loading.value
+        XCTAssertEqual(model.customizationOwner, a.id)
+        XCTAssertEqual(fixture.writeCount, 0)
+        if switchIdentity {
+            XCTAssertNil(model.snapshot.dailyLog); XCTAssertNil(model.error); XCTAssertNil(model.customizationError)
+            XCTAssertNil(defaults.data(forKey: "execute.cache.\(a.id.uuidString).home.dashboard"))
+            XCTAssertNil(defaults.data(forKey: "execute.cache.\(b.id.uuidString).home.dashboard"))
+        } else if foreignRows {
+            XCTAssertNil(model.snapshot.dailyLog); XCTAssertNotNil(model.error)
+            if case .fresh(let cached) = await cache.read(CacheKey("home", "dashboard"), as: HomeDashboardSnapshot.self, userID: a.id) {
+                XCTAssertNil(cached.dailyLog)
+            }
+        } else {
+            XCTAssertEqual(model.snapshot.dailyLogID, rowID); XCTAssertEqual(model.snapshot.dailyLog?.caloriesConsumed, 206)
+            XCTAssertNil(model.error); XCTAssertFalse(model.isInitialLoading)
+            guard case .fresh(let cached) = await cache.read(CacheKey("home", "dashboard"), as: HomeDashboardSnapshot.self, userID: a.id) else {
+                return XCTFail("Expected an owned dashboard cache after successful load")
+            }
+            XCTAssertEqual(cached.dailyLogID, rowID); XCTAssertEqual(cached.dailyLog?.caloriesConsumed, 206)
+        }
+    }
+}
+
 @MainActor final class HomeVitalSaveTests: XCTestCase {
     func testLateVitalSuccessCannotReplaceNextAccountDashboardOrCache() async throws {
         try await exerciseVitalSave(switchModel: true, failing: false)
@@ -448,6 +514,9 @@ private final class HomeCancellationFixture: @unchecked Sendable {
     var body: Data { lock.lock(); defer { lock.unlock() }; return responseBody }
     private var onWriteBlocked: (() -> Void)?
     private var pendingWrite: ((Bool) -> Void)?
+    private var heldReadTable: String?
+    private var onReadBlocked: (() -> Void)?
+    private var pendingRead: ((Bool) -> Void)?
     private var blockedTable: String?
     private var onBlocked: (() -> Void)?
     private var writes = 0
@@ -462,6 +531,19 @@ private final class HomeCancellationFixture: @unchecked Sendable {
     }
     func releaseWrite(failing: Bool) {
         lock.lock(); let callback = pendingWrite; pendingWrite = nil; lock.unlock()
+        callback?(failing)
+    }
+    func blockRead(table: String, onBlocked: @escaping () -> Void) {
+        lock.lock(); defer { lock.unlock() }; heldReadTable = table; onReadBlocked = onBlocked
+    }
+    func suspendRead(table: String, response: @escaping (Bool) -> Void) -> Bool {
+        lock.lock()
+        guard heldReadTable == table, let callback = onReadBlocked else { lock.unlock(); return false }
+        heldReadTable = nil; onReadBlocked = nil; pendingRead = response
+        lock.unlock(); callback(); return true
+    }
+    func releaseRead(failing: Bool) {
+        lock.lock(); let callback = pendingRead; pendingRead = nil; lock.unlock()
         callback?(failing)
     }
     var writeCount: Int { lock.lock(); defer { lock.unlock() }; return writes }
@@ -505,6 +587,7 @@ private final class HomeCancellationProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocolDidFinishLoading(self)
         }
         if request.httpMethod != "GET", fixture.suspendWrite(respond) { return }
+        if request.httpMethod == "GET", fixture.suspendRead(table: url.lastPathComponent, response: respond) { return }
         respond(false)
     }
     override func stopLoading() { }

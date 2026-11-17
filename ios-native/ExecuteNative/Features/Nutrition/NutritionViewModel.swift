@@ -19,10 +19,13 @@ final class NutritionViewModel: ObservableObject {
     private let realtimeService: RealtimeSubscribing?
     private let router: AppRouter
     private let textFoodSaver: TextFoodSave?
+    private let sessionRepository: RecoveryRepository?
     private let canSaveTextFood: (UUID) -> Bool
     private var user: ExecuteUser?
     private var subscriptions: [RealtimeSubscription] = []
     private var analysisGeneration = UUID()
+    private var sessionGeneration = UUID()
+    private var loadGeneration = UUID()
     private var activeTextSave: UUID?
     private var hasStarted = false
     private var activePlanID: UUID?
@@ -48,6 +51,7 @@ final class NutritionViewModel: ObservableObject {
         self.cache = cache
         self.realtimeService = realtimeService
         self.router = router
+        self.sessionRepository = textFoodRepository
         self.textFoodSaver = textFoodRepository.map { TextFoodSave(repository: $0, defaults: textFoodDefaults) }
         self.canSaveTextFood = canSaveTextFood
     }
@@ -123,11 +127,19 @@ final class NutritionViewModel: ObservableObject {
         if activeTextSave != nil { activeTextSave = nil; isSaving = false }
         clearAIEstimate()
         textFoodSaveReview = nil
+        sessionGeneration = UUID(); loadGeneration = UUID()
         self.user = user
         hasStarted = true
+        snapshot = .empty(date: dateString)
+        activePlanID = nil; activePlanSource = nil; activeGenerationBatchID = nil
+        error = nil; isInitialLoading = true; isRefreshing = false
+        guard let scope = try? readScope() else { isInitialLoading = false; return }
         await restoreCachedSnapshot()
+        guard (try? validate(scope)) != nil else { return }
         await reload()
-        await startRealtime()
+        guard (try? validate(scope)) != nil else { return }
+        await startRealtime(scope: scope)
+        guard (try? validate(scope)) != nil else { return }
         await reviewTextFoodSave()
     }
 
@@ -136,6 +148,8 @@ final class NutritionViewModel: ObservableObject {
         textFoodSaveReview = nil
         if activeTextSave != nil { activeTextSave = nil; isSaving = false }
         hasStarted = false
+        sessionGeneration = UUID(); loadGeneration = UUID()
+        isInitialLoading = false; isRefreshing = false
         user = nil
         let active = subscriptions
         subscriptions.removeAll()
@@ -153,6 +167,7 @@ final class NutritionViewModel: ObservableObject {
               day <= Calendar.current.startOfDay(for: .now),
               day != selectedDate else { return }
         clearAIEstimate()
+        loadGeneration = UUID()
         selectedDate = day
         snapshot = .empty(date: dateString)
         aiEstimate = nil
@@ -414,10 +429,9 @@ final class NutritionViewModel: ObservableObject {
     func analyze(_ description: String) async {
         let description = description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !description.isEmpty else { return }
+        guard let scope = try? readScope() else { return }
         let requestID = UUID()
         analysisGeneration = requestID
-        let owner = user?.id
-        let date = dateString
         isAnalyzing = true
         error = nil
         aiEstimate = nil
@@ -447,13 +461,14 @@ final class NutritionViewModel: ObservableObject {
 
         do {
             let result = try await aiService.structuredResponse(request, as: NutritionAIEstimate.self)
-            guard analysisGeneration == requestID, user?.id == owner, dateString == date else { return }
+            guard analysisGeneration == requestID else { return }
+            try validate(scope)
             guard !result.drafts(mealType: .snack).isEmpty else {
                 throw AppError(title: "No food found", message: "Describe the meal with a little more detail and try again.")
             }
             aiEstimate = result
         } catch {
-            guard analysisGeneration == requestID, user?.id == owner, dateString == date else { return }
+            guard analysisGeneration == requestID, (try? validate(scope)) != nil else { return }
             self.error = AppError.from(error, title: "Couldn't estimate this meal")
         }
     }
@@ -465,36 +480,73 @@ final class NutritionViewModel: ObservableObject {
 
     private var cacheKey: CacheKey { CacheKey("nutrition", dateString) }
 
-    private func reload(isRefresh: Bool = false) async {
-        guard let dataService else {
-            isInitialLoading = false
-            isRefreshing = false
-            return
+    private struct ReadScope {
+        let generation: UUID
+        let user: ExecuteUser?
+        let date: String
+        let identity: RecoveryIdentity?
+    }
+
+    private func readScope() throws -> ReadScope {
+        let identity: RecoveryIdentity?
+        if let sessionRepository {
+            guard hasStarted, let user, canSaveTextFood(user.id) else { throw CancellationError() }
+            identity = try sessionRepository.identity(for: user)
+        } else { identity = nil }
+        let scope = ReadScope(generation: sessionGeneration, user: user, date: dateString, identity: identity)
+        try validate(scope)
+        return scope
+    }
+
+    private func validate(_ scope: ReadScope) throws {
+        try Task.checkCancellation()
+        guard scope.generation == sessionGeneration, scope.user?.id == user?.id, scope.date == dateString else { throw CancellationError() }
+        if let user = scope.user { guard canSaveTextFood(user.id) else { throw CancellationError() } }
+        if let sessionRepository {
+            guard hasStarted, let identity = scope.identity else { throw CancellationError() }
+            try sessionRepository.validate(identity)
         }
-        let loadingUserID = user?.id
-        let loadingDate = dateString
+    }
+
+    private func reload(isRefresh: Bool = false) async {
+        let request = UUID(); loadGeneration = request
+        defer { if request == loadGeneration { isInitialLoading = false; isRefreshing = false } }
+        guard let dataService, let scope = try? readScope() else { return }
+        let loadingDate = scope.date
+        let key = CacheKey("nutrition", loadingDate)
         isRefreshing = isRefresh
         error = nil
 
+        func check() throws {
+            guard request == loadGeneration else { throw CancellationError() }
+            try validate(scope)
+        }
+        func read<P: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<P>] {
+            try check()
+            let rows: [EntityRecord<P>] = try await dataService.list(table, orderBy: orderBy, limit: limit)
+            try check()
+            if let identity = scope.identity {
+                guard rows.allSatisfy({ NutritionWeekSelection.owned($0.metadata, by: identity.user) }) else {
+                    throw AppError(title: "Nutrition needs a current account", message: "Records from another account were not displayed or cached. Refresh the correct account.")
+                }
+            }
+            return rows
+        }
         do {
-            let foodLogs: [EntityRecord<NutritionFoodLog>] = try await dataService.list(.foodLogs, orderBy: "-created_date", limit: 300)
-            let dailyLogs: [EntityRecord<NutritionDailyLog>] = try await dataService.list(.dailyLogs, orderBy: "-updated_date", limit: 100)
-            let profiles: [EntityRecord<HomeNutritionProfile>] = try await dataService.list(.nutritionProfiles, orderBy: "-updated_date", limit: 10)
-            let plans: [EntityRecord<HomeAIPlan>] = try await dataService.list(.aiPlans, orderBy: "-updated_date", limit: 25)
-            let mealPlans: [EntityRecord<NutritionMealPlan>] = try await dataService.list(.mealPlans, orderBy: "-updated_date", limit: 100)
-            guard loadingUserID == user?.id, loadingDate == dateString else { return }
+            let foodLogs: [EntityRecord<NutritionFoodLog>] = try await read(.foodLogs, orderBy: "-created_date", limit: 300)
+            let dailyLogs: [EntityRecord<NutritionDailyLog>] = try await read(.dailyLogs, orderBy: "-updated_date", limit: 100)
+            let profiles: [EntityRecord<HomeNutritionProfile>] = try await read(.nutritionProfiles, orderBy: "-updated_date", limit: 10)
+            let plans: [EntityRecord<HomeAIPlan>] = try await read(.aiPlans, orderBy: "-updated_date", limit: 25)
+            let mealPlans: [EntityRecord<NutritionMealPlan>] = try await read(.mealPlans, orderBy: "-updated_date", limit: 100)
+            try check()
 
             let activePlan = selectActivePlan(plans)
-            activePlanID = activePlan?.id
-            activePlanSource = activePlan?.payload.source
-            activeGenerationBatchID = activePlan?.payload.generationBatchID
             let dailyLog = selectDailyLog(dailyLogs, date: loadingDate, activePlan: activePlan)
             let mealPlan = selectMealPlan(mealPlans, date: loadingDate, activePlan: activePlan)
             let records = foodLogs
                 .filter { $0.payload.date == loadingDate }
                 .map { NutritionFoodLogRecord(id: $0.id, createdDate: $0.createdDate, log: $0.payload) }
-
-            snapshot = NutritionSnapshot(
+            let loaded = NutritionSnapshot(
                 date: loadingDate,
                 foodLogs: records,
                 dailyLogID: dailyLog?.id,
@@ -507,19 +559,26 @@ final class NutritionViewModel: ObservableObject {
                 ),
                 mealPlanID: mealPlan?.id
             )
-            try? await cache.write(snapshot, for: cacheKey, ttl: 300)
+            try? await cache.write(loaded, for: key, userID: scope.user?.id, ttl: 300)
+            try check()
+            activePlanID = activePlan?.id
+            activePlanSource = activePlan?.payload.source
+            activeGenerationBatchID = activePlan?.payload.generationBatchID
+            snapshot = loaded
         } catch {
+            guard (try? check()) != nil else { return }
             self.error = AppError.from(error, title: "Couldn't load nutrition")
         }
-
-        isInitialLoading = false
-        isRefreshing = false
     }
 
     private func restoreCachedSnapshot() async {
-        switch await cache.read(cacheKey, as: NutritionSnapshot.self) {
+        guard let scope = try? readScope() else { return }
+        let request = loadGeneration
+        let result = await cache.read(CacheKey("nutrition", scope.date), as: NutritionSnapshot.self, userID: scope.user?.id)
+        guard request == loadGeneration, (try? validate(scope)) != nil else { return }
+        switch result {
         case .fresh(let cached), .stale(let cached):
-            guard cached.date == dateString else { return }
+            guard cached.date == scope.date else { return }
             snapshot = cached
             isInitialLoading = false
         case .missing:
@@ -527,15 +586,18 @@ final class NutritionViewModel: ObservableObject {
         }
     }
 
-    private func startRealtime() async {
-        guard subscriptions.isEmpty, let realtimeService else { return }
+    private func startRealtime(scope: ReadScope) async {
+        guard subscriptions.isEmpty, let realtimeService, (try? validate(scope)) != nil else { return }
         for table in [EntityTable.foodLogs, .dailyLogs, .mealPlans] {
+            guard (try? validate(scope)) != nil else { return }
             if let subscription = try? await realtimeService.subscribe(to: table, onChange: { [weak self] _ in
                 Task { @MainActor in
-                    guard let self, !self.isSaving, self.deletingIDs.isEmpty else { return }
+                    guard let self, self.sessionGeneration == scope.generation, self.user?.id == scope.user?.id,
+                          !self.isSaving, self.deletingIDs.isEmpty else { return }
                     await self.reload()
                 }
             }) {
+                guard (try? validate(scope)) != nil else { await subscription.cancel(); return }
                 subscriptions.append(subscription)
             }
         }

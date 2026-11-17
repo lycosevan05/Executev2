@@ -406,27 +406,37 @@ final class HomeViewModel: ObservableObject {
             isInitialLoading = false
             return
         }
-        let loadingUserID = user?.id
+        guard let loadingUser = user else { return }
+        let loadingUserID = loadingUser.id
         let trackingRequest = trackingGeneration
         let customizationReadRevision = customizationRevision
         guard !abandonCancelledLoad(nil, request: trackingRequest, owner: loadingUserID) else { return }
+        // Production injects the SDK-bound repository; repository-free transport fixtures retain their read seam.
+        let readIdentity: RecoveryIdentity?
+        do { readIdentity = try customizationRepository?.identity(for: loadingUser) }
+        catch { _ = abandonCancelledLoad(CancellationError(), request: trackingRequest, owner: loadingUserID); return }
+        func checkRead() throws {
+            guard trackingRequest == trackingGeneration, user?.id == loadingUserID else { throw CancellationError() }
+            try Task.checkCancellation()
+            if let readIdentity { try customizationCheck(trackingRequest, identity: readIdentity) }
+        }
         isRefreshing = isRefresh
         error = nil
         let today = HomeDate.todayString
         do {
-            if let user, canTrackGoals(user.id) {
+            try checkRead()
+            if canTrackGoals(loadingUserID) {
                 do {
-                    try await GoalActivityTracker.shared.synchronize(data: dataService, user: user, isCurrent: {
-                        self.trackingGeneration == trackingRequest && self.user?.id == user.id && self.canTrackGoals(user.id)
+                    try await GoalActivityTracker.shared.synchronize(data: dataService, user: loadingUser, isCurrent: {
+                        do { try checkRead(); return self.canTrackGoals(loadingUserID) } catch { return false }
                     })
                 } catch {
-                    guard trackingRequest == trackingGeneration, loadingUserID == self.user?.id else { return }
+                    try checkRead()
                     guard !abandonCancelledLoad(error, request: trackingRequest, owner: loadingUserID) else { return }
                     self.error = AppError.from(error, title: "Automatic goal progress needs refresh")
                 }
             }
-            guard trackingRequest == trackingGeneration else { return }
-            guard !abandonCancelledLoad(nil, request: trackingRequest, owner: loadingUserID) else { return }
+            try checkRead()
             async let plans: [EntityRecord<HomeAIPlan>] = dataService.list(.aiPlans, orderBy: "-updated_date", limit: 50)
             async let profiles: [EntityRecord<HomeUserProfile>] = dataService.list(.userProfiles, orderBy: "-updated_date", limit: 1)
             async let nutritionProfiles: [EntityRecord<HomeNutritionProfile>] = dataService.list(.nutritionProfiles, orderBy: "-updated_date", limit: 1)
@@ -439,8 +449,15 @@ final class HomeViewModel: ObservableObject {
             async let customItems: [EntityRecord<HomeCustomChecklistItemPayload>] = dataService.list(.customChecklistItems, orderBy: "-updated_date", limit: 50)
 
             let (planRecords, profileRecords, nutritionRecords, readinessValues, dailyValues, foodValues, workoutValues, mealValues, goalValues, customValues) = try await (plans, profiles, nutritionProfiles, readinessRecords, dailyLogs, foodLogs, workouts, meals, goals, customItems)
-            guard loadingUserID == user?.id, trackingRequest == trackingGeneration else { return }
-            guard !abandonCancelledLoad(nil, request: trackingRequest, owner: loadingUserID) else { return }
+            try checkRead()
+            let returnedRows: [[BackendRow]] = [
+                planRecords.map(\.metadata), profileRecords.map(\.metadata), nutritionRecords.map(\.metadata),
+                readinessValues.map(\.metadata), dailyValues.map(\.metadata), foodValues.map(\.metadata),
+                workoutValues.map(\.metadata), mealValues.map(\.metadata), goalValues.map(\.metadata), customValues.map(\.metadata)
+            ]
+            guard returnedRows.allSatisfy({ $0.allSatisfy { NutritionWeekSelection.owned($0, by: loadingUser) } }) else {
+                throw TrackPersistence.invalid("Dashboard records from another or unknown account were not applied. Refresh your signed-in account.")
+            }
             guard customizationReadRevision == customizationRevision else { isRefreshing = false; return }
             let activePlan = selectActivePlan(planRecords)
             let overviewDay = activePlan?.payload.resolvedWeeklyOverview?.days?.first { $0.date == today }
@@ -449,7 +466,7 @@ final class HomeViewModel: ObservableObject {
             let workout = selectLinked(workoutValues, date: today, activePlan: activePlan, plannedID: dailyRecord?.payload.plannedWorkoutID)
             let meal = selectLinked(mealValues, date: today, activePlan: activePlan, plannedID: dailyRecord?.payload.plannedMealPlanID)
 
-            snapshot = HomeDashboardSnapshot(
+            let loadedSnapshot = HomeDashboardSnapshot(
                 activePlan: activePlan?.payload,
                 overviewDay: overviewDay,
                 dailyLogID: dailyRecord?.id,
@@ -462,15 +479,21 @@ final class HomeViewModel: ObservableObject {
                 goals: goalValues.map(\.payload).filter { $0.status == nil || $0.status == "active" },
                 customChecklistItems: customValues.map { HomeCustomChecklistItem(id: $0.id, label: $0.payload.label, days: $0.payload.days, endsOn: $0.payload.endsOn, isActive: $0.payload.isActive) }.filter { $0.isActive != false }
             )
-            await persistDashboard()
+            try checkRead()
+            snapshot = loadedSnapshot
+            try? await cache.write(loadedSnapshot, for: dashboardKey, userID: loadingUserID, ttl: 300)
+            try checkRead()
         } catch {
-            guard trackingRequest == trackingGeneration, loadingUserID == user?.id, customizationReadRevision == customizationRevision else { return }
+            do { try checkRead() }
+            catch { _ = abandonCancelledLoad(CancellationError(), request: trackingRequest, owner: loadingUserID); return }
+            guard customizationReadRevision == customizationRevision else { return }
             guard !abandonCancelledLoad(error, request: trackingRequest, owner: loadingUserID) else { return }
             if snapshot.activePlan == nil && snapshot.dailyLog == nil && snapshot.userProfile == nil {
                 self.error = AppError.from(error, title: "Couldn't load your dashboard")
             }
         }
-        guard trackingRequest == trackingGeneration, loadingUserID == user?.id else { return }
+        do { try checkRead() }
+        catch { _ = abandonCancelledLoad(CancellationError(), request: trackingRequest, owner: loadingUserID); return }
         isInitialLoading = false
         isRefreshing = false
         hasStarted = true

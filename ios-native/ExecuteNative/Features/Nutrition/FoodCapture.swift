@@ -186,6 +186,7 @@ enum FoodPhoto {
     private let data: EntityDataServicing?
     private let ai: AIResponding?
     private let lookup: FoodProductLookingUp
+    private let providerRepository: RecoveryRepository?
     private let defaults: UserDefaults
     private let canAct: (UUID) -> Bool
     private let canUsePhoto: () -> Bool
@@ -196,8 +197,8 @@ enum FoodPhoto {
     private struct Attempt: Codable { let review: FoodCaptureReview; let token: String; let time: String }
 
     init(data: EntityDataServicing?, ai: AIResponding?, lookup: FoodProductLookingUp = OpenFoodFactsLookup(),
-         defaults: UserDefaults = .standard, canUsePhoto: @escaping () -> Bool = { false }, canAct: @escaping (UUID) -> Bool) {
-        self.data = data; self.ai = ai; self.lookup = lookup; self.defaults = defaults; self.canAct = canAct; self.canUsePhoto = canUsePhoto
+         defaults: UserDefaults = .standard, providerRepository: RecoveryRepository? = nil, canUsePhoto: @escaping () -> Bool = { false }, canAct: @escaping (UUID) -> Bool) {
+        self.data = data; self.ai = ai; self.lookup = lookup; self.providerRepository = providerRepository; self.defaults = defaults; self.canAct = canAct; self.canUsePhoto = canUsePhoto
     }
     func start(user: ExecuteUser, date: String) {
         stop(); self.user = user; self.date = date
@@ -225,28 +226,49 @@ enum FoodPhoto {
     private func key(_ id: UUID, _ date: String) -> String { "execute.cache.\(id.uuidString).food-capture.\(date).pending" }
     private func current(_ request: UUID, _ id: UUID) -> Bool { request == generation && user?.id == id && canAct(id) && !Task.isCancelled }
 
+    private func providerIdentity(for user: ExecuteUser) throws -> RecoveryIdentity? {
+        guard let providerRepository else { return nil }
+        let identity = try providerRepository.identity(for: user)
+        guard identity.user.id == user.id else { throw CancellationError() }
+        try providerRepository.validate(identity)
+        return identity
+    }
+    private func providerCurrent(_ request: UUID, user: ExecuteUser, identity: RecoveryIdentity?) -> Bool {
+        guard current(request, user.id) else { return false }
+        guard let providerRepository else { return true }
+        guard let identity, identity.user.id == user.id else { return false }
+        return (try? providerRepository.validate(identity)) != nil
+    }
+
     func findProduct(_ code: String) async {
         guard !isWorking, !hasAttempt, let user, canAct(user.id) else { return }
         let request = generation; isWorking = true; error = nil; review = nil; savedID = nil
         defer { if request == generation { isWorking = false } }
+        var identity: RecoveryIdentity?
         do {
+            identity = try providerIdentity(for: user)
+            guard providerCurrent(request, user: user, identity: identity) else { return }
             let result = try await lookup.product(code: code)
-            guard current(request, user.id) else { return }; review = result
-        } catch { if current(request, user.id) { self.error = AppError.from(error, title: "Could not look up product") } }
+            guard providerCurrent(request, user: user, identity: identity) else { return }; review = result
+        } catch { if providerCurrent(request, user: user, identity: identity) { self.error = AppError.from(error, title: "Could not look up product") } }
     }
     func estimatePhoto(_ jpeg: Data) async {
         guard !isWorking, !hasAttempt, let user, canAct(user.id), canUsePhoto(), let ai else { return }
         let request = generation; isWorking = true; error = nil; review = nil; savedID = nil
         defer { if request == generation { isWorking = false } }
+        var identity: RecoveryIdentity?
         do {
+            identity = try providerIdentity(for: user)
+            guard providerCurrent(request, user: user, identity: identity) else { return }
             guard !jpeg.isEmpty, jpeg.count <= 2_000_000,
                   let url = URL(string: "data:image/jpeg;base64," + jpeg.base64EncodedString()) else { throw FoodBarcode.unavailable() }
             let result = try await ai.structuredResponse(LLMRequest(
                 prompt: "Analyze the selected food photo. Identify only visible foods and estimate portions and macros. Return separate foods, numeric calories/protein/carbs/fats, and totals. Return foods=[] when no food is visible. Do not identify people or infer hidden ingredients. The user will review and correct the estimates before saving.",
                 fileURLs: [url], maxOutputTokens: 1600, responseJSONSchema: NutritionAISchema.response, schemaName: "nutrition_photo_estimate"), as: NutritionAIEstimate.self)
+            guard providerCurrent(request, user: user, identity: identity), canUsePhoto() else { return }
             let value = try FoodPhoto.review(result)
-            guard current(request, user.id), canUsePhoto() else { return }; review = value
-        } catch { if current(request, user.id) { self.error = AppError.from(error, title: "Could not estimate photo") } }
+            review = value
+        } catch { if providerCurrent(request, user: user, identity: identity) { self.error = AppError.from(error, title: "Could not estimate photo") } }
     }
     func clearReview() { guard !hasAttempt, !isWorking else { return }; review = nil; error = nil; savedID = nil }
 
