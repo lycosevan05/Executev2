@@ -525,3 +525,8 @@ The E25 final CSV exposed whole-list display serialization overwriting saved che
 ## 2026-11-16 — Close W41 after controlled restoration and corrected persistence
 
 User separately approved the exact guarded one-row QA restoration, manually applied it, and the browser returned the restored row. Subsequent accidental rerun safely aborted; no second repair. Corrected0623676 normal UI check/uncheck/relaunch and final17-table CSV prove69otherrecords exact, originalworkout/nutritionmetadata exact/no fabricatedtimestamp, customhistory retained and onlytargetcompletion/receipt changed. W41 accepted;37/45accepted,8open,9release gates. Normalupdated_date is outside captured data comparison. No broader SQL-write/deployment/billing/deletion authority inferred.
+
+
+## 2026-11-16 — Verify unpaid first-plan Premium handoff without creating data
+
+E27 accepts only the unpaid first-plan/Premium handoff subcase. Exact designated empty QA identity resolves uniquely; all17 owner-filtered table groups remain zero before/after all UI, and exported CSVs are byte-identical. Root live UI and independent local export review agree. Full W16 questionnaire/generation and W17 scanned-PDF remain open pending legitimate Premium on a disposable empty-plan account. No purchase/restore/entitlement change, AI request, source/build change or full lifecycle acceptance inferred; counts remain37/45 with8open and9release gates. Preserve populatedQA70 and existing integration/team.
