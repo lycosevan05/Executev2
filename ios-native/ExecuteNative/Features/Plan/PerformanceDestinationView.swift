@@ -169,23 +169,37 @@ private struct PerformanceScreen: View {
                 if goal.payload.status == "archived" {
                     Text("Archived · History retained").font(ExecuteTypography.caption(12))
                     Button("Restore as paused") { Task { await model.restoreGoal(goal) } }.disabled(model.hasPendingWrite || model.isSaving)
+                        .accessibilityIdentifier("goals.\(goal.id.uuidString.lowercased()).restore")
+                        .accessibilityLabel("Restore \(goal.payload.title ?? "Untitled goal") as paused")
                 } else {
                 HStack {
                     Button("Log progress") { loggingGoal = goal }
+                        .accessibilityIdentifier("goals.\(goal.id.uuidString.lowercased()).log")
+                        .accessibilityLabel("Log progress for \(goal.payload.title ?? "Untitled goal")")
                         .disabled(model.hasPendingWrite || model.isSaving || goal.payload.status == "paused" || goal.payload.targetValue == nil || goal.payload.currentValue == nil)
                     Spacer()
                     Button("Trend") { router.navigate(to: .progress(goalID: goal.id)) }
+                        .accessibilityIdentifier("goals.\(goal.id.uuidString.lowercased()).trend")
+                        .accessibilityLabel("View trend for \(goal.payload.title ?? "Untitled goal")")
                 }
                 if goal.payload.status != "paused" {
                     Button("Pause goal") { Task { await model.togglePause(goal) } }.disabled(model.hasPendingWrite || model.isSaving)
+                        .accessibilityIdentifier("goals.\(goal.id.uuidString.lowercased()).pause")
+                        .accessibilityLabel("Pause \(goal.payload.title ?? "Untitled goal")")
                 } else {
                     Text("Paused").font(ExecuteTypography.caption(12))
                     Button("Resume goal") { Task { await model.togglePause(goal) } }.disabled(model.hasPendingWrite || model.isSaving)
+                        .accessibilityIdentifier("goals.\(goal.id.uuidString.lowercased()).resume")
+                        .accessibilityLabel("Resume \(goal.payload.title ?? "Untitled goal")")
                 }
                 HStack {
                     Button("Edit goal") { editingGoal = goal }
+                        .accessibilityIdentifier("goals.\(goal.id.uuidString.lowercased()).edit")
+                        .accessibilityLabel("Edit \(goal.payload.title ?? "Untitled goal")")
                     Spacer()
                     Button("Remove goal", role: .destructive) { archivingGoal = goal }
+                        .accessibilityIdentifier("goals.\(goal.id.uuidString.lowercased()).remove")
+                        .accessibilityLabel("Remove \(goal.payload.title ?? "Untitled goal") from active goals")
                 }.disabled(model.hasPendingWrite || model.isSaving)
                 }
             }
@@ -240,6 +254,8 @@ private struct PerformanceScreen: View {
                 else { pointChart(points, unit: goal.payload.unit ?? "", dates: dates) }
                 if goal.payload.status == "paused" { Text("Paused").font(ExecuteTypography.caption(12)) }
                 Button("Log progress") { loggingGoal = goal }.disabled(model.hasPendingWrite || model.isSaving || goal.payload.status == "paused" || goal.payload.currentValue == nil || goal.payload.targetValue == nil)
+                    .accessibilityIdentifier("progress.\(goal.id.uuidString.lowercased()).log")
+                    .accessibilityLabel("Log progress for \(goal.payload.title ?? "Untitled goal")")
             }
         }
     }
