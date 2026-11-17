@@ -271,6 +271,9 @@ final class RecoveryTests: XCTestCase {
         XCTAssertEqual(repo.writes, writes)
         XCTAssertEqual(repo.records[.userAIContexts]?[0].data["lastUpdatedAt"], .string("fresh"))
         XCTAssertNil(vm.error)
+        XCTAssertTrue(vm.loaded)
+        XCTAssertEqual(vm.draft, RecoveryCheckIn())
+        XCTAssertFalse(vm.hasPendingLimitation)
     }
     func testGuidanceWriteFailureRetainsSavedCheckInAndCanRetry() async {
         let repo = RecoveryFixtureRepository(), ai = RecoveryFixtureAI(), vm = model(repo, ai: ai)

@@ -220,7 +220,12 @@ final class RecoveryViewModel: ObservableObject {
         }
     }
     func retry(user: ExecuteUser) async {
-        guard identity?.user.id == user.id || !loaded else { return }
+        if identity?.user.id != user.id {
+            // A retry from a new account is a fresh load, never replay of the prior owner’s intent/context.
+            stop()
+            await load(user: user)
+            return
+        }
         if let pending = pendingLimitation, loaded {
             _ = await mutateLimitation(id: pending.id, patch: pending.patch)
         }
