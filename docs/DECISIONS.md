@@ -565,3 +565,8 @@ A structured-response decoding or transport failure previously invoked invoke-ll
 ## 2026-11-17 — Accept supplied-plan replacement with independent preservation
 
 E34 closes W17 after actual scanned import, exact9-prescription/MWF45min fidelity, one reviewed replacement Save, relaunch and independent17-table comparison. Oldmasterstatus and workoutprofiletype are the only expected changes;19shared root/nestedfields agree, rawfour-week instruction retained. Separate populated-account export is byte-identical across70records. Counts39/45 accepted, six open, nine gates. E35 separately validates current3919394 optimized Release simulator/signature/no-debug-flags; no production archive or Release hardware acceptance inferred. Physical private sign-in/readback remains manual.
+
+
+## 2026-11-17 — Keep mirrored physical observations separate from input and release acceptance
+
+E36 uses user-private sign-in/navigation and root direct mirror readback of exactQA identity, Home targets and saved Cedar week after user-reported relaunch. Mirror input is technically unavailable; do not relabel user actions as automation or directly observed termination. Physical Premium row and full device matrix remain unverified. Plan enlarged-text observation is a readability finding without proved lost action or verified maxcategory; baseline restored. Independent post-ALL-visits exports preserve all6disposable and70populated records byte-for-byte. Counts39/45, six open, nine gates remain.
