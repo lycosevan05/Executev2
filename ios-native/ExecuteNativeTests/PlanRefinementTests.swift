@@ -971,3 +971,114 @@ extension PlanGenerationTests {
         XCTAssertEqual(days[1]["priority"], .string("Complete your supplied Cedar B session."))
     }
 }
+
+
+extension PlanGenerationTests {
+    private func nutritionOnlyOverview() -> JSONValue {
+        var raw = tuesdayOverview(training: []).objectValue!
+        var week = raw["weekly_overview"]!.objectValue!
+        week["days"] = .array(week["days"]!.recoveryArray!.map { value in
+            var day = value.objectValue!
+            day["day_type"] = .string("rest"); day["workout_needed"] = .bool(false)
+            day["training_type"] = .string("Nutrition & Habit Focus")
+            day["session_title"] = .string("\(day["weekday"]!.stringValue!) balanced meals")
+            day["priority"] = .string("Plan three meals and keep a water bottle nearby.")
+            day["nutrition_focus"] = .string("Include protein and avoid peanuts and mushrooms.")
+            return .object(day)
+        })
+        raw["weekly_overview"] = .object(week)
+        raw["training_split"] = .object(["days_per_week": .number(0), "session_length_minutes": .number(0), "split_type": .string("nutrition_only"), "training_weekdays": .array([])])
+        return .object(raw)
+    }
+
+    func testNutritionOnlyPromptSchemaAndValidPreviewHaveZeroTrainingAndPreserveNutritionContent() throws {
+        var a = answers(); a.planType = "nutrition"; a.currentTraining = "1_2_days"
+        a.sportSchedule = "Monday Wednesday Friday, 45 minutes, bodyweight only."
+        let values = try a.validated()
+        let request = try PlanGeneration.request(answers: values, context: .object([:]), dates: tuesdayDates)
+        XCTAssertTrue(request.prompt.contains("This is a NUTRITION-ONLY plan"))
+        XCTAssertTrue(request.prompt.contains("even if retained questionnaire answers mention a training schedule"))
+        XCTAssertFalse(request.prompt.contains("First resolve explicitly named training weekdays"))
+        let schema = try XCTUnwrap(request.responseJSONSchema)
+        let daySchema = schema["properties"]?["weekly_overview"]?["properties"]?["days"]?["items"]?["properties"]
+        XCTAssertEqual(daySchema?["day_type"]?["enum"], .array([.string("rest")]))
+        XCTAssertEqual(daySchema?["workout_needed"]?["enum"], .array([.bool(false)]))
+        let splitSchema = schema["properties"]?["training_split"]?["properties"]
+        XCTAssertEqual(splitSchema?["training_weekdays"]?["maxItems"], .number(0))
+        XCTAssertEqual(splitSchema?["session_length_minutes"]?["enum"], .array([.number(0)]))
+        let original = nutritionOnlyOverview()
+        let normalized = try PlanGeneration.normalize(original, answers: values, dates: tuesdayDates)
+        XCTAssertEqual(normalized["weekly_overview"]?["days"], original["weekly_overview"]?["days"])
+        XCTAssertEqual(normalized["training_split"]?["training_weekdays"], .array([]))
+        XCTAssertEqual(normalized["training_split"]?["days_per_week"], .number(0))
+        XCTAssertEqual(normalized["training_split"]?["session_length_minutes"], .number(0))
+        XCTAssertEqual(normalized["training_split"]?["split_type"], .string("nutrition_only"))
+        XCTAssertEqual(PlanGeneration.targets(values), .object(["calories": .number(2448), "protein_g": .number(160), "carbs_g": .number(272), "fat_g": .number(80), "hydration_liters": .number(2.5)]))
+        XCTAssertFalse(PlanGeneration.personalization(values).contains { $0.0 == .workoutProfiles })
+    }
+
+    func testNutritionOnlyWorkoutResponseCannotPublishOrSaveAndIsNotRelabeled() async throws {
+        let (data, ai, model) = await fixture()
+        model.questionnaire.planType = "nutrition"
+        ai.response = PlanFixtureAI.initialOverview(PlanRefinementTests.overview())
+        await model.generateInitialPlan(); await model.saveRevision()
+        XCTAssertNil(model.revisedOverview)
+        XCTAssertEqual(model.editError?.title, "Nutrition preview needs another attempt")
+        XCTAssertTrue(model.editError?.message.contains("must be a nutrition/habit day with no workout") == true)
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+
+    func testNutritionOnlyRejectsTrainingMetadataAndMissingNutritionProse() throws {
+        var a = answers(); a.planType = "nutrition"; let values = try a.validated()
+        let patches: [[String: JSONValue]] = [["session_length_minutes": .number(45)], ["training_weekdays": .array([.string("Monday")])], ["days_per_week": .number(3)]]
+        for patch in patches {
+            var raw = nutritionOnlyOverview().objectValue!
+            raw["training_split"] = .object(raw["training_split"]!.objectValue!.merging(patch) { _, new in new })
+            XCTAssertThrowsError(try PlanGeneration.normalize(.object(raw), answers: values, dates: tuesdayDates)) { error in
+                XCTAssertTrue((error as? AppError)?.message.contains("zero training days, zero session minutes and no training weekdays") == true)
+            }
+        }
+        var raw = nutritionOnlyOverview().objectValue!, week = raw["weekly_overview"]!.objectValue!, days = week["days"]!.recoveryArray!, first = days[0].objectValue!
+        first["nutrition_focus"] = .string(""); days[0] = .object(first); week["days"] = .array(days); raw["weekly_overview"] = .object(week)
+        XCTAssertThrowsError(try PlanGeneration.normalize(.object(raw), answers: values, dates: tuesdayDates)) { error in
+            XCTAssertTrue((error as? AppError)?.message.contains("missing a specific nutrition or habit focus") == true)
+        }
+    }
+
+    func testCalendarFailuresExplainSpecificMismatchWithoutEchoingPrivateProviderContent() throws {
+        let values = try answers().validated(), sentinel = "PRIVATE provider/profile content must not appear"
+        func expect(_ raw: JSONValue, _ reason: String, file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertThrowsError(try PlanGeneration.normalize(raw, answers: values, dates: tuesdayDates), file: file, line: line) { error in
+                let message = (error as? AppError)?.message ?? ""
+                XCTAssertTrue(message.contains(reason), message, file: file, line: line)
+                XCTAssertFalse(message.contains(sentinel), file: file, line: line)
+                XCTAssertTrue(message.contains("Your saved plan has not changed"), file: file, line: line)
+            }
+        }
+        var raw = tuesdayOverview().objectValue!
+        raw["weekly_overview"] = .string(sentinel)
+        expect(.object(raw), "did not include a seven-day calendar")
+        raw = tuesdayOverview().objectValue!; var week = raw["weekly_overview"]!.objectValue!, days = week["days"]!.recoveryArray!
+        week["days"] = .array(Array(days.prefix(6))); raw["weekly_overview"] = .object(week)
+        expect(.object(raw), "returned 6 days; seven are required")
+        for (key, value, expected) in [
+            ("date", sentinel, "Day 1 did not match the requested date 2026-11-17"),
+            ("weekday", sentinel, "Day 1 (2026-11-17) is missing a valid weekday"),
+            ("weekday", "Monday", "was labeled Monday; it must be Tuesday")
+        ] {
+            raw = tuesdayOverview().objectValue!; week = raw["weekly_overview"]!.objectValue!; days = week["days"]!.recoveryArray!
+            var first = days[0].objectValue!; first[key] = .string(value); days[0] = .object(first)
+            week["days"] = .array(days); raw["weekly_overview"] = .object(week); expect(.object(raw), expected)
+        }
+        let declarations: [(JSONValue?, String)] = [
+            (nil, "did not list its planned training weekdays"),
+            (.array([.string(sentinel)]), "returned an invalid training weekday"),
+            (.array([.string("Monday"), .string("Monday")]), "listed a training weekday more than once"),
+            (.array(["Tuesday", "Thursday", "Saturday"].map(JSONValue.string)), "planned training weekdays (Tuesday, Thursday, Saturday) do not match the dated training days (Monday, Wednesday, Friday)")
+        ]
+        for (declaration, expected) in declarations {
+            raw = tuesdayOverview().objectValue!; var split = raw["training_split"]!.objectValue!
+            split["training_weekdays"] = declaration; raw["training_split"] = .object(split); expect(.object(raw), expected)
+        }
+    }
+}

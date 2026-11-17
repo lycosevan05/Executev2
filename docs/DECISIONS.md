@@ -545,3 +545,8 @@ E29 addresses concrete SDK-before-model-stop gaps in Home dashboard reads, Nutri
 ## 2026-11-17 — Ground initial generation in the actual rolling local calendar
 
 The first live Training preview after Premium QA activation put Monday-style sessions on Tuesday/Thursday/Saturday despite the namedMon/Wed/Fri request. Exactdateorderingwasalreadyvalidated; initialproviderprompt lacked explicitweekday/timezonegrounding. Initialgeneration now suppliescanonical7localdate/weekday slots and validates echoedweekdays/declaredtrainingplacement beforepreview. BYOsuppliedcadence remainsauthoritative; refinementprovidercontract unchanged. Free-text/prose stillrequireslivereview.50uniqueaffectedmethodsvalidated(48initial+2testassertioncorrectionsrerun),4new; normalDebug/signature/installPASS. BadpreviewdiscardedwithoutSave, allanswersretained,17capturedgroupsremainempty. No acceptancecountchange; correctedprovider/save/relaunch/databaseacceptance next.
+
+
+## 2026-11-17 — Preserve Nutrition-only focus and explain calendar rejection
+
+E31 live Nutrition preview revealed workouts despite the retained nutrition-only contract. Constrain initial prompt/schema to seven nutrition/habit rest days and zero training metadata, and reject contradictory content rather than relabeling it. Preserve generated nutrition prose and canonical targets. Calendar validation errors now identify safe canonical date/weekday/count/declaration mismatches without raw provider/profile content, so real provider failures can be diagnosed before retries. Seven focused methods pass, four new; normal Debug/signature/install pass. Corrected Training calendar and scanned-PDF extraction subcases are verified, but no first plan saved; W16/W17 and counts37/45,8open,9gates remain unchanged.
