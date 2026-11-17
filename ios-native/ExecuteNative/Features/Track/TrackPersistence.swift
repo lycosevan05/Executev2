@@ -43,8 +43,8 @@ struct TrackPendingMutation: Codable, Equatable {
 
 enum TrackPersistence {
     static func invalid(_ message: String) -> AppError { AppError(title: "Tracking needs review", message: message) }
-    static func settingsKey(_ owner: UUID) -> String { "execute.track.settings.\(owner.uuidString)" }
-    static func pendingKey(_ owner: UUID) -> String { "execute.track.pending.\(owner.uuidString)" }
+    static func settingsKey(_ owner: UUID) -> String { "execute.cache.\(owner.uuidString).track.settings" }
+    static func pendingKey(_ owner: UUID) -> String { "execute.cache.\(owner.uuidString).track.pending" }
     static func field(_ metric: TrackMetric) -> String {
         switch metric {
         case .sleep: "sleep_hours"

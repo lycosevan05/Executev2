@@ -101,4 +101,28 @@ import XCTest
         XCTAssertTrue(model.visibleMetrics.isEmpty)
         await model.stop(); await model.start(for: user); XCTAssertTrue(model.visibleMetrics.isEmpty); XCTAssertEqual(model.completionProgress, 0)
     }
+    func testSuccessfulAccountPurgeRemovesOnlyThatOwnersDefinitionsAndPendingIntent() async throws {
+        let suite = "CustomTests.Purge.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        let repo = TrackFixtureRepository(user: user), model = model(repo, defaults: defaults)
+        await model.start(for: user); try model.addCustom(label: "Private A", unit: "min", symbol: "timer")
+        repo.failBeforeWrite = true; await model.save(.number(100), for: .steps)
+        XCTAssertNotNil(model.pending)
+        let b = ExecuteUser(id: UUID(), email: "other@example.invalid", displayName: "Other")
+        repo.user = b; await model.start(for: b)
+        try model.addCustom(label: "Private B", unit: "min", symbol: "timer")
+        await model.save(.number(200), for: .steps)
+        let bSettings = defaults.data(forKey: TrackPersistence.settingsKey(b.id))
+        let bPending = defaults.data(forKey: TrackPersistence.pendingKey(b.id))
+        XCTAssertNotNil(bSettings); XCTAssertNotNil(bPending)
+        let cache = UserScopedCacheStore(suiteName: suite)
+        await cache.activate(userID: b.id)
+        await cache.purge(userID: user.id)
+        XCTAssertNil(defaults.data(forKey: TrackPersistence.settingsKey(user.id)))
+        XCTAssertNil(defaults.data(forKey: TrackPersistence.pendingKey(user.id)))
+        XCTAssertEqual(defaults.data(forKey: TrackPersistence.settingsKey(b.id)), bSettings)
+        XCTAssertEqual(defaults.data(forKey: TrackPersistence.pendingKey(b.id)), bPending)
+        // Purging A must leave the newer active account usable.
+        try await cache.write("B retained", for: CacheKey("proof"), userID: b.id, ttl: nil)
+    }
+
 }
