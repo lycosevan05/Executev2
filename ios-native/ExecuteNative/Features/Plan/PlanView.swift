@@ -78,6 +78,7 @@ struct PlanDashboardView: View {
                 } else if let plan = model.plan {
                     if model.hasInitialPreview { PlanGenerationView(model: model, isPremium: isPremium) }
                     PlanFocusCard(plan: plan, today: model.today, openWorkout: model.openWorkout)
+                    PlanQuestionsButton()
                     PlanSegmentedPicker(selection: $selectedTab)
                     Button("Set up another plan or resume draft") { Task { await model.beginSetup() } }
                         .disabled(model.isSaving || model.isRefining).accessibilityIdentifier("plan.setup")

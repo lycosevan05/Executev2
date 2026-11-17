@@ -26,6 +26,8 @@ targets:
       - path: ExecuteNative
     resources:
       - path: ExecuteNative/Resources/Fonts
+      - path: ExecuteNative/Resources/Assets.xcassets
+      - path: ExecuteNative/Resources/PrivacyInfo.xcprivacy
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.executelabs.execute.native-dev

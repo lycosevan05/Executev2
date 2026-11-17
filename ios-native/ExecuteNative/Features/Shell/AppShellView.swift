@@ -91,7 +91,7 @@ private struct AppShellContentView: View {
         case .progress(let goalID):
             PerformanceDestinationView(destination: .progress(goalID))
         case .insights:
-            PerformanceDestinationView(destination: .insights)
+            InsightsView()
         case .privacy:
             LegalDocumentView(document: .privacy)
         case .terms:
