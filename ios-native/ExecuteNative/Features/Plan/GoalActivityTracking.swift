@@ -70,12 +70,14 @@ final class GoalActivityTracker {
         if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() }
     }
 
-    func synchronize(data: EntityDataServicing, user: ExecuteUser, today: String = HomeDate.todayString,
+    func synchronize(data: EntityDataServicing, user: ExecuteUser, today: String = HomeDate.todayString, derivePlanGoals: Bool = false,
                      isCurrent: () -> Bool) async throws {
         await acquire(); defer { release() }
         func check() throws { try Task.checkCancellation(); guard isCurrent() else { throw CancellationError() } }
         try check()
         guard UserDefaults.standard.data(forKey: "execute.cache.\(user.id.uuidString).goals.pending-write") == nil else { return }
+        if derivePlanGoals { try await GoalDerivation.synchronize(data: data, user: user, today: today, isCurrent: isCurrent) }
+        try check()
         let goals: [EntityRecord<JSONValue>] = try await data.listAll(.goals, isCurrent: isCurrent)
         let tracked = goals.filter { GoalActivityMetric.resolve($0.payload) != nil && [nil, "active", "completed"].contains($0.payload["status"]?.stringValue) }
         guard !tracked.isEmpty else { return }
@@ -91,19 +93,32 @@ final class GoalActivityTracker {
         guard tracked.allSatisfy({ goal in latestGoals.first(where: { $0.id == goal.id })?.payload == goal.payload }) else {
             throw AppError(title: "Goal changed during tracking", message: "Refresh to use the latest goal settings.")
         }
-        // Finish every read and validate all duplicate keys before the first write.
+        let canonicalLogs = Self.canonicalRows(logs)
+        // Finish every read and validate all duplicate keys before the first history write.
         for goal in tracked {
             let legacy = history.filter { Self.belongs($0, to: goal.id) && !Self.managed($0) && $0.payload["source"] != nil && $0.payload["source"] != .string("manual") }
-            guard legacy.isEmpty else {
-                throw AppError(title: "Existing automatic history needs review", message: "Older automatic entries were found. They were preserved without creating overlapping entries.")
+            guard let metric = GoalActivityMetric.resolve(goal.payload), legacy.allSatisfy({ row in
+                guard let date = row.payload["date"]?.stringValue, DayPlanLogic.date(date) != nil,
+                      let value = row.payload["value"]?.doubleValue, value.isFinite, value >= 0,
+                      row.payload["source"] == .string(metric.source), row.payload["tracking_version"] == nil,
+                      row.payload["metric_field"] == nil || row.payload["metric_field"] == .string(metric.field) else { return false }
+                if metric == .workouts {
+                    // Legacy workout counts carry no entity ID. Their exact source/date/metric plus
+                    // unique key establish the original aggregate contract; preserve its snapshot.
+                    return row.payload["source_entity_id"] == nil
+                }
+                guard let id = row.payload["source_entity_id"]?.stringValue,
+                      let source = canonicalLogs[date], DayPlanLogic.sameID(id, source.id) else { return false }
+                return true
+            }) else {
+                throw AppError(title: "Existing automatic history needs review", message: "An older entry has an ambiguous source. It was preserved without creating overlapping history.")
             }
-            let managed = history.filter { Self.belongs($0, to: goal.id) && Self.managed($0) }
+            let managed = history.filter { Self.belongs($0, to: goal.id) && (Self.managed($0) || legacy.map(\.id).contains($0.id)) }
             let keys = managed.compactMap { $0.payload["date"]?.stringValue }
             guard Set(keys).count == keys.count else {
                 throw AppError(title: "Goal history needs review", message: "Duplicate automatic entries were found. No automatic repair was attempted.")
             }
         }
-        let canonicalLogs = Self.canonicalRows(logs)
         for goal in tracked {
             try check()
             guard let metric = GoalActivityMetric.resolve(goal.payload),
@@ -126,7 +141,7 @@ final class GoalActivityTracker {
             for date in dates.sorted() where DayPlanLogic.date(date) != nil {
                 let entries = existing.filter { $0.payload["date"] == .string(date) }
                 let manual = Self.newest(entries.filter { !Self.managed($0) && ($0.payload["source"] == nil || $0.payload["source"] == .string("manual")) })
-                let old = entries.first(where: Self.managed)
+                let old = entries.first { Self.managed($0) || ($0.payload["source"] == .string(metric.source) && $0.payload["source"] != .string("manual")) }
                 var value: Double?
                 var sourceIDs: [String] = []
                 if metric == .workouts, let monday = GoalActivityMetric.weekStart(date) {
@@ -144,16 +159,23 @@ final class GoalActivityTracker {
                 let manualValue = manual?.payload["value"]?.doubleValue
                 let effective = manualValue.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } ?? value
                 if (metric != .weight && date == end) || (metric == .weight && effective != nil) { current = effective; currentDate = date }
-                // Never overwrite/adopt legacy or manual history. A manual observation wins this date.
+                // Validated legacy automatic entries retain the same ID and all unknown fields.
+                // Manual observations are never adopted and win the date.
                 let state = manual != nil ? "manual_override" : value == nil ? "missing" : "observed"
                 let autoValue: JSONValue = state == "observed" ? value.map(JSONValue.number) ?? .null : .null
                 guard old != nil || (manual == nil && value != nil) else { continue }
-                let patch: JSONValue = .object([
+                var fields: [String: JSONValue] = [
                     "goal_id": .string(goal.id.uuidString.lowercased()), "date": .string(date), "value": autoValue,
                     "target_value_snapshot": .number(target), "source": .string(metric.source),
                     "metric_field": .string(metric.field), "tracking_version": .number(1), "tracking_state": .string(state),
                     "source_entity_ids": .array(sourceIDs.map(JSONValue.string)),
-                    "native_mutation_id": .string("activity-v1:\(user.id.uuidString.lowercased()):\(goal.id.uuidString.lowercased()):\(date)")])
+                    "native_mutation_id": .string("activity-v1:\(user.id.uuidString.lowercased()):\(goal.id.uuidString.lowercased()):\(date)")]
+                if let old {
+                    // Historical target snapshots remain historical even after a goal is edited.
+                    if let targetSnapshot = old.payload["target_value_snapshot"] { fields["target_value_snapshot"] = targetSnapshot }
+                    if !Self.managed(old) { fields["native_legacy_snapshot"] = old.payload }
+                }
+                let patch = JSONValue.object(fields)
                 try check()
                 if let old {
                     if !(patch.objectValue ?? [:]).allSatisfy({ old.payload[$0.key] == $0.value }) {
@@ -197,5 +219,126 @@ final class GoalActivityTracker {
     }
     private static func canonicalRows(_ rows: [EntityRecord<JSONValue>]) -> [String: EntityRecord<JSONValue>] {
         Dictionary(grouping: rows, by: { $0.payload["date"]?.stringValue ?? "" }).compactMapValues(newest)
+    }
+}
+
+/// Mounted original Progress derives from plan/profile state on foreground load.
+/// It never invents a background worker, replaces manual goals, or recreates archived goals.
+enum GoalDerivation {
+    static func candidates(plan: JSONValue?, workout: JSONValue?, profile: JSONValue?, nutrition: JSONValue?, today: String) -> [JSONValue] {
+        guard DayPlanLogic.date(today) != nil, plan != nil || profile != nil else { return [] }
+        func positive(_ values: JSONValue?...) -> Double? {
+            values.compactMap { $0?.doubleValue }.first { $0.isFinite && $0 > 0 }
+        }
+        func future(_ days: Int) -> String {
+            var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            guard let date = DayPlanLogic.date(today), let end = calendar.date(byAdding: .day, value: days, to: date) else { return today }
+            let formatter = DateFormatter(); formatter.calendar = calendar; formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.string(from: end)
+        }
+        let targets = plan?["nutrition_targets"] ?? plan?["plan_payload"]?["nutrition_targets"]
+        var result: [JSONValue] = []
+        func append(_ metric: GoalActivityMetric, target: Double?, title: String, category: String, start: Double = 0, decreasing: Bool = false) {
+            guard let target, target.isFinite, target > 0 else { return }
+            result.append(.object([
+                "title": .string(title), "category": .string(category), "target_value": .number(target),
+                "start_value": .number(start), "current_value": .number(start), "unit": .string(metric.unit),
+                "metric_source": .string(metric.source), "metric_field": .string(metric.field),
+                "target_direction": .string(metric.recurring ? "complete_count" : decreasing ? "decrease" : "increase"),
+                "target_mode": .string(metric.recurring ? "recurring" : "absolute"), "cadence": .string(metric == .workouts || metric == .weight ? "weekly" : "daily"),
+                "source": .string("ai_plan"), "status": .string("active"), "start_date": .string(today),
+                "target_date": .string(future(metric == .weight ? 90 : 30))]))
+        }
+        let sessions = positive(workout?["days_per_week"], plan?["plan_payload"]?["training_split"]?["sessions_per_week"], plan?["training_split"]?["sessions_per_week"])
+        append(.workouts, target: sessions, title: "Train \(sessions.map { $0.formatted() } ?? "")x per week", category: "fitness")
+        let steps = positive(profile?["step_goal_daily"]) ?? 10_000
+        append(.steps, target: steps, title: "Hit \(steps.formatted()) steps daily", category: "fitness")
+        let calories = positive(nutrition?["calorie_target"], targets?["calories"])
+        append(.calories, target: calories, title: "Hit \(calories.map { $0.formatted() } ?? "") kcal daily", category: "nutrition")
+        let protein = positive(nutrition?["protein_target_g"], targets?["protein_g"])
+        append(.protein, target: protein, title: "Eat \(protein.map { $0.formatted() } ?? "")g protein daily", category: "nutrition")
+        let water = positive(profile?["water_goal_liters"]) ?? 2.5
+        append(.water, target: water, title: "Drink \(water.formatted())L water daily", category: "habit")
+        let sleep = positive(profile?["sleep_goal_hours"]) ?? 8
+        append(.sleep, target: sleep, title: "Sleep \(sleep.formatted()) hours nightly", category: "sleep")
+        let primary = plan?["plan_summary"]?["primary_goal"]?.stringValue ?? plan?["plan_payload"]?["plan_summary"]?["primary_goal"]?.stringValue ?? ""
+        let userGoals = profile?["goals"]?.recoveryArray?.compactMap(\.stringValue) ?? []
+        let intent = ([primary] + userGoals).joined(separator: " ").lowercased()
+        if let weight = positive(profile?["weight_kg"]) {
+            let lose = intent.range(of: "fat.loss|lose|cut", options: .regularExpression) != nil
+            let gain = intent.range(of: "muscle|gain|bulk", options: .regularExpression) != nil
+            if lose || gain {
+                let target = ((weight + (lose ? -5 : 3)) * 10).rounded() / 10
+                append(.weight, target: target, title: "Reach \(target.formatted())kg body weight", category: "body", start: weight, decreasing: lose)
+            }
+        }
+        return result
+    }
+
+    @MainActor
+    static func synchronize(data: EntityDataServicing, user: ExecuteUser, today: String, isCurrent: () -> Bool) async throws {
+        func check() throws { try Task.checkCancellation(); guard isCurrent() else { throw CancellationError() } }
+        func read(_ table: EntityTable) async throws -> [EntityRecord<JSONValue>] {
+            try check()
+            let rows: [EntityRecord<JSONValue>] = try await data.listAll(table, isCurrent: isCurrent)
+            try check()
+            guard rows.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }), Set(rows.map(\.id)).count == rows.count else { throw invalid() }
+            return rows
+        }
+        let plans = try await read(.aiPlans), profiles = try await read(.userProfiles)
+        let workout = try await read(.workoutProfiles), nutrition = try await read(.nutritionProfiles)
+        let goals = try await read(.goals), history = try await read(.goalProgressEntries)
+        let master = PlanViewModel.selectActiveRecord(plans)
+        func newest(_ rows: [EntityRecord<JSONValue>]) throws -> JSONValue? {
+            // Multiple profile rows are ambiguous. Never pick arbitrarily while authoring goals.
+            guard rows.count <= 1 else { throw invalid() }
+            return rows.first?.payload
+        }
+        let desired = candidates(plan: master?.payload, workout: try newest(workout), profile: try newest(profiles), nutrition: try newest(nutrition), today: today)
+        for candidate in desired {
+            let matches = goals.filter { $0.payload["source"] == .string("ai_plan") && sameMetric($0.payload, candidate) }
+            guard matches.count <= 1 else { throw invalid() }
+        }
+        for candidate in desired {
+            try check()
+            // Read before each create so a lost acknowledgment/relaunch finds the same metric key.
+            let latest = try await read(.goals)
+            let matches = latest.filter { $0.payload["source"] == .string("ai_plan") && sameMetric($0.payload, candidate) }
+            guard matches.count <= 1 else { throw invalid() }
+            let metric = candidate["metric_field"]?.stringValue ?? ""
+            var fields = candidate.objectValue ?? [:]
+            fields["native_derivation_version"] = .number(1)
+            fields["native_derivation_key"] = .string("goal-plan-v1:\(user.id.uuidString.lowercased()):\(metric)")
+            fields["source_plan_id"] = master.map { .string($0.id.uuidString.lowercased()) } ?? .null
+            let mutableKeys = ["title", "category", "target_value", "unit", "source_plan_id"]
+            let snapshot = JSONValue.object(fields.filter { mutableKeys.contains($0.key) })
+            fields["native_derivation_snapshot"] = snapshot
+            if let old = matches.first {
+                // Preserve legacy, archived, paused, user-edited, progressed and manually modified goals.
+                guard old.payload["native_derivation_version"] == .number(1), old.payload["status"] == .string("active"),
+                      old.payload["native_goal_user_edited"] != .bool(true),
+                      let previous = old.payload["native_derivation_snapshot"]?.objectValue,
+                      previous.allSatisfy({ old.payload[$0.key] == $0.value }),
+                      old.payload["current_value"] == .null || old.payload["current_value"] == .number(0),
+                      !history.contains(where: { $0.payload["goal_id"]?.stringValue?.lowercased() == old.id.uuidString.lowercased() }) else { continue }
+                if snapshot != old.payload["native_derivation_snapshot"] {
+                    var patch = snapshot.objectValue ?? [:]; patch["native_derivation_snapshot"] = snapshot
+                    try check()
+                    let _: EntityRecord<JSONValue> = try await data.update(.goals, id: old.id, patch: .object(patch))
+                    try check()
+                }
+            } else {
+                try check()
+                let _: EntityRecord<JSONValue> = try await data.create(.goals, payload: JSONValue.object(fields), user: user)
+                try check()
+            }
+        }
+    }
+    private static func sameMetric(_ lhs: JSONValue, _ rhs: JSONValue) -> Bool {
+        lhs["metric_source"] == rhs["metric_source"] && lhs["metric_field"] == rhs["metric_field"]
+    }
+    private static func invalid() -> AppError {
+        AppError(title: "Plan goals need review", message: "Unowned, duplicate or ambiguous source records were preserved. No automatic repair was attempted.")
     }
 }

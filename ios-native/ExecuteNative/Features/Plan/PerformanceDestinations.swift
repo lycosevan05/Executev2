@@ -164,7 +164,8 @@ final class PerformanceDestinationModel: ObservableObject {
     @Published private(set) var status: String?
     @Published private(set) var hasPendingWrite = false
     let destination: PerformanceDestination
-    private let data: EntityDataServicing?
+    private var data: EntityDataServicing?
+    private let repository: RecoveryRepository?
     private let cache: UserScopedCacheStore
     private var user: ExecuteUser?
     private var generation = UUID()
@@ -178,16 +179,21 @@ final class PerformanceDestinationModel: ObservableObject {
         case create(JSONValue, String)
         case progress(UUID, JSONValue, Double, String, String)
         case setStatus(UUID, JSONValue, String)
+        case edit(UUID, JSONValue, JSONValue, String)
     }
 
     init(destination: PerformanceDestination, data: EntityDataServicing?, cache: UserScopedCacheStore,
-         defaults: UserDefaults = .standard, canWrite: @escaping (UUID) -> Bool = { _ in true }) {
+         defaults: UserDefaults = .standard, repository: RecoveryRepository? = nil, canWrite: @escaping (UUID) -> Bool = { _ in true }) {
         self.destination = destination; self.data = data; self.cache = cache
-        self.defaults = defaults; self.canWrite = canWrite
+        self.defaults = defaults; self.canWrite = canWrite; self.repository = repository
     }
 
     func start(for user: ExecuteUser) async {
         stop(); self.user = user
+        if let repository, destination == .goals || { if case .progress = destination { return true }; return false }() {
+            do { data = try GoalSessionData(repository: repository, user: user, active: { [weak self] in self?.user?.id == user.id && self?.canWrite(user.id) == true }) }
+            catch { self.error = AppError.from(error, title: "Goals need a current session"); isLoading = false; return }
+        }
         if destination == .goals || { if case .progress = destination { return true }; return false }(),
            let bytes = defaults.data(forKey: pendingKey(user.id)), let restored = try? JSONDecoder().decode(Pending.self, from: bytes) {
             pending = restored; hasPendingWrite = true
@@ -202,8 +208,16 @@ final class PerformanceDestinationModel: ObservableObject {
         isLoading = true; isSaving = false; error = nil; writeError = nil; status = nil
     }
 
+    private func bindCurrentSession() throws {
+        guard let repository, let user, destination == .goals || { if case .progress = destination { return true }; return false }() else { return }
+        data = try GoalSessionData(repository: repository, user: user, active: { [weak self] in self?.user?.id == user.id && self?.canWrite(user.id) == true })
+    }
+
     func refresh() async {
-        guard let data, let loadingUser = user, !isSaving, !refreshing else { return }
+        guard !isSaving, !refreshing else { return }
+        do { try bindCurrentSession() }
+        catch { self.error = AppError.from(error, title: "Goals need a current session"); isLoading = false; return }
+        guard let data, let loadingUser = user else { return }
         let request = generation
         refreshing = true
         isLoading = true; error = nil
@@ -217,7 +231,7 @@ final class PerformanceDestinationModel: ObservableObject {
                 plan = PlanViewModel.selectActiveRecord(plans); dailyLogs = logs
             case .goals, .progress:
                 if let user, pending == nil, canWrite(user.id) {
-                    try await tracker.synchronize(data: data, user: user, isCurrent: {
+                    try await tracker.synchronize(data: data, user: user, derivePlanGoals: { if case .progress = destination { return true }; return false }(), isCurrent: {
                         request == self.generation && self.user?.id == user.id && self.canWrite(user.id) && self.pending == nil
                     })
                     await cache.invalidate(CacheKey("home", "dashboard"), userID: user.id)
@@ -225,6 +239,8 @@ final class PerformanceDestinationModel: ObservableObject {
                 let values: [EntityRecord<PerformanceGoal>] = try await data.listAll(.goals, isCurrent: { request == self.generation })
                 let history: [EntityRecord<JSONValue>] = try await data.listAll(.goalProgressEntries, isCurrent: { request == self.generation })
                 guard request == generation, !Task.isCancelled else { return }
+                guard values.allSatisfy({ $0.ownerID == nil || $0.ownerID == loadingUser.id }),
+                      history.allSatisfy({ $0.ownerID == nil || $0.ownerID == loadingUser.id }) else { throw Self.changedGoal() }
                 goals = values.sorted { ($0.createdDate ?? .distantPast) > ($1.createdDate ?? .distantPast) }; entries = history
             case .insights:
                 let logs: [EntityRecord<JSONValue>] = try await data.listAll(.dailyLogs, isCurrent: { request == self.generation })
@@ -262,21 +278,23 @@ final class PerformanceDestinationModel: ObservableObject {
         PerformanceCalculations.points(entries.filter { $0.payload["goal_id"]?.stringValue?.lowercased() == id.uuidString.lowercased() && $0.payload["value"]?.doubleValue != nil }, field: "value", dates: dates)
     }
 
-    func createGoal(title: String, target: String, unit: String, start: String, decreasing: Bool, tracking: GoalActivityMetric = .manual) async {
+    func createGoal(title: String, target: String, unit: String, start: String, decreasing: Bool, tracking: GoalActivityMetric = .manual, targetDate: String = "", category: String = "performance") async {
         guard !isSaving, pending == nil else { return }
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.count <= 160, unit.count <= 40,
               let targetValue = Double(target), targetValue.isFinite,
               let startValue = Double(start), startValue.isFinite,
               targetValue >= 0, startValue >= 0,
+              (targetDate.isEmpty || DayPlanLogic.date(targetDate) != nil),
               (decreasing ? targetValue < startValue : targetValue > startValue) else {
             writeError = AppError(title: "Check your goal", message: "Enter a title and nonnegative numbers. The target must be above the starting value for an increase goal, or below it for a decrease goal."); return
         }
         let token = UUID().uuidString
         var fields: [String: JSONValue] = ["title": .string(title), "target_value": .number(targetValue), "current_value": .number(startValue),
             "start_value": .number(startValue), "target_direction": .string(decreasing ? "decrease" : "increase"), "unit": .string(unit),
-            "category": .string("performance"), "source": .string("manual"), "status": .string("active"),
+            "category": .string(category), "source": .string("manual"), "status": .string("active"),
             "start_date": .string(tracking == .workouts ? GoalActivityMetric.weekStart(HomeDate.todayString) ?? HomeDate.todayString : HomeDate.todayString), "native_mutation_id": .string(token)]
+        if !targetDate.isEmpty { fields["target_date"] = .string(targetDate) }
         if tracking != .manual {
             fields["metric_source"] = .string(tracking.source); fields["metric_field"] = .string(tracking.field)
             fields["unit"] = .string(tracking.unit); fields["target_mode"] = .string(tracking.recurring ? "recurring" : "absolute")
@@ -288,7 +306,7 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func logProgress(_ goal: EntityRecord<PerformanceGoal>, value: String, add: Bool) async {
-        guard !isSaving, pending == nil else { return }
+        guard !isSaving, pending == nil, goal.payload.status != "archived", goal.payload.status != "paused" else { return }
         guard let number = Double(value), number.isFinite,
               let current = goal.payload.currentValue, let target = goal.payload.targetValue else {
             writeError = AppError(title: "Check the value", message: "Enter a finite number for a goal with a numeric target and current value."); return
@@ -303,14 +321,54 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func togglePause(_ goal: EntityRecord<PerformanceGoal>) async {
-        guard !isSaving, pending == nil else { return }
+        guard !isSaving, pending == nil, goal.payload.status != "archived" else { return }
         let resumed = GoalActivityMetric.resolve(goal.metadata.data)?.recurring == true ? "active" : goal.payload.fraction == 1 ? "completed" : "active"
         pending = .setStatus(goal.id, goal.metadata.data, goal.payload.status == "paused" ? resumed : "paused")
         await retryWrite()
     }
 
+    func editGoal(_ goal: EntityRecord<PerformanceGoal>, title: String, target: String, unit: String, targetDate: String) async {
+        guard !isSaving, pending == nil, goal.payload.status != "archived" else { return }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title.count <= 160, unit.count <= 40,
+              let target = Double(target), target.isFinite, target > 0,
+              targetDate.isEmpty || DayPlanLogic.date(targetDate) != nil else {
+            writeError = AppError(title: "Check your goal", message: "Enter a title, positive target and valid target date."); return
+        }
+        if goal.payload.targetDirection == "decrease", target >= (goal.payload.startValue ?? 0) {
+            writeError = AppError(title: "Check your target", message: "A decreasing target must be below its starting value."); return
+        }
+        let token = UUID().uuidString
+        var fields: [String: JSONValue] = ["title": .string(title), "target_value": .number(target),
+            "target_date": targetDate.isEmpty ? .null : .string(targetDate), "native_mutation_id": .string(token)]
+        // Units on linked automatic metrics are fixed by their source; never reinterpret stored history.
+        if GoalActivityMetric.resolve(goal.metadata.data) == nil { fields["unit"] = .string(unit) }
+        if goal.metadata.data["source"] == .string("ai_plan") { fields["native_goal_user_edited"] = .bool(true) }
+        if goal.payload.status != "paused", let current = goal.payload.currentValue {
+            let complete = goal.payload.targetDirection == "decrease" ? current <= target : current >= target
+            fields["status"] = .string(complete && GoalActivityMetric.resolve(goal.metadata.data)?.recurring != true ? "completed" : "active")
+        }
+        pending = .edit(goal.id, goal.metadata.data, .object(fields), token)
+        await retryWrite()
+    }
+
+    func archiveGoal(_ goal: EntityRecord<PerformanceGoal>) async {
+        guard !isSaving, pending == nil else { return }
+        pending = .setStatus(goal.id, goal.metadata.data, "archived")
+        await retryWrite()
+    }
+
+    func restoreGoal(_ goal: EntityRecord<PerformanceGoal>) async {
+        guard !isSaving, pending == nil, goal.payload.status == "archived" else { return }
+        pending = .setStatus(goal.id, goal.metadata.data, "paused")
+        await retryWrite()
+    }
+
     func retryWrite() async {
-        guard let pending, let data, let user, !isSaving, canWrite(user.id) else { return }
+        guard !isSaving else { return }
+        do { try bindCurrentSession() }
+        catch { writeError = AppError.from(error, title: "Goals need a current session"); return }
+        guard let pending, let data, let user, canWrite(user.id) else { return }
         let request = generation
         isSaving = true; hasPendingWrite = true; writeError = nil; status = nil
         defer { if request == generation { isSaving = false } }
@@ -318,12 +376,23 @@ final class PerformanceDestinationModel: ObservableObject {
             // Persist before the first request so termination cannot turn an uncertain create into a duplicate.
             defaults.set(try JSONEncoder().encode(pending), forKey: pendingKey(user.id))
             let rows: [EntityRecord<JSONValue>] = try await data.listAll(.goals, isCurrent: { request == self.generation })
-            guard request == generation, !Task.isCancelled else { return }
+            guard request == generation, !Task.isCancelled, self.user?.id == user.id else { return }
             guard canWrite(user.id) else { return }
+            guard rows.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }) else { throw Self.changedGoal() }
             switch pending {
             case .create(let payload, let token):
-                if !rows.contains(where: { $0.payload["native_mutation_id"]?.stringValue == token }) {
+                let matching = rows.filter { $0.payload["native_mutation_id"]?.stringValue == token }
+                guard matching.count <= 1 else { throw Self.changedGoal() }
+                if matching.isEmpty {
                     let _: EntityRecord<JSONValue> = try await data.create(.goals, payload: payload, user: user)
+                }
+            case .edit(let id, let baseline, let patch, let token):
+                guard let row = rows.first(where: { $0.id == id }) else { throw Self.changedGoal() }
+                if row.payload["native_mutation_id"] == .string(token) {
+                    guard (patch.objectValue ?? [:]).allSatisfy({ row.payload[$0.key] == $0.value }) else { throw Self.changedGoal() }
+                } else {
+                    guard row.payload == baseline else { throw Self.changedGoal() }
+                    let _: EntityRecord<JSONValue> = try await data.update(.goals, id: id, patch: patch)
                 }
             case .setStatus(let id, let baseline, let status):
                 guard let row = rows.first(where: { $0.id == id }) else { throw Self.changedGoal() }
@@ -342,7 +411,10 @@ final class PerformanceDestinationModel: ObservableObject {
                 guard request == generation, !Task.isCancelled, canWrite(user.id) else { return }
                 let history: [EntityRecord<JSONValue>] = try await data.listAll(.goalProgressEntries, isCurrent: { request == self.generation })
                 guard request == generation, !Task.isCancelled, canWrite(user.id) else { return }
-                if !history.contains(where: { $0.payload["native_mutation_id"]?.stringValue == token }) {
+                guard history.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }) else { throw Self.changedGoal() }
+                let matching = history.filter { $0.payload["native_mutation_id"]?.stringValue == token }
+                guard matching.count <= 1 else { throw Self.changedGoal() }
+                if matching.isEmpty {
                     let _: EntityRecord<JSONValue> = try await data.create(.goalProgressEntries, payload: JSONValue.object([
                         "goal_id": .string(id.uuidString.lowercased()), "date": .string(date), "value": .number(value),
                         "target_value_snapshot": baseline["target_value"] ?? .null, "source": .string("manual"), "native_mutation_id": .string(token)]), user: user)
@@ -373,4 +445,76 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     private func pendingKey(_ id: UUID) -> String { "execute.cache.\(id.uuidString).goals.pending-write" }
+}
+
+
+/// Captures the SDK identity once. Every read/write validates it before and after awaiting.
+/// No token is persisted by this adapter; RLS and explicit legacy ownership both apply.
+@MainActor
+final class GoalSessionData: EntityDataServicing {
+    private let repository: RecoveryRepository
+    private let identity: RecoveryIdentity
+    private let active: () -> Bool
+    init(repository: RecoveryRepository, user: ExecuteUser, active: @escaping () -> Bool) throws {
+        self.repository = repository; identity = try repository.identity(for: user); self.active = active
+    }
+    private func check() throws { guard active() else { throw CancellationError() }; try repository.validate(identity) }
+    func list<P: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<P>] {
+        try await listPage(table, orderBy: orderBy, limit: limit, offset: 0)
+    }
+    func listPage<P: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<P>] {
+        try check()
+        let rows = try await repository.rows(table, fields: [:], identity: identity)
+        try check()
+        guard rows.allSatisfy({ NutritionWeekSelection.owned($0, by: identity.user) }), Set(rows.map(\.id)).count == rows.count else {
+            throw AppError(title: "Goals could not load", message: "Unowned or duplicate records were preserved. Refresh the correct account.")
+        }
+        return try rows.sorted { $0.id.uuidString < $1.id.uuidString }.dropFirst(offset).prefix(limit).map { try EntityRecord(row: $0) }
+    }
+    func create<P: Codable & Sendable>(_ table: EntityTable, payload: P, user: ExecuteUser) async throws -> EntityRecord<P> {
+        try check(); guard user.id == identity.user.id else { throw CancellationError() }
+        let patch = try JSONDecoder.execute.decode(JSONValue.self, from: JSONEncoder.execute.encode(payload))
+        let row = try await repository.write(table, id: nil, patch: patch, identity: identity)
+        try check(); guard NutritionWeekSelection.owned(row, by: user) else { throw CancellationError() }
+        return try EntityRecord(row: row)
+    }
+    func update<P: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<P> {
+        try check()
+        let row = try await repository.write(table, id: id, patch: patch, identity: identity)
+        try check(); guard row.id == id, NutritionWeekSelection.owned(row, by: identity.user) else { throw CancellationError() }
+        return try EntityRecord(row: row)
+    }
+    func delete(_ table: EntityTable, id: UUID) async throws {
+        throw AppError(title: "History is retained", message: "Archive a goal to remove it from active goals.")
+    }
+}
+
+struct GoalTemplate: Identifiable {
+    let id: String
+    let title: String
+    let target: String
+    let unit: String
+    let category: String
+    static let retained: [GoalTemplate] = [
+        .init(id: "steps", title: "Walk 10k steps daily", target: "10000", unit: "steps", category: "fitness"),
+        .init(id: "sleep", title: "Sleep 8 hours per night", target: "8", unit: "hours", category: "sleep"),
+        .init(id: "weight", title: "Lose 5kg body weight", target: "5", unit: "kg", category: "body"),
+        .init(id: "workouts", title: "Train 3x per week", target: "12", unit: "sessions", category: "fitness"),
+        .init(id: "water", title: "Drink 2.5L water daily", target: "2.5", unit: "liters", category: "habit"),
+        .init(id: "recovery", title: "Improve recovery score to 85", target: "85", unit: "score", category: "performance")]
+}
+
+struct GoalProgressSummary {
+    let active: Int
+    let completed: Int
+    let paused: Int
+    let average: Double?
+    init(_ goals: [EntityRecord<PerformanceGoal>]) {
+        let retained = goals.filter { $0.payload.status != "archived" }
+        active = retained.filter { $0.payload.status != "paused" && $0.payload.status != "completed" }.count
+        completed = retained.filter { $0.payload.status == "completed" }.count
+        paused = retained.filter { $0.payload.status == "paused" }.count
+        let fractions = retained.filter { $0.payload.status != "paused" }.compactMap { $0.payload.fraction }
+        average = fractions.isEmpty ? nil : fractions.reduce(0, +) / Double(fractions.count)
+    }
 }

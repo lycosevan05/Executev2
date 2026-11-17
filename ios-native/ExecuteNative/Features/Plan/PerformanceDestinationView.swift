@@ -18,13 +18,16 @@ private struct PerformanceScreen: View {
     @State private var showCreate = false
     @State private var loggingGoal: EntityRecord<PerformanceGoal>?
     @State private var showPaused = false
+    @State private var showArchived = false
+    @State private var editingGoal: EntityRecord<PerformanceGoal>?
+    @State private var archivingGoal: EntityRecord<PerformanceGoal>?
     @State private var range = 30
     @State private var selectedDate: String?
     @State private var insightsNow = Date()
 
     init(destination: PerformanceDestination, environment: AppEnvironment) {
         _appState = ObservedObject(wrappedValue: environment.appState)
-        _model = StateObject(wrappedValue: PerformanceDestinationModel(destination: destination, data: environment.dataService, cache: environment.cache,
+        _model = StateObject(wrappedValue: PerformanceDestinationModel(destination: destination, data: environment.dataService, cache: environment.cache, repository: environment.makeRecoveryRepository(),
             canWrite: { environment.appState.allowsDraftWrites(for: $0) }))
         router = environment.router
         _range = State(initialValue: destination == .insights ? 7 : 30)
@@ -77,6 +80,14 @@ private struct PerformanceScreen: View {
         }
         .sheet(isPresented: $showCreate) { GoalEntrySheet(model: model, goal: nil) }
         .sheet(item: $loggingGoal) { goal in GoalEntrySheet(model: model, goal: goal) }
+        .sheet(item: $editingGoal) { goal in GoalEditSheet(model: model, goal: goal) }
+        .alert("Remove goal from active goals?", isPresented: Binding(get: { archivingGoal != nil }, set: { if !$0 { archivingGoal = nil } })) {
+            Button("Cancel", role: .cancel) { archivingGoal = nil }
+            Button("Archive goal", role: .destructive) {
+                if let goal = archivingGoal { Task { await model.archiveGoal(goal) } }
+                archivingGoal = nil
+            }
+        } message: { Text("The goal and its history are retained. You can restore it from archived goals. Automatic tracking stops while archived.") }
         .executeScreen()
     }
 
@@ -149,11 +160,16 @@ private struct PerformanceScreen: View {
             Button("View progress") { router.navigate(to: .progress(goalID: nil)) }
         }
         Toggle("Show paused goals", isOn: $showPaused)
-        let visible = model.goals.filter { showPaused || $0.payload.status != "paused" }
+        Toggle("Show archived goals", isOn: $showArchived)
+        let visible = model.goals.filter { ($0.payload.status == "archived" ? showArchived : (showPaused || $0.payload.status != "paused")) }
         if visible.isEmpty { ExecuteEmptyState(title: "Set your next goal", message: "Choose a measurable target and log your progress.", symbol: "target") }
         ForEach(visible) { goal in
             performanceCard {
                 goalSummary(goal)
+                if goal.payload.status == "archived" {
+                    Text("Archived · History retained").font(ExecuteTypography.caption(12))
+                    Button("Restore as paused") { Task { await model.restoreGoal(goal) } }.disabled(model.hasPendingWrite || model.isSaving)
+                } else {
                 HStack {
                     Button("Log progress") { loggingGoal = goal }
                         .disabled(model.hasPendingWrite || model.isSaving || goal.payload.status == "paused" || goal.payload.targetValue == nil || goal.payload.currentValue == nil)
@@ -165,6 +181,12 @@ private struct PerformanceScreen: View {
                 } else {
                     Text("Paused").font(ExecuteTypography.caption(12))
                     Button("Resume goal") { Task { await model.togglePause(goal) } }.disabled(model.hasPendingWrite || model.isSaving)
+                }
+                HStack {
+                    Button("Edit goal") { editingGoal = goal }
+                    Spacer()
+                    Button("Remove goal", role: .destructive) { archivingGoal = goal }
+                }.disabled(model.hasPendingWrite || model.isSaving)
                 }
             }
         }
@@ -180,7 +202,35 @@ private struct PerformanceScreen: View {
             Text("7 days").tag(7); Text("30 days").tag(30); Text("90 days").tag(90)
         }.pickerStyle(.segmented)
         let dates = PerformanceCalculations.recentDates(count: range)
-        let visible = model.goals.filter { (highlighted != nil || $0.payload.status != "paused") && (highlighted == nil || $0.id == highlighted) }
+        let visible = model.goals.filter { $0.payload.status != "archived" && (highlighted != nil || $0.payload.status != "paused") && (highlighted == nil || $0.id == highlighted) }
+        if highlighted == nil {
+            let summary = GoalProgressSummary(model.goals)
+            performanceCard {
+                Text("All goals").font(ExecuteTypography.title(18))
+                Text("\(summary.active) active · \(summary.completed) completed · \(summary.paused) paused")
+                if let average = summary.average { Text("Average progress: \(Int((average * 100).rounded()))%") }
+                else { Text("No measured progress yet.") }
+                Chart(visible) { goal in
+                    if let fraction = goal.payload.fraction {
+                        BarMark(x: .value("Progress", fraction * 100), y: .value("Goal", goal.id.uuidString))
+                            .foregroundStyle(ExecuteColor.chartreuseDark)
+                            .accessibilityLabel(Text(goal.payload.title ?? "Goal"))
+                            .accessibilityValue(Text("\(Int((fraction * 100).rounded())) percent"))
+                    }
+                }
+                .chartXScale(domain: 0...100)
+                .chartYAxis {
+                    AxisMarks { value in
+                        AxisValueLabel {
+                            if let id = value.as(String.self), let goal = visible.first(where: { $0.id.uuidString == id }) {
+                                Text(goal.payload.title ?? "Goal")
+                            }
+                        }
+                    }
+                }
+                .frame(height: max(120, CGFloat(visible.count) * 48))
+            }
+        }
         if visible.isEmpty { ExecuteEmptyState(title: "No goals to show", message: "Open Goals to add a target or review paused goals.", symbol: "chart.line.uptrend.xyaxis") }
         ForEach(visible) { goal in
             performanceCard {
@@ -314,6 +364,8 @@ private struct GoalEntrySheet: View {
     @State private var tracking: GoalActivityMetric = .manual
     @State private var value = ""
     @State private var add = false
+    @State private var targetDate = ""
+    @State private var category = "performance"
 
     var body: some View {
         NavigationStack {
@@ -325,6 +377,17 @@ private struct GoalEntrySheet: View {
                         TextField("Value (\(goal.payload.unit ?? ""))", text: $value).keyboardType(.decimalPad)
                     }
                 } else {
+                    Section("Templates") {
+                        Menu("Choose a template") {
+                            ForEach(GoalTemplate.retained) { template in
+                                Button(template.title) {
+                                    title = template.title; target = template.target; unit = template.unit
+                                    category = template.category; start = "0"; decreasing = false; tracking = .manual
+                                }
+                            }
+                        }
+                        Text("Templates begin with manual progress. You can select an automatic source before saving.").font(.caption)
+                    }
                     Section("New goal") {
                         TextField("Goal title", text: $title)
                         Picker("Track progress from", selection: $tracking) {
@@ -336,6 +399,7 @@ private struct GoalEntrySheet: View {
                             Text("Updates when Home, Goals or Progress refreshes.").font(.caption)
                         }
                         TextField("Target value", text: $target).keyboardType(.decimalPad)
+                        TextField("Target date (YYYY-MM-DD, optional)", text: $targetDate).textInputAutocapitalization(.never)
                         if tracking == .manual { TextField("Unit, such as sessions or kg", text: $unit) }
                         else { Text("Unit: \(tracking.unit)") }
                         if !tracking.recurring { Toggle("Decrease toward target", isOn: $decreasing) }
@@ -346,13 +410,54 @@ private struct GoalEntrySheet: View {
                     Task {
                         if model.hasPendingWrite { await model.retryWrite() }
                         else if let goal { await model.logProgress(goal, value: value, add: add) }
-                        else { await model.createGoal(title: title, target: target, unit: unit, start: tracking.recurring ? "0" : start, decreasing: tracking.recurring ? false : decreasing, tracking: tracking) }
+                        else { await model.createGoal(title: title, target: target, unit: unit, start: tracking.recurring ? "0" : start, decreasing: tracking.recurring ? false : decreasing, tracking: tracking, targetDate: targetDate, category: category) }
                         if model.writeError == nil, !model.hasPendingWrite { dismiss() }
                     }
                 }.disabled(model.isSaving)
                 if model.isSaving { ProgressView("Saving…") }
             }
             .navigationTitle(goal == nil ? "Add goal" : "Log progress")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(model.isSaving) } }
+            .interactiveDismissDisabled(model.isSaving)
+        }
+    }
+}
+
+
+private struct GoalEditSheet: View {
+    @ObservedObject var model: PerformanceDestinationModel
+    let goal: EntityRecord<PerformanceGoal>
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var target: String
+    @State private var unit: String
+    @State private var targetDate: String
+    init(model: PerformanceDestinationModel, goal: EntityRecord<PerformanceGoal>) {
+        self.model = model; self.goal = goal
+        _title = State(initialValue: goal.payload.title ?? "")
+        _target = State(initialValue: goal.payload.targetValue.map(String.init(describing:)) ?? "")
+        _unit = State(initialValue: goal.payload.unit ?? "")
+        _targetDate = State(initialValue: goal.payload.targetDate ?? "")
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Title", text: $title)
+                TextField("Target value", text: $target).keyboardType(.decimalPad)
+                if GoalActivityMetric.resolve(goal.metadata.data) == nil { TextField("Unit", text: $unit) }
+                else { Text("Unit: \(unit) · linked to automatic tracking") }
+                TextField("Target date (YYYY-MM-DD, optional)", text: $targetDate).textInputAutocapitalization(.never)
+                Text("Saved observations and their original targets are retained. Editing a plan-derived goal keeps your choices on future plan refreshes.").font(.caption)
+                if let error = model.writeError { Text(error.message).foregroundStyle(ExecuteColor.destructive) }
+                Button(model.hasPendingWrite ? "Retry this save" : "Save changes") {
+                    Task {
+                        if model.hasPendingWrite { await model.retryWrite() }
+                        else { await model.editGoal(goal, title: title, target: target, unit: unit, targetDate: targetDate) }
+                        if model.writeError == nil, !model.hasPendingWrite { dismiss() }
+                    }
+                }.disabled(model.isSaving)
+            }
+            .navigationTitle("Edit goal")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(model.isSaving) } }
             .interactiveDismissDisabled(model.isSaving)
         }
