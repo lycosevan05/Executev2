@@ -360,7 +360,29 @@ private final class PlanFixtureAI: AIResponding {
     func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
         requests.append(request)
         beforeReturn?()
-        return try (responses.isEmpty ? response : responses.removeFirst()).decoded(as: type)
+        let raw = responses.isEmpty ? response : responses.removeFirst()
+        let reply = request.schemaName == "native_initial_plan" ? Self.initialOverview(raw) : raw
+        return try reply.decoded(as: type)
+    }
+    // Supply the added initial-generation fields without changing historical refinement fixtures.
+    static func initialOverview(_ raw: JSONValue) -> JSONValue {
+        guard var overview = raw.objectValue, var week = overview["weekly_overview"]?.objectValue,
+              let days = week["days"]?.recoveryArray, var split = overview["training_split"]?.objectValue else { return raw }
+        let parser = DateFormatter(); parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(secondsFromGMT: 0); parser.dateFormat = "yyyy-MM-dd"
+        let label = DateFormatter(); label.locale = Locale(identifier: "en_US_POSIX")
+        label.timeZone = TimeZone(secondsFromGMT: 0); label.dateFormat = "EEEE"
+        let dated = days.map { value -> JSONValue in
+            guard var day = value.objectValue else { return value }
+            if day["weekday"] == nil, let text = day["date"]?.stringValue, let date = parser.date(from: text) {
+                day["weekday"] = .string(label.string(from: date))
+            }
+            return .object(day)
+        }
+        week["days"] = .array(dated); overview["weekly_overview"] = .object(week)
+        if split["training_weekdays"] == nil { split["training_weekdays"] = .array(dated.filter { $0["day_type"] == .string("training") }.compactMap { $0["weekday"] }) }
+        overview["training_split"] = .object(split)
+        return .object(overview)
     }
     func textResponse(_ request: LLMRequest) async throws -> String { textRequests.append(request); beforeReturn?(); return pdfText }
 }
@@ -576,7 +598,18 @@ final class PlanImportTests: XCTestCase {
         XCTAssertEqual(vm.revisedOverview?["nutrition_targets"]?["calories"], .number(2200))
         let days = try XCTUnwrap(vm.revisedOverview?["weekly_overview"]?["days"]?.recoveryArray)
         XCTAssertEqual(days.filter { $0["workout_needed"] == .bool(true) }.count, 3)
-        XCTAssertEqual(days.first?["byo_session"]?["exercises"]?.recoveryArray?.first?["name"], .string("Push-ups"))
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let formatter = DateFormatter(); formatter.calendar = calendar; formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone; formatter.dateFormat = "yyyy-MM-dd"
+        let expectedExercises: JSONValue = .array([.object(["name": .string("Push-ups"), "sets": .number(3), "reps": .string("8")])])
+        for day in days {
+            let date = try XCTUnwrap(day["date"]?.stringValue)
+            let parsed = try XCTUnwrap(formatter.date(from: date))
+            let training = [1, 4, 6].contains(calendar.component(.weekday, from: parsed)) // Sunday, Wednesday, Friday.
+            XCTAssertEqual(day["workout_needed"], .bool(training), date)
+            if training { XCTAssertEqual(day["byo_session"]?["exercises"], expectedExercises, date) }
+            else { XCTAssertEqual(day["day_type"], .string("rest"), date); XCTAssertNil(day["byo_session"], date) }
+        }
         await vm.saveRevision()
         XCTAssertEqual(data.rows[.aiPlans]?.count, 1)
         XCTAssertNotNil(data.rows[.aiPlans]?.first?.data["plan_payload"]?["byo_structured"])
@@ -849,4 +882,92 @@ private final class PlanSaveAuthProtocol: URLProtocol, @unchecked Sendable {
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() { }
+}
+
+
+extension PlanGenerationTests {
+    private var tuesdayDates: [String] { ["2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22", "2026-11-23"] }
+    private func tuesdayOverview(training: Set<String> = ["Monday", "Wednesday", "Friday"]) -> JSONValue {
+        let weekdays = ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Monday"]
+        var overview = PlanRefinementTests.overview().objectValue!
+        overview["training_split"] = .object(["days_per_week": .number(Double(training.count)), "session_length_minutes": .number(45),
+            "training_weekdays": .array(training.sorted().map(JSONValue.string))])
+        overview["weekly_overview"] = .object(["days": .array(zip(tuesdayDates, weekdays).map { date, weekday in
+            .object(["date": .string(date), "weekday": .string(weekday), "day_type": .string(training.contains(weekday) ? "training" : "recovery"),
+                "session_title": .string(training.contains(weekday) ? "\(weekday) bodyweight strength" : "\(weekday) recovery"),
+                "training_type": .string(training.contains(weekday) ? "Strength" : "Recovery"),
+                "priority": .string(training.contains(weekday) ? "Complete the 45-minute \(weekday) session." : "Recover on \(weekday)."),
+                "recovery_focus": .string("Follow the dated schedule."), "nutrition_focus": .string("Three meals; avoid peanuts.")])
+        })])
+        return .object(overview)
+    }
+
+    func testTuesdayInitialPromptAndValidCalendarKeepMondayWednesdayFridayOnTheirDates() throws {
+        let zone = TimeZone(identifier: "America/Vancouver")!
+        var a = answers(); a.sportSchedule = "Monday, Wednesday and Friday; 45 minutes; bodyweight only."
+        let values = try a.validated(), request = try PlanGeneration.request(answers: values, context: .object([:]), dates: tuesdayDates, timeZone: zone)
+        let calendarPrefix = "The authoritative local calendar is: "
+        let calendarLine = try XCTUnwrap(request.prompt.components(separatedBy: "\n").first { $0.hasPrefix(calendarPrefix) })
+        let calendarContext = try JSONDecoder().decode(JSONValue.self, from: Data(calendarLine.dropFirst(calendarPrefix.count).utf8))
+        XCTAssertEqual(calendarContext["time_zone"], .string(zone.identifier))
+        XCTAssertTrue(request.prompt.contains("The first slot is Tuesday, 2026-11-17"))
+        XCTAssertTrue(request.prompt.contains("Monday, Wednesday and Friday"))
+        XCTAssertEqual(request.responseJSONSchema?["properties"]?["weekly_overview"]?["properties"]?["days"]?["items"]?["properties"]?["date"]?["enum"], .array(tuesdayDates.map(JSONValue.string)))
+        XCTAssertNotNil(request.responseJSONSchema?["properties"]?["training_split"]?["properties"]?["training_weekdays"])
+        let normalized = try PlanGeneration.normalize(tuesdayOverview(), answers: values, dates: tuesdayDates, timeZone: zone)
+        let days = try XCTUnwrap(normalized["weekly_overview"]?["days"]?.recoveryArray)
+        XCTAssertEqual(days.compactMap { $0["date"]?.stringValue }, tuesdayDates)
+        XCTAssertEqual(days.filter { $0["workout_needed"] == .bool(true) }.compactMap { $0["date"]?.stringValue }, ["2026-11-18", "2026-11-20", "2026-11-23"])
+        XCTAssertEqual(days[0]["day_type"], .string("recovery"))
+        XCTAssertEqual(days[6]["session_title"], .string("Monday bodyweight strength"))
+        XCTAssertEqual(normalized["training_split"]?["days_per_week"], .number(3))
+        XCTAssertEqual(normalized["training_split"]?["session_length_minutes"], .number(45))
+    }
+
+    func testTuesdayInitialCalendarRejectsMondayIndexedAndShiftedTrainingResponsesWithoutRelabeling() throws {
+        let values = try answers().validated()
+        var wrong = tuesdayOverview().objectValue!, week = wrong["weekly_overview"]!.objectValue!, days = week["days"]!.recoveryArray!
+        let mondayFirst = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        days = days.enumerated().map { index, value in var day = value.objectValue!; day["weekday"] = .string(mondayFirst[index]); return .object(day) }
+        week["days"] = .array(days); wrong["weekly_overview"] = .object(week)
+        XCTAssertThrowsError(try PlanGeneration.normalize(.object(wrong), answers: values, dates: tuesdayDates))
+        // Correct date/weekday labels alone cannot accept Tuesday/Thursday/Saturday training declared as M/W/F.
+        wrong = tuesdayOverview(training: ["Tuesday", "Thursday", "Saturday"]).objectValue!
+        var split = wrong["training_split"]!.objectValue!
+        split["training_weekdays"] = .array(["Monday", "Wednesday", "Friday"].map(JSONValue.string)); wrong["training_split"] = .object(split)
+        XCTAssertThrowsError(try PlanGeneration.normalize(.object(wrong), answers: values, dates: tuesdayDates))
+    }
+
+    func testInvalidInitialCalendarCannotPublishOrSaveAPreview() async throws {
+        let (data, ai, model) = await fixture()
+        var raw = PlanFixtureAI.initialOverview(PlanRefinementTests.overview()).objectValue!
+        var week = raw["weekly_overview"]!.objectValue!, days = week["days"]!.recoveryArray!, first = days[0].objectValue!
+        first["weekday"] = .string("Wrong weekday"); days[0] = .object(first); week["days"] = .array(days); raw["weekly_overview"] = .object(week)
+        ai.response = .object(raw)
+        await model.generateInitialPlan(); await model.saveRevision()
+        XCTAssertNil(model.revisedOverview); XCTAssertNotNil(model.editError)
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(data.updates, 0)
+    }
+
+    func testTuesdayBYOCalendarPreservesSuppliedCadenceAndDurationOverGeneratedPlaceholders() throws {
+        var a = try answers().validated().objectValue!
+        let exercises: JSONValue = .array([.object(["name": .string("Push-up"), "sets": .number(3), "reps": .string("8")])])
+        let sessions: [JSONValue] = [(1, "Cedar A"), (3, "Cedar B"), (5, "Cedar C")].map { weekday, title in
+            .object(["weekday": .number(Double(weekday)), "title": .string(title), "duration": .string("45 minutes"), "exercises": exercises])
+        }
+        let structure: JSONValue = .object(["workout": .object(["session_duration": .string("45 minutes"),
+            "cadence": .object(["type": .string("weekly"), "advance": .string("training_days_only"), "rest_weekdays": .array([0, 2, 4, 6].map { .number(Double($0)) })]),
+            "weekly_sessions": .array(sessions)])])
+        a["byo_structured"] = structure
+        var placeholder = tuesdayOverview(training: ["Tuesday", "Thursday", "Saturday"]).objectValue!
+        var split = placeholder["training_split"]!.objectValue!; split["training_weekdays"] = .array([.string("Sunday")]); placeholder["training_split"] = .object(split)
+        let normalized = try PlanGeneration.normalize(.object(placeholder), answers: .object(a), dates: tuesdayDates)
+        let days = try XCTUnwrap(normalized["weekly_overview"]?["days"]?.recoveryArray)
+        XCTAssertEqual(days[0]["day_type"], .string("rest")); XCTAssertNil(days[0]["byo_session"])
+        XCTAssertEqual(days.filter { $0["workout_needed"] == .bool(true) }.compactMap { $0["session_title"]?.stringValue }, ["Cedar B", "Cedar C", "Cedar A"])
+        XCTAssertEqual(normalized["training_split"]?["training_weekdays"], .array(["Wednesday", "Friday", "Monday"].map(JSONValue.string)))
+        XCTAssertEqual(normalized["training_split"]?["session_length_minutes"], .number(45))
+        XCTAssertEqual(days[1]["byo_session"]?["exercises"], exercises)
+        XCTAssertEqual(days[1]["priority"], .string("Complete your supplied Cedar B session."))
+    }
 }

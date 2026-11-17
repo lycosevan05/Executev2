@@ -209,8 +209,8 @@ final class PlanViewModel: ObservableObject {
             let raw = try await aiService.structuredResponse(PlanGeneration.request(answers: answers, context: generationContext, dates: dates), as: JSONValue.self)
             guard request == generation, !Task.isCancelled else { return }
             guard hasPremiumAccess() else { throw AppError(title: "Premium required", message: "Your membership changed during generation. Refresh Premium & Billing before trying again.") }
-            let normalized = try PlanRefinement.normalize(raw, dates: dates, overrides: nil)
-            var overview = (answers["byo_structured"].map { BYOPlan.mapped(normalized, structured: $0) } ?? normalized).objectValue!
+            let normalized = try PlanGeneration.normalize(raw, answers: answers, dates: dates)
+            var overview = normalized.objectValue!
             pendingPayload = try PlanGeneration.payload(overview: .object(overview), answers: answers, batch: "initial_\(UUID().uuidString)", now: Date())
             overview["nutrition_targets"] = PlanGeneration.targets(answers)
             if let base = setupBaseID, var payload = pendingPayload?.objectValue { payload["supersedes_plan_id"] = .string(base.uuidString.lowercased()); pendingPayload = .object(payload) }
