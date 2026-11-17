@@ -92,8 +92,11 @@
 		9E7D0EBC269018918F5FE58F /* RecoveryReadiness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C945FC3FF0B3B50934B2D3B /* RecoveryReadiness.swift */; };
 		A0743C446EF50FD5C5A4F167 /* RecoveryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7B62B8CF953C86DB422E534 /* RecoveryRepository.swift */; };
 		658D5DEE28B79C5DEE136112 /* RecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77FDD9DA08A2D43FAB12D212 /* RecoveryView.swift */; };
+		C18ADC14C1BE980B5EFEAE6D /* ActiveLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C532DFD189C3AF2462EEE67 /* ActiveLimitationsView.swift */; };
 		F27120EF36A99B63E3573BBA /* RecoveryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EFB14D84B12BEA090386DBB /* RecoveryViewModel.swift */; };
 		3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F30ADD4AE865BF13490528 /* RecoveryTests.swift */; };
+		05BB46345EED7A4E8C1497F4 /* GoalsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E392368E70C07C2FBE894F68 /* GoalsTests.swift */; };
+		19AE71EB34B7416F1DA5EDAC /* HomePreferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E9A25F86C3D429D1DC2FD95 /* HomePreferenceTests.swift */; };
 		B848D3765D49A75737ED890C /* RecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FF8D5033A9FF62626236E59 /* RecoveryUITests.swift */; };
 		DEAD00000000000000000001 /* RecoveryReadinessCases.json in Resources */ = {isa = PBXBuildFile; fileRef = DEAD00000000000000000002 /* RecoveryReadinessCases.json */; };
 		D10000000000000000000001 /* PlanRefinement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000002 /* PlanRefinement.swift */; };
@@ -218,8 +221,11 @@
 		9C945FC3FF0B3B50934B2D3B /* RecoveryReadiness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryReadiness.swift; sourceTree = "<group>"; };
 		B7B62B8CF953C86DB422E534 /* RecoveryRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryRepository.swift; sourceTree = "<group>"; };
 		77FDD9DA08A2D43FAB12D212 /* RecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryView.swift; sourceTree = "<group>"; };
+		9C532DFD189C3AF2462EEE67 /* ActiveLimitationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveLimitationsView.swift; sourceTree = "<group>"; };
 		1EFB14D84B12BEA090386DBB /* RecoveryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryViewModel.swift; sourceTree = "<group>"; };
 		42F30ADD4AE865BF13490528 /* RecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryTests.swift; sourceTree = "<group>"; };
+		E392368E70C07C2FBE894F68 /* GoalsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalsTests.swift; sourceTree = "<group>"; };
+		3E9A25F86C3D429D1DC2FD95 /* HomePreferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomePreferenceTests.swift; sourceTree = "<group>"; };
 		7FF8D5033A9FF62626236E59 /* RecoveryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryUITests.swift; sourceTree = "<group>"; };
 		DEAD00000000000000000002 /* RecoveryReadinessCases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = RecoveryReadinessCases.json; sourceTree = "<group>"; };
 		D10000000000000000000002 /* PlanRefinement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanRefinement.swift; sourceTree = "<group>"; };
@@ -362,6 +368,8 @@
 				4C7BC7F3B0D3114F6C5F717A /* SplitDayTests.swift */,
 				D6F6B9C2F5E1C9C74A38F06B /* WeekBuildTests.swift */,
 				42F30ADD4AE865BF13490528 /* RecoveryTests.swift */,
+				E392368E70C07C2FBE894F68 /* GoalsTests.swift */,
+				3E9A25F86C3D429D1DC2FD95 /* HomePreferenceTests.swift */,
 				E60000000000000000000002 /* PerformanceDestinationTests.swift */,
 				EA0000000000000000000002 /* DayPlanTests.swift */,
 				D10000000000000000000004 /* PlanRefinementTests.swift */,
@@ -611,6 +619,7 @@
 				9C945FC3FF0B3B50934B2D3B /* RecoveryReadiness.swift */,
 				B7B62B8CF953C86DB422E534 /* RecoveryRepository.swift */,
 				77FDD9DA08A2D43FAB12D212 /* RecoveryView.swift */,
+				9C532DFD189C3AF2462EEE67 /* ActiveLimitationsView.swift */,
 				1EFB14D84B12BEA090386DBB /* RecoveryViewModel.swift */,
 			);
 			path = Recovery;
@@ -735,6 +744,8 @@
 				DF7C87CBF44A922E2D4E13DA /* SplitDayTests.swift in Sources */,
 				1B44536D74D931868A434554 /* WeekBuildTests.swift in Sources */,
 				3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */,
+				05BB46345EED7A4E8C1497F4 /* GoalsTests.swift in Sources */,
+				19AE71EB34B7416F1DA5EDAC /* HomePreferenceTests.swift in Sources */,
 				E60000000000000000000001 /* PerformanceDestinationTests.swift in Sources */,
 				EA0000000000000000000001 /* DayPlanTests.swift in Sources */,
 				D10000000000000000000003 /* PlanRefinementTests.swift in Sources */,
@@ -760,6 +771,7 @@
 				BAE107E528FEB125830F4545 /* WeekBuildView.swift in Sources */,
 				F27120EF36A99B63E3573BBA /* RecoveryViewModel.swift in Sources */,
 				658D5DEE28B79C5DEE136112 /* RecoveryView.swift in Sources */,
+				C18ADC14C1BE980B5EFEAE6D /* ActiveLimitationsView.swift in Sources */,
 				A0743C446EF50FD5C5A4F167 /* RecoveryRepository.swift in Sources */,
 				9E7D0EBC269018918F5FE58F /* RecoveryReadiness.swift in Sources */,
 				2CA0E0032C59F75C7A9384DF /* RecoveryModels.swift in Sources */,
@@ -867,7 +879,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.executelabs.execute.native-dev";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -1008,7 +1020,7 @@
 				DEVELOPMENT_TEAM = 58GZDC8UKY;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.executelabs.execute.native-dev.tests";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ExecuteNative.app/ExecuteNative";
 			};
 			name = Debug;
@@ -1027,7 +1039,7 @@
 				DEVELOPMENT_TEAM = 58GZDC8UKY;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.executelabs.execute.native-dev.tests";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ExecuteNative.app/ExecuteNative";
 			};
 			name = Release;
@@ -1049,7 +1061,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.executelabs.execute.native-dev";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};

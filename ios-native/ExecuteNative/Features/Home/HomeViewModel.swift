@@ -24,6 +24,7 @@ final class HomeViewModel: ObservableObject {
     private var subscriptions: [RealtimeSubscription] = []
     private var hasStarted = false
 
+    private let defaults: UserDefaults
     private let dashboardKey = CacheKey("home", "dashboard")
     private let layoutKey = CacheKey("home", "layout")
     private let vitalDefaultsKey = "execute.home.vitals.layout"
@@ -34,6 +35,7 @@ final class HomeViewModel: ObservableObject {
         cache: UserScopedCacheStore,
         realtimeService: RealtimeSubscribing?,
         router: AppRouter,
+        defaults: UserDefaults = .standard,
         canTrackGoals: @escaping (UUID) -> Bool = { _ in false }
     ) {
         self.dataService = dataService
@@ -41,8 +43,7 @@ final class HomeViewModel: ObservableObject {
         self.realtimeService = realtimeService
         self.router = router
         self.canTrackGoals = canTrackGoals
-        self.selectedVitals = Self.loadVitals(from: UserDefaults.standard, key: vitalDefaultsKey)
-        self.hiddenChecklistDefaults = Set(UserDefaults.standard.stringArray(forKey: checklistDefaultsKey) ?? [])
+        self.defaults = defaults
     }
 
     static func preview(name: String = "Alex") -> HomeViewModel {
@@ -110,7 +111,14 @@ final class HomeViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
+        trackingGeneration = UUID()
+        snapshot = .empty
+        layoutRecordID = nil
+        widgetOrder = HomeWidget.defaultOrder
+        hiddenWidgets = []
         self.user = user
+        selectedVitals = Self.loadVitals(from: defaults, key: preferenceKey(vitalDefaultsKey, userID: user.id))
+        hiddenChecklistDefaults = Set(defaults.stringArray(forKey: preferenceKey(checklistDefaultsKey, userID: user.id)) ?? [])
         hasStarted = true
         await restoreCachedDashboard()
         await restoreCachedLayout()
@@ -125,6 +133,13 @@ final class HomeViewModel: ObservableObject {
 
     func stop() async {
         trackingGeneration = UUID()
+        user = nil
+        selectedVitals = HomeVital.defaults
+        hiddenChecklistDefaults = []
+        snapshot = .empty
+        layoutRecordID = nil
+        widgetOrder = HomeWidget.defaultOrder
+        hiddenWidgets = []
         let current = subscriptions
         subscriptions.removeAll()
         for subscription in current {
@@ -248,12 +263,12 @@ final class HomeViewModel: ObservableObject {
             guard selectedVitals.count < 12 else { return }
             selectedVitals.append(vital)
         }
-        UserDefaults.standard.set(selectedVitals.map(\.rawValue), forKey: vitalDefaultsKey)
+        if let user { defaults.set(selectedVitals.map(\.rawValue), forKey: preferenceKey(vitalDefaultsKey, userID: user.id)) }
     }
 
     func setChecklistDefaultVisible(_ type: String, isVisible: Bool) {
         if isVisible { hiddenChecklistDefaults.remove(type) } else { hiddenChecklistDefaults.insert(type) }
-        UserDefaults.standard.set(Array(hiddenChecklistDefaults), forKey: checklistDefaultsKey)
+        if let user { defaults.set(Array(hiddenChecklistDefaults), forKey: preferenceKey(checklistDefaultsKey, userID: user.id)) }
     }
 
     func saveVital(_ vital: HomeVital, value: Double) async {
@@ -428,7 +443,10 @@ final class HomeViewModel: ObservableObject {
     }
 
     private func restoreCachedDashboard() async {
-        switch await cache.read(dashboardKey, as: HomeDashboardSnapshot.self) {
+        let request = trackingGeneration, owner = user?.id
+        let cached = await cache.read(dashboardKey, as: HomeDashboardSnapshot.self)
+        guard request == trackingGeneration, owner == user?.id else { return }
+        switch cached {
         case .fresh(let cached), .stale(let cached): snapshot = cached
         case .missing: break
         }
@@ -439,7 +457,10 @@ final class HomeViewModel: ObservableObject {
     }
 
     private func restoreCachedLayout() async {
-        switch await cache.read(layoutKey, as: PersistedHomeLayout.self) {
+        let request = trackingGeneration, owner = user?.id
+        let cached = await cache.read(layoutKey, as: PersistedHomeLayout.self)
+        guard request == trackingGeneration, owner == user?.id else { return }
+        switch cached {
         case .fresh(let cached), .stale(let cached): apply(layout: cached)
         case .missing: break
         }
@@ -532,6 +553,11 @@ final class HomeViewModel: ObservableObject {
         if let endsOn = item.endsOn, date > endsOn { return false }
         if let days = item.days, !days.isEmpty, !days.contains(weekday) { return false }
         return item.isActive != false
+    }
+
+    private func preferenceKey(_ key: String, userID: UUID) -> String {
+        // The cache owner prefix also makes successful account deletion purge these settings.
+        "execute.cache.\(userID.uuidString).\(key)"
     }
 
     private static func loadVitals(from defaults: UserDefaults, key: String) -> [HomeVital] {

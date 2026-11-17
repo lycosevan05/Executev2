@@ -13,6 +13,7 @@ struct ProfileView: View {
 private struct ProfileScreen: View {
     @ObservedObject private var appState: AppState
     @StateObject private var model: ProfileViewModel
+    private let limitationsRepository: RecoveryRepository
     let initialSection: String?
 
     init(environment: AppEnvironment, initialSection: String?) {
@@ -24,10 +25,11 @@ private struct ProfileScreen: View {
             cache: environment.cache
         ))
         self.initialSection = initialSection
+        self.limitationsRepository = environment.makeRecoveryRepository()
     }
 
     var body: some View {
-        ProfileDashboardView(model: model, premiumState: appState.premiumState, initialSection: initialSection)
+        ProfileDashboardView(model: model, premiumState: appState.premiumState, initialSection: initialSection, limitationsRepository: limitationsRepository, limitationsUser: signedInUser)
             .task(id: signedInUser?.id) {
                 if let signedInUser { await model.start(for: signedInUser) } else { model.stop() }
             }
@@ -43,8 +45,11 @@ struct ProfileDashboardView: View {
     @ObservedObject var model: ProfileViewModel
     let premiumState: PremiumState
     let initialSection: String?
+    var limitationsRepository: RecoveryRepository? = nil
+    var limitationsUser: ExecuteUser? = nil
 
     @Environment(\.openURL) private var openURL
+    @State private var isLimitationsPresented = false
     @State private var isNameEditorPresented = false
     @State private var isDeletePresented = false
     @State private var isSignOutPresented = false
@@ -93,7 +98,7 @@ struct ProfileDashboardView: View {
                                 title: section.title, subtitle: "Review your saved preferences", action: { preferenceSection = section })
                         }
                         ProfileActionRow(symbol: "target", title: "Goals", subtitle: "Targets and progress", action: model.openGoals)
-                        ProfileActionRow(symbol: "figure.walk", title: "Limitations", subtitle: "Injuries and movement cautions", action: model.openLimitations)
+                        ProfileActionRow(symbol: "figure.walk", title: "Limitations", subtitle: "Injuries and movement cautions", action: { isLimitationsPresented = true })
                     }
                 }
 
@@ -156,6 +161,15 @@ struct ProfileDashboardView: View {
         }
         .sheet(isPresented: $isDeletePresented) {
             DeleteAccountSheet(model: model)
+        }
+        .sheet(isPresented: $isLimitationsPresented) {
+            NavigationStack {
+                if let user = limitationsUser, let limitationsRepository {
+                    ScrollView { ActiveLimitationsView(user: user, repository: limitationsRepository).id(user.id).padding() }
+                        .navigationTitle("Limitations")
+                }
+            }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { isLimitationsPresented = false } } }
         }
         .sheet(item: $preferenceSection, onDismiss: { Task { await model.reload() } }) { section in
             ProfilePreferencesView(section: section)
