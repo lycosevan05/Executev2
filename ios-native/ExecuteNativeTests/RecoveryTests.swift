@@ -8,7 +8,7 @@ final class RecoveryTests: XCTestCase {
     private var noon: Date { ISO8601DateFormatter().date(from: "2026-10-31T12:00:00Z")! }
     private func model(_ repo: RecoveryFixtureRepository, ai: RecoveryFixtureAI? = nil, source: String? = nil) -> RecoveryViewModel {
         RecoveryViewModel(repository: repo, ai: ai ?? RecoveryFixtureAI(), cache: UserScopedCacheStore(suiteName: "RecoveryTests.\(UUID())"),
-                          date: noon, source: source, clock: { self.noon }, timeZone: utc)
+                          date: noon, source: source, clock: { self.noon }, timeZone: utc, defaults: UserDefaults(suiteName: "RecoveryIntents.\(UUID())")!)
     }
     func testJavaScriptReferenceMatrix() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "RecoveryReadinessCases", withExtension: "json"))
@@ -426,7 +426,7 @@ extension RecoveryTests {
     }
     func testDailyProjectionPreservesTrackedValuesCompletionsAndUpdatesSameRow() async {
         let repo = RecoveryFixtureRepository(), plan = projectionPlan(), vm = model(repo)
-        let daily = RecoveryFixtureRepository.row(["date": .string("2026-10-31"), "sleep_hours": .number(8), "water_ml": .number(1200),
+        let daily = RecoveryFixtureRepository.row(["date": .string("2026-10-31"), "source_plan_id": .string(plan.id.uuidString), "generation_batch_id": .string("projection_fixture"), "sleep_hours": .number(8), "water_ml": .number(1200),
             "plan_items_completed": .array([.string("nutrition:2026-10-31"), .string("legacy_meal")])])
         repo.records[.aiPlans] = [plan]; repo.records[.dailyLogs] = [daily]
         await vm.load(user: user)
@@ -617,5 +617,48 @@ extension RecoveryTests {
         await panel.load(user: user)
         XCTAssertTrue(panel.rows.isEmpty)
         XCTAssertNotNil(panel.error)
+    }
+}
+
+extension RecoveryTests {
+    func testLimitationIntentSurvivesStopRecreationAndRemainsOwnerScoped() async {
+        let defaults = UserDefaults(suiteName: "RecoveryRecreate.\(UUID())")!
+        let repo = RecoveryFixtureRepository()
+        func make() -> RecoveryViewModel {
+            RecoveryViewModel(repository: repo, ai: RecoveryFixtureAI(), cache: UserScopedCacheStore(suiteName: "RecoveryRecreateCache.\(UUID())"), date: noon, clock: { self.noon }, timeZone: utc, defaults: defaults)
+        }
+        let original = make()
+        await original.load(user: user)
+        repo.loseResponseTable = .injuryProfiles
+        _ = await original.addLimitation(area: "Hip", severity: "mild_discomfort", notes: "Synthetic recreation")
+        XCTAssertTrue(original.hasPendingLimitation)
+        original.stop()
+        let restored = make()
+        await restored.load(user: user)
+        XCTAssertTrue(restored.hasPendingLimitation)
+        XCTAssertNotNil(restored.error)
+        let writes = repo.writes
+        await restored.retry(user: user)
+        XCTAssertFalse(restored.hasPendingLimitation)
+        XCTAssertNil(restored.error)
+        XCTAssertEqual(repo.writes, writes)
+        XCTAssertEqual(repo.records[.injuryProfiles]?.count, 1)
+        restored.stop()
+        let another = make()
+        await another.load(user: ExecuteUser(id: UUID(), email: "other@example.invalid", displayName: "Other"))
+        XCTAssertFalse(another.hasPendingLimitation)
+        XCTAssertEqual(repo.writes, writes)
+    }
+
+    func testUnrelatedDailyRecordCannotBeAdoptedOrOverwrittenByRecovery() async {
+        let repo = RecoveryFixtureRepository(), vm = model(repo)
+        let plan = projectionPlan()
+        let unrelated = RecoveryFixtureRepository.row(["date": .string("2026-10-31"), "source_plan_id": .string(UUID().uuidString), "energy": .number(2)])
+        repo.records[.aiPlans] = [plan]; repo.records[.dailyLogs] = [unrelated]
+        await vm.load(user: user)
+        XCTAssertFalse(vm.loaded)
+        XCTAssertNotNil(vm.error)
+        XCTAssertEqual(repo.writes, 0)
+        XCTAssertEqual(repo.records[.dailyLogs]?.first?.data, unrelated.data)
     }
 }

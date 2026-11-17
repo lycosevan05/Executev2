@@ -158,6 +158,12 @@ struct RecoveryDashboardView: View {
     private var limitations: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Logging limitations helps tailor training around your current constraints.").font(.callout)
+            if model.hasPendingLimitation {
+                Text("A previous limitation save may already be stored. Retry the same attempt above, or keep the saved records and close the pending attempt.").font(.callout)
+                Button("Keep saved limitations and close pending attempt") { model.closeLimitationAttempt() }
+                    .disabled(model.busy || model.generating)
+                    .accessibilityIdentifier("recovery.limitation.closePending")
+            }
             if model.activeLimitations.isEmpty {
                 Text("No active limitations logged.").font(.headline)
             }

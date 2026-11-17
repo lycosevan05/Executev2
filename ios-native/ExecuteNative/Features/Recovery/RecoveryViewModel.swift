@@ -26,7 +26,32 @@ final class RecoveryViewModel: ObservableObject {
     private var guidanceGeneration = UUID()
     private var saveNeedsRetry = false
     private var contextNeedsRetry = false
-    private var pendingLimitation: (id: UUID?, patch: JSONValue)?
+    private struct LimitationIntent: Codable { let id: UUID?; let patch: JSONValue }
+    private let defaults: UserDefaults
+    private var pendingLimitation: LimitationIntent?
+    var hasPendingLimitation: Bool { pendingLimitation != nil }
+    private func intentKey(_ user: ExecuteUser) -> String { "execute.cache.\(user.id.uuidString).recovery.limitation-intent" }
+    private func valid(_ intent: LimitationIntent) -> Bool {
+        guard let fields = intent.patch.objectValue,
+              let receipt = fields["native_limitation_mutation_id"]?.stringValue, UUID(uuidString: receipt) != nil,
+              fields["is_active"]?.boolValue != nil else { return false }
+        if intent.id != nil { return Set(fields.keys) == ["is_active", "native_limitation_mutation_id"] }
+        return Set(fields.keys) == ["body_area", "severity", "notes", "is_active", "native_limitation_mutation_id"]
+            && Self.bodyAreas.contains(fields["body_area"]?.stringValue ?? "")
+            && Self.severities.contains { $0.value == fields["severity"]?.stringValue }
+            && (fields["notes"]?.stringValue).map { $0.count <= 2000 } == true
+            && fields["is_active"]?.boolValue == true
+    }
+    private func persistLimitationIntent(_ user: ExecuteUser) {
+        let key = intentKey(user)
+        if let pendingLimitation, let data = try? JSONEncoder().encode(pendingLimitation) { defaults.set(data, forKey: key) }
+        else { defaults.removeObject(forKey: key) }
+    }
+    func closeLimitationAttempt() {
+        guard !busy, loaded, let identity else { return }
+        pendingLimitation = nil; persistLimitationIntent(identity.user); error = nil
+        status = "Pending attempt closed. Saved limitations were retained."
+    }
     var activeLimitations: [BackendRow] { snapshot.injuries.filter { $0.data["is_active"]?.boolValue != false } }
     var inactiveLimitations: [BackendRow] { snapshot.injuries.filter { $0.data["is_active"]?.boolValue == false } }
     private func unique(_ rows: [BackendRow], label: String) throws -> BackendRow? {
@@ -44,13 +69,17 @@ final class RecoveryViewModel: ObservableObject {
                 if !exact.isEmpty { return try unique(exact, label: "daily") }
             }
             if !linked.isEmpty { return try unique(linked, label: "daily") }
+            guard rows.isEmpty else {
+                throw AppError(title: "Daily source needs review", message: "The saved daily record belongs to a different or unknown plan. No record was changed.")
+            }
+            return nil
         }
         return try unique(rows, label: "daily")
     }
 
     init(repository: RecoveryRepository, ai: AIResponding, cache: UserScopedCacheStore,
-         date: Date? = nil, source: String? = nil, clock: @escaping () -> Date = Date.init, timeZone: TimeZone = .current) {
-        self.repository = repository; self.ai = ai; self.cache = cache; self.clock = clock; self.timeZone = timeZone
+         date: Date? = nil, source: String? = nil, clock: @escaping () -> Date = Date.init, timeZone: TimeZone = .current, defaults: UserDefaults = .standard) {
+        self.repository = repository; self.ai = ai; self.cache = cache; self.clock = clock; self.timeZone = timeZone; self.defaults = defaults
         self.selectedDate = date ?? clock()
         self.defaultTab = source == "my_week" ? .guidance : .checkIn
         self.tab = self.defaultTab
@@ -112,6 +141,11 @@ final class RecoveryViewModel: ObservableObject {
         do {
             let identity = try repository.identity(for: user)
             self.identity = identity
+            if let data = defaults.data(forKey: intentKey(user)) {
+                let pending = try JSONDecoder().decode(LimitationIntent.self, from: data)
+                guard valid(pending) else { throw AppError(title: "Pending limitation needs review", message: "The saved local attempt could not be validated. No records were changed.") }
+                pendingLimitation = pending
+            }
             let date = dateString
             let checkIns = try await repository.rows(.readinessCheckIns, fields: ["date": date], identity: identity)
             let plans = try await repository.rows(.aiPlans, fields: ["plan_type": "daily", "status": "active"], identity: identity)
@@ -143,6 +177,9 @@ final class RecoveryViewModel: ObservableObject {
             await refreshSavedReadiness(identity, request: request)
             guard current(request, identity) else { return }
             loaded = true; loading = false
+            if pendingLimitation != nil {
+                error = AppError(title: "Review pending limitation", message: "A previous save may already be stored. Retry reconciles that attempt, or keep the saved limitations and close it locally.")
+            }
         } catch {
             guard request == generation else { return }
             self.error = AppError.from(error, title: "Recovery could not load")
@@ -249,7 +286,7 @@ final class RecoveryViewModel: ObservableObject {
     }
 
     func addLimitation(area: String, severity: String, notes: String) async -> Bool {
-        guard Self.bodyAreas.contains(area), Self.severities.contains(where: { $0.value == severity }) else { return false }
+        guard notes.count <= 2000, Self.bodyAreas.contains(area), Self.severities.contains(where: { $0.value == severity }) else { return false }
         return await mutateLimitation(id: nil, patch: .object(["body_area": .string(area), "severity": .string(severity), "notes": .string(notes), "is_active": .bool(true)]))
     }
     func setActive(_ row: BackendRow, _ active: Bool) async {
@@ -272,7 +309,8 @@ final class RecoveryViewModel: ObservableObject {
                 fields = pending.patch.objectValue ?? [:]
             } else {
                 fields["native_limitation_mutation_id"] = .string(UUID().uuidString)
-                pendingLimitation = (id, .object(fields))
+                pendingLimitation = LimitationIntent(id: id, patch: .object(fields))
+                persistLimitationIntent(identity.user)
             }
             let rows = try await repository.rows(.injuryProfiles, fields: [:], identity: identity)
             guard current(request, identity) else { return false }
@@ -291,7 +329,7 @@ final class RecoveryViewModel: ObservableObject {
                 saved = try await repository.write(.injuryProfiles, id: id, patch: .object(fields), identity: identity)
             }
             guard current(request, identity) else { return false }
-            pendingLimitation = nil
+            pendingLimitation = nil; persistLimitationIntent(identity.user)
             snapshot.injuries.removeAll { $0.id == saved.id }; snapshot.injuries.append(saved)
             await changed(identity, request: request)
             await invalidateContext(identity, request: request)
