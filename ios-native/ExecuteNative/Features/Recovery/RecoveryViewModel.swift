@@ -392,8 +392,11 @@ final class RecoveryViewModel: ObservableObject {
             guard current(request, identity), guidanceGeneration == aiRequest else { return }
             snapshot.injuries = injuries; snapshot.masterPlan = RecoverySelection.canonical(plans)
             snapshot.dailyLog = try dailyRecord(dailyRows, plan: snapshot.masterPlan)
+            let completed = try await repository.rows(.workoutLogs, fields: ["date": date, "status": "completed"], identity: identity)
+            guard current(request, identity), guidanceGeneration == aiRequest else { return }
+            snapshot.workout = completed.sorted { $0.id.uuidString < $1.id.uuidString }.first
             // Always fetch fresh personalization context; never reuse the web's potentially stale summary cache.
-            var records: [String: [BackendRow]] = [:]
+            var records: [String: [BackendRow]] = ["selected_completed_workout_logs": completed]
             for table in [EntityTable.userProfiles, .workoutProfiles, .nutritionProfiles, .goals] {
                 records[table.rawValue] = try await repository.rows(table, fields: table == .goals ? ["status": "active"] : [:], identity: identity)
             }
@@ -402,11 +405,11 @@ final class RecoveryViewModel: ObservableObject {
             }
             for table in [EntityTable.workoutPlans, .mealPlans] {
                 let rows = try await repository.rows(table, fields: ["date": date], identity: identity)
-                records["planned_\(table.rawValue)"] = RecoverySelection.canonical(rows, plan: snapshot.masterPlan).map { [$0] } ?? []
+                records["planned_\(table.rawValue)"] = RecoveryContext.plannedChild(rows, master: snapshot.masterPlan, date: date).map { [$0] } ?? []
             }
             guard current(request, identity), guidanceGeneration == aiRequest else { return }
             let limitations = limitationSnapshot
-            let prompt = try RecoveryContext.prompt(snapshot: snapshot, records: records, date: date, checkIn: inputs)
+            let prompt = try RecoveryContext.prompt(snapshot: snapshot, records: records, date: date, checkIn: inputs, timeZone: timeZone)
             let response: RecoveryGuidance = try await ai.structuredResponse(LLMRequest(prompt: prompt, fileURLs: [],
                 maxOutputTokens: 2400, responseJSONSchema: RecoveryGuidance.schema, schemaName: "recovery_guidance"), as: RecoveryGuidance.self)
             guard current(request, identity), guidanceGeneration == aiRequest, inputs == draft else { return }

@@ -187,12 +187,12 @@ struct RecoveryDashboardView: View {
                         let active = row.data["is_active"]?.boolValue != false
                         Toggle("Active", isOn: Binding(get: { active }, set: { active in Task { await model.setActive(row, active) } }))
                             .disabled(model.busy || model.generating)
-                            .accessibilityIdentifier("recovery.limitation.active")
+                            .accessibilityIdentifier("recovery.limitation.active.\(row.id.uuidString.lowercased())")
                         if active {
                             Button("Archive limitation", role: .destructive) { Task { await model.setActive(row, false) } }
                                 .frame(minHeight: 44)
                                 .disabled(model.busy || model.generating)
-                                .accessibilityIdentifier("recovery.limitation.archive")
+                                .accessibilityIdentifier("recovery.limitation.archive.\(row.id.uuidString.lowercased())")
                         } else { Text("Inactive · retained in your history").font(.caption) }
                     }
                 }
@@ -222,6 +222,20 @@ struct RecoveryDashboardView: View {
     }
     private var guidance: some View {
         VStack(alignment: .leading, spacing: 16) {
+            card {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Saved facts · \(model.dateString) · \(SplitDayLogic.weekday(for: model.dateString) ?? "")").font(.headline)
+                    let day = RecoveryContext.scheduledDay(master: model.snapshot.masterPlan, date: model.dateString)
+                    Text((day["workout_needed"]?.boolValue).map { $0 ? "Scheduled training day" : "Scheduled rest day" } ?? "Training schedule not recorded")
+                    if let workout = model.snapshot.workout, workout.data["date"] == .string(model.dateString), workout.data["status"] == .string("completed") {
+                        Text("Completed workout logged: \(workout.data["workout_name"]?.stringValue ?? "Workout")")
+                    } else { Text("No completed workout log for this date") }
+                    if let water = model.snapshot.dailyLog?.data["water_liters"]?.doubleValue, water.isFinite, water >= 0 {
+                        Text("Water logged: \(water.formatted()) L")
+                    } else { Text("Water not logged for this date") }
+                }
+            }
+            Text("AI guidance is a recommendation. Saved facts above show your recorded plan and activity.").font(.caption)
             if !model.tasks.isEmpty {
                 Text("Planned Recovery Tasks").font(.headline)
                 ForEach(Array(model.tasks.enumerated()), id: \.offset) { _, task in

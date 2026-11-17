@@ -693,3 +693,54 @@ extension RecoveryTests {
         }
     }
 }
+
+extension RecoveryTests {
+    func testSelectedDateFactsUseLogDateNotMismatchedAuditTimestamp() throws {
+        let selected = "2026-11-16"
+        let day: JSONValue = .object(["date": .string(selected), "day_type": .string("training"), "workout_needed": .bool(true), "session_title": .string("Bodyweight Foundation A")])
+        let master = RecoveryFixtureRepository.row(["weekly_overview": .object(["days": .array([
+            .object(["date": .string("2026-11-15"), "workout_needed": .bool(false), "day_type": .string("rest")]), day])])])
+        let completed = RecoveryFixtureRepository.row(["date": .string(selected), "status": .string("completed"), "workout_name": .string("Bodyweight Foundation A"), "completed_at": .string("2026-11-15T07:26:07Z")])
+        let prior = RecoveryFixtureRepository.row(["date": .string("2026-11-15"), "status": .string("completed"), "workout_name": .string("Prior workout")])
+        let future = RecoveryFixtureRepository.row(["date": .string("2026-11-17"), "status": .string("completed"), "completed_at": .string("2026-11-16T05:56:22Z")])
+        let planned = RecoveryFixtureRepository.row(["date": .string(selected), "status": .string("planned")])
+        var snapshot = RecoverySnapshot()
+        snapshot.masterPlan = master
+        snapshot.dailyLog = RecoveryFixtureRepository.row(["date": .string(selected), "water_liters": .number(0.5)])
+        let facts = RecoveryContext.selectedDayFacts(snapshot: snapshot, completed: [prior, completed, future, planned], date: selected, timeZone: TimeZone(identifier: "America/Vancouver")!)
+        XCTAssertEqual(facts["local_weekday"], .string("Monday"))
+        XCTAssertEqual(facts["scheduled_workout_needed"], .bool(true))
+        XCTAssertEqual(facts["scheduled_day"]?["session_title"], .string("Bodyweight Foundation A"))
+        XCTAssertEqual(facts["water_liters_logged_for_selected_date"], .number(0.5))
+        let rows = try XCTUnwrap(facts["completed_workout_logs_for_selected_date"]?.recoveryArray)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0]["id"], .string(completed.id.uuidString.lowercased()))
+        XCTAssertNil(rows[0]["completed_at"])
+    }
+
+    func testGuidanceChildSelectionRejectsArchivedUnrelatedAndAmbiguousPlans() {
+        let master = RecoveryFixtureRepository.row(["generation_batch_id": .string("current")])
+        func child(_ source: String, batch: String = "current", status: String = "ready") -> BackendRow {
+            RecoveryFixtureRepository.row(["date": .string("2026-11-16"), "source_plan_id": .string(source), "generation_batch_id": .string(batch), "status": .string(status)])
+        }
+        let unrelated = child(UUID().uuidString), archived = child(master.id.uuidString, status: "archived"), exact = child(master.id.uuidString)
+        XCTAssertNil(RecoveryContext.plannedChild([unrelated, archived], master: master, date: "2026-11-16"))
+        XCTAssertEqual(RecoveryContext.plannedChild([unrelated, archived, exact], master: master, date: "2026-11-16")?.id, exact.id)
+        XCTAssertNil(RecoveryContext.plannedChild([exact, child(master.id.uuidString)], master: master, date: "2026-11-16"))
+        XCTAssertNil(RecoveryContext.plannedChild([exact], master: nil, date: "2026-11-16"))
+    }
+
+    func testGuidancePromptSeparatesFactsFromPriorGeneratedNarrativeAndUnknowns() throws {
+        let stale = RecoveryFixtureRepository.row(["date": .string("2026-11-15"), "guidance": .object(["training_recommendation": .string("STALE_WRONG_REST_ASSERTION")]), "training_recommendation": .string("STALE_WRONG_REST_ASSERTION"), "energy": .number(7)])
+        let snapshot = RecoverySnapshot()
+        let facts = RecoveryContext.selectedDayFacts(snapshot: snapshot, completed: [], date: "2026-11-16", timeZone: utc)
+        XCTAssertEqual(facts["scheduled_workout_needed"], .null)
+        XCTAssertEqual(facts["water_liters_logged_for_selected_date"], .null)
+        let prompt = try RecoveryContext.prompt(snapshot: snapshot, records: ["recent_readiness_check_ins": [stale]], date: "2026-11-16", checkIn: RecoveryCheckIn(), timeZone: utc)
+        XCTAssertFalse(prompt.contains("STALE_WRONG_REST_ASSERTION"))
+        XCTAssertTrue(prompt.contains("A log's date is its activity date"))
+        XCTAssertTrue(prompt.contains("Distinguish the scheduled plan from your recommendation"))
+        XCTAssertTrue(prompt.contains("selected_date_facts"))
+        XCTAssertTrue(prompt.contains("Monday"))
+    }
+}
