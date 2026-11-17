@@ -1,4 +1,5 @@
 import XCTest
+import Supabase
 @testable import ExecuteNative
 
 @MainActor final class HomeCustomizationTests: XCTestCase {
@@ -137,4 +138,113 @@ import XCTest
         XCTAssertFalse(defaults.dictionaryRepresentation().keys.contains { $0.hasPrefix("execute.cache.\(user.id.uuidString).") })
     }
 
+}
+
+
+@MainActor final class HomeCancellationTests: XCTestCase {
+    func testCancelledGoalSynchronizationDoesNotPublishFailureAndSameAccountCanRestart() async throws {
+        try await exerciseCancellation(blockedTable: "goals", warm: false)
+    }
+    func testCancelledDashboardRefreshRetainsSavedSnapshotAndSameAccountCanRestart() async throws {
+        try await exerciseCancellation(blockedTable: "daily_logs", warm: true)
+    }
+    private func exerciseCancellation(blockedTable: String, warm: Bool) async throws {
+        let owner = ExecuteUser(id: UUID(), email: "home-cancel@example.invalid", displayName: "Fixture")
+        let host = "\(UUID().uuidString.lowercased()).home-cancellation.invalid"
+        let body = try JSONSerialization.data(withJSONObject: [["id": UUID().uuidString, "owner_id": owner.id.uuidString,
+            "data": ["date": HomeDate.todayString, "calories_consumed": 206]]])
+        let fixture = HomeCancellationFixture(body: body)
+        HomeCancellationProtocol.registry.set(fixture, host: host)
+        defer { HomeCancellationProtocol.registry.set(nil, host: host) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HomeCancellationProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = SupabaseClient(supabaseURL: URL(string: "https://\(host)")!, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: HomeCancellationStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: session)))
+        let suite = "HomeCancellation.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let cache = UserScopedCacheStore(suiteName: suite); await cache.activate(userID: owner.id)
+        let model = HomeViewModel(dataService: SupabaseDataService(client: client), cache: cache, realtimeService: nil,
+            router: AppRouter(), defaults: defaults, canTrackGoals: { _ in !warm })
+        if warm {
+            await model.start(for: owner)
+            XCTAssertEqual(model.snapshot.dailyLog?.caloriesConsumed, 206)
+        }
+        let suspended = expectation(description: "Actual SDK read suspended at \(blockedTable)")
+        fixture.block(table: blockedTable) { suspended.fulfill() }
+        let loading = Task {
+            if warm { await model.refresh() } else { await model.start(for: owner) }
+        }
+        await fulfillment(of: [suspended], timeout: 3)
+        loading.cancel()
+        await loading.value
+        XCTAssertNil(model.error)
+        XCTAssertNil(model.customizationError)
+        XCTAssertFalse(model.isRefreshing)
+        XCTAssertEqual(model.isInitialLoading, !warm)
+        if warm { XCTAssertEqual(model.snapshot.dailyLog?.caloriesConsumed, 206) }
+        else { XCTAssertNil(model.snapshot.dailyLog) }
+        // No sign-out, generation change, or replacement model is needed to recover.
+        fixture.block(table: nil, onBlocked: nil)
+        await model.start(for: owner)
+        XCTAssertNil(model.error); XCTAssertFalse(model.isInitialLoading)
+        XCTAssertEqual(model.snapshot.dailyLog?.caloriesConsumed, 206)
+        XCTAssertEqual(fixture.writeCount, 0)
+    }
+}
+
+private final class HomeCancellationStorage: AuthLocalStorage, @unchecked Sendable {
+    func store(key: String, value: Data) throws { }
+    func retrieve(key: String) throws -> Data? { nil }
+    func remove(key: String) throws { }
+}
+
+private final class HomeCancellationFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    let body: Data
+    private var blockedTable: String?
+    private var onBlocked: (() -> Void)?
+    private var writes = 0
+    init(body: Data) { self.body = body }
+    var writeCount: Int { lock.lock(); defer { lock.unlock() }; return writes }
+    func block(table: String?, onBlocked: (() -> Void)?) {
+        lock.lock(); defer { lock.unlock() }; blockedTable = table; self.onBlocked = onBlocked
+    }
+    func shouldSuspend(_ request: URLRequest) -> Bool {
+        lock.lock()
+        if request.httpMethod != "GET" { writes += 1 }
+        let blocked = request.url?.lastPathComponent == blockedTable
+        let callback = blocked ? onBlocked : nil
+        if blocked { onBlocked = nil }
+        lock.unlock()
+        callback?()
+        return blocked
+    }
+}
+
+private final class HomeCancellationRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cases: [String: HomeCancellationFixture] = [:]
+    func set(_ fixture: HomeCancellationFixture?, host: String) { lock.lock(); defer { lock.unlock() }; cases[host] = fixture }
+    func get(_ host: String) -> HomeCancellationFixture? { lock.lock(); defer { lock.unlock() }; return cases[host] }
+}
+
+private final class HomeCancellationProtocol: URLProtocol, @unchecked Sendable {
+    static let registry = HomeCancellationRegistry()
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".home-cancellation.invalid") == true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url, let fixture = Self.registry.get(url.host ?? "") else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        if fixture.shouldSuspend(request) { return }
+        let body = url.lastPathComponent == "daily_logs" ? fixture.body : Data("[]".utf8)
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() { }
 }

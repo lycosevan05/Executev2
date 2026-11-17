@@ -138,13 +138,16 @@ final class HomeViewModel: ObservableObject {
         await restoreCachedDashboard()
         await restoreCachedLayout()
         await reload()
+        guard hasStarted, !Task.isCancelled else { return }
         await loadLayoutFromServer()
+        guard hasStarted, !Task.isCancelled else { return }
         await startRealtime()
     }
 
     func refresh() async {
         guard !customizationBusy else { return }
         await reload(isRefresh: true)
+        guard hasStarted, !Task.isCancelled else { return }
         await loadLayoutFromServer()
     }
 
@@ -404,6 +407,7 @@ final class HomeViewModel: ObservableObject {
         let loadingUserID = user?.id
         let trackingRequest = trackingGeneration
         let customizationReadRevision = customizationRevision
+        guard !abandonCancelledLoad(nil, request: trackingRequest, owner: loadingUserID) else { return }
         isRefreshing = isRefresh
         error = nil
         let today = HomeDate.todayString
@@ -414,11 +418,13 @@ final class HomeViewModel: ObservableObject {
                         self.trackingGeneration == trackingRequest && self.user?.id == user.id && self.canTrackGoals(user.id)
                     })
                 } catch {
-                    guard trackingRequest == trackingGeneration else { return }
+                    guard trackingRequest == trackingGeneration, loadingUserID == self.user?.id else { return }
+                    guard !abandonCancelledLoad(error, request: trackingRequest, owner: loadingUserID) else { return }
                     self.error = AppError.from(error, title: "Automatic goal progress needs refresh")
                 }
             }
             guard trackingRequest == trackingGeneration else { return }
+            guard !abandonCancelledLoad(nil, request: trackingRequest, owner: loadingUserID) else { return }
             async let plans: [EntityRecord<HomeAIPlan>] = dataService.list(.aiPlans, orderBy: "-updated_date", limit: 50)
             async let profiles: [EntityRecord<HomeUserProfile>] = dataService.list(.userProfiles, orderBy: "-updated_date", limit: 1)
             async let nutritionProfiles: [EntityRecord<HomeNutritionProfile>] = dataService.list(.nutritionProfiles, orderBy: "-updated_date", limit: 1)
@@ -432,6 +438,7 @@ final class HomeViewModel: ObservableObject {
 
             let (planRecords, profileRecords, nutritionRecords, readinessValues, dailyValues, foodValues, workoutValues, mealValues, goalValues, customValues) = try await (plans, profiles, nutritionProfiles, readinessRecords, dailyLogs, foodLogs, workouts, meals, goals, customItems)
             guard loadingUserID == user?.id, trackingRequest == trackingGeneration else { return }
+            guard !abandonCancelledLoad(nil, request: trackingRequest, owner: loadingUserID) else { return }
             guard customizationReadRevision == customizationRevision else { isRefreshing = false; return }
             let activePlan = selectActivePlan(planRecords)
             let overviewDay = activePlan?.payload.resolvedWeeklyOverview?.days?.first { $0.date == today }
@@ -456,6 +463,7 @@ final class HomeViewModel: ObservableObject {
             await persistDashboard()
         } catch {
             guard trackingRequest == trackingGeneration, loadingUserID == user?.id, customizationReadRevision == customizationRevision else { return }
+            guard !abandonCancelledLoad(error, request: trackingRequest, owner: loadingUserID) else { return }
             if snapshot.activePlan == nil && snapshot.dailyLog == nil && snapshot.userProfile == nil {
                 self.error = AppError.from(error, title: "Couldn't load your dashboard")
             }
@@ -463,6 +471,17 @@ final class HomeViewModel: ObservableObject {
         guard trackingRequest == trackingGeneration, loadingUserID == user?.id else { return }
         isInitialLoading = false
         isRefreshing = false
+        hasStarted = true
+    }
+
+    /// Navigation cancellation is an abandoned read, not evidence of an empty or failed dashboard.
+    private func abandonCancelledLoad(_ failure: Error?, request: UUID, owner: UUID?) -> Bool {
+        guard Task.isCancelled || failure is CancellationError || (failure as? URLError)?.code == .cancelled else { return false }
+        if request == trackingGeneration, owner == user?.id {
+            isRefreshing = false
+            hasStarted = false // A later same-account appearance must be allowed to load again.
+        }
+        return true
     }
 
     private func restoreCachedDashboard() async {
@@ -511,6 +530,7 @@ final class HomeViewModel: ObservableObject {
             await persistDashboard()
         } catch {
             guard request == trackingGeneration, self.user?.id == user.id else { return }
+            guard !abandonCancelledLoad(error, request: request, owner: user.id) else { return }
             customizationError = (error as? AppError)?.message ?? "Customization could not refresh. Saved records were preserved."
         }
     }
