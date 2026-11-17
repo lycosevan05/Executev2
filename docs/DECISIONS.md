@@ -580,3 +580,8 @@ E37–E38 verify approved disposable-QA global sign-out, synthetic invalid-code 
 ## 2026-11-17 — Do not present historical billing periods as future access dates
 
 Read-only exact-owner subscription evidence found the preserved QA account's own premium/active Sandbox row with June3 period end; RevenueCat exact-alias customer has no current entitlement in Production or Sandbox. Existing server-OR-live eligibility therefore explains the observed access and past date without implying the disposable account's grant leaked. Preserve that established entitlement policy. Profile now displays its existing generic active-access copy for past, equal or missing end dates; only future dates use Active through. Three fixed-clock presentation methods pass on separate existing test simulator, covering the observed past backend case, boundary, future live grant precedence, unknown date and free copy. No backend/provider/billing mutation. Current normal-build/UI verification follows separately; W15/G06 remain open for provider/backend reconciliation and exceptional acceptance.
+
+
+## 2026-11-17 — Verify date presentation separately from billing reconciliation
+
+Normal283d9bf Debug simulator build/signature/install passes; GUI launch restores preserved B and Profile uses corrected generic active-access copy. Final post-ALL-UI exports independently preserve A6 and B72 byte/deep-exact. No provider/backend subscription repair or W15/G06 closure. Physical/Release remain3919394 and are historical prerequisites for the new source. Natural issued-code expiry is isolated on existing E26 simulator with user-retained code and3600-second configuration; expiry outcome remains pending, not inferred from an invalid code or resend.
