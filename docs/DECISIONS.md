@@ -550,3 +550,8 @@ The first live Training preview after Premium QA activation put Monday-style ses
 ## 2026-11-17 — Preserve Nutrition-only focus and explain calendar rejection
 
 E31 live Nutrition preview revealed workouts despite the retained nutrition-only contract. Constrain initial prompt/schema to seven nutrition/habit rest days and zero training metadata, and reject contradictory content rather than relabeling it. Preserve generated nutrition prose and canonical targets. Calendar validation errors now identify safe canonical date/weekday/count/declaration mismatches without raw provider/profile content, so real provider failures can be diagnosed before retries. Seven focused methods pass, four new; normal Debug/signature/install pass. Corrected Training calendar and scanned-PDF extraction subcases are verified, but no first plan saved; W16/W17 and counts37/45,8open,9gates remain unchanged.
+
+
+## 2026-11-17 — Accept first-plan setup separately from supplied-plan replacement
+
+E32 closes W16 after actual three-focus provider previews, corrected Nutrition-only behavior, exact unsaved preview restore, one reviewed Save, normal saved-plan relaunch/Home readback and independent exact-owner17-group CSV review.0→5records are the master,threequestionnaireprofiles andonequestionnairegoal; noactivity. Keep W17 scanned-PDF replacement/save/duration mapping separate despite valid OCR subcase. Counts38/45accepted,7open,9gates; provider incomplete responses remain safely rejected and final hardware/error gates stay open.
