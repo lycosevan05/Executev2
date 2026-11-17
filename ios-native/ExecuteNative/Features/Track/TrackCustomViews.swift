@@ -147,8 +147,8 @@ private struct TrackDefinitionTransfer: View {
             }
             .navigationTitle("Transfer trackers")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-            .onChange(of: text) { _, _ in preview = []; previewOwner = nil; confirmed = false }
-            .onChange(of: model.currentOwner) { _, _ in preview = []; previewOwner = nil; confirmed = false; text = "" }
+            .onChange(of: text) { _ in preview = []; previewOwner = nil; confirmed = false }
+            .onChange(of: model.currentOwner) { _ in preview = []; previewOwner = nil; confirmed = false; text = "" }
             .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json]) { result in
                 do {
                     let url = try result.get(), scoped = url.startAccessingSecurityScopedResource()
