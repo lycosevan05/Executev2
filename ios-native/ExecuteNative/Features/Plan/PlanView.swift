@@ -24,7 +24,8 @@ private struct PlanScreen: View {
             router: environment.router,
             aiService: environment.aiService,
             hasPremiumAccess: { environment.appState.premiumState.isPremium },
-            canPersistDraft: { environment.appState.allowsDraftWrites(for: $0) }
+            canPersistDraft: { environment.appState.allowsDraftWrites(for: $0) },
+            saveRepository: environment.makeRecoveryRepository()
         ))
     }
 

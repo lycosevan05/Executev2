@@ -351,6 +351,91 @@ import Supabase
     }
 }
 
+@MainActor final class HomeVitalSaveTests: XCTestCase {
+    func testLateVitalSuccessCannotReplaceNextAccountDashboardOrCache() async throws {
+        try await exerciseVitalSave(switchModel: true, failing: false)
+    }
+    func testLateVitalFailureCannotPublishToNextAccountOrReloadIt() async throws {
+        try await exerciseVitalSave(switchModel: true, failing: true)
+    }
+    func testRepositoryIdentitySwitchBeforeModelStopBlocksLateResponseAndNewWrite() async throws {
+        try await exerciseVitalSave(switchModel: false, failing: false)
+    }
+
+    func testVitalSaveWithUnchangedOwnerUpdatesDashboardAndItsCache() async throws {
+        try await exerciseVitalSave(switchModel: false, failing: false, changesIdentity: false)
+    }
+    func testForeignVitalAcknowledgementCannotReplaceCurrentDashboardOrCache() async throws {
+        try await exerciseVitalSave(switchModel: false, failing: false, changesIdentity: false, foreignAcknowledgement: true)
+    }
+
+    private func exerciseVitalSave(switchModel: Bool, failing: Bool, changesIdentity: Bool = true, foreignAcknowledgement: Bool = false) async throws {
+        let a = ExecuteUser(id: UUID(), email: "home-vital-a@example.invalid", displayName: "A")
+        let b = ExecuteUser(id: UUID(), email: "home-vital-b@example.invalid", displayName: "B")
+        let aRow = UUID(), bRow = UUID()
+        func body(owner: ExecuteUser, id: UUID, steps: Int) throws -> Data {
+            try JSONSerialization.data(withJSONObject: [["id": id.uuidString, "owner_id": owner.id.uuidString,
+                "data": ["date": HomeDate.todayString, "steps": steps]]])
+        }
+        let host = "\(UUID().uuidString.lowercased()).home-cancellation.invalid"
+        let fixture = HomeCancellationFixture(body: try body(owner: a, id: aRow, steps: 100))
+        HomeCancellationProtocol.registry.set(fixture, host: host)
+        defer { fixture.releaseWrite(failing: true); HomeCancellationProtocol.registry.set(nil, host: host) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HomeCancellationProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = SupabaseClient(supabaseURL: URL(string: "https://\(host)")!, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: HomeCancellationStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: session)))
+        let suite = "HomeVitalSave.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let cache = UserScopedCacheStore(suiteName: suite); await cache.activate(userID: a.id)
+        // Actual SDK transport with a fixture repository identity seam; no SDK auth-session mutation.
+        let repository = TrackFixtureRepository(user: a)
+        let model = HomeViewModel(dataService: SupabaseDataService(client: client), cache: cache, realtimeService: nil,
+            router: AppRouter(), defaults: defaults, canTrackGoals: { _ in true }, customizationRepository: repository)
+        await model.start(for: a)
+        XCTAssertEqual(model.snapshot.dailyLog?.steps, 100); XCTAssertEqual(fixture.writeCount, 0)
+        let suspended = expectation(description: "Actual SDK vital write waits for its response")
+        fixture.replaceBody(try body(owner: foreignAcknowledgement ? b : a, id: aRow, steps: 150))
+        fixture.blockWrite { suspended.fulfill() }
+        let saving = Task { await model.saveVital(.steps, value: 150) }
+        await fulfillment(of: [suspended], timeout: 3)
+        if changesIdentity { repository.user = b } // Simulate repository validation observing a changed SDK owner.
+        if foreignAcknowledgement { fixture.replaceBody(try body(owner: a, id: aRow, steps: 100)) }
+        if switchModel {
+            await model.stop(); await cache.activate(userID: b.id)
+            fixture.replaceBody(try body(owner: b, id: bRow, steps: 800))
+            await model.start(for: b)
+        }
+        let activeOwner = switchModel ? b : a
+        let expectedID = switchModel ? bRow : aRow
+        let expectedSteps = switchModel ? 800.0 : (!changesIdentity && !foreignAcknowledgement ? 150.0 : 100.0)
+        let cacheKey = "execute.cache.\(activeOwner.id.uuidString).home.dashboard"
+        let beforeCache = try XCTUnwrap(defaults.data(forKey: cacheKey))
+        fixture.releaseWrite(failing: failing)
+        await saving.value
+        XCTAssertEqual(model.snapshot.dailyLogID, expectedID)
+        XCTAssertEqual(model.snapshot.dailyLog?.steps, expectedSteps)
+        XCTAssertNil(model.error)
+        if changesIdentity { XCTAssertEqual(defaults.data(forKey: cacheKey), beforeCache) }
+        switch await cache.read(CacheKey("home", "dashboard"), as: HomeDashboardSnapshot.self, userID: activeOwner.id) {
+        case .fresh(let cached), .stale(let cached):
+            XCTAssertEqual(cached.dailyLogID, expectedID); XCTAssertEqual(cached.dailyLog?.steps, expectedSteps)
+        case .missing: XCTFail("Expected the active owner's dashboard cache")
+        }
+        XCTAssertEqual(fixture.writeCount, 1)
+        if changesIdentity && !switchModel {
+            // AppState/model still say A, but repository identity now says B: no old-A write can start.
+            await model.saveVital(.steps, value: 250)
+            XCTAssertEqual(fixture.writeCount, 1)
+            XCTAssertEqual(model.snapshot.dailyLog?.steps, 100)
+            XCTAssertEqual(defaults.data(forKey: cacheKey), beforeCache)
+        }
+    }
+}
+
 private final class HomeCancellationStorage: AuthLocalStorage, @unchecked Sendable {
     func store(key: String, value: Data) throws { }
     func retrieve(key: String) throws -> Data? { nil }
@@ -359,11 +444,26 @@ private final class HomeCancellationStorage: AuthLocalStorage, @unchecked Sendab
 
 private final class HomeCancellationFixture: @unchecked Sendable {
     private let lock = NSLock()
-    let body: Data
+    private var responseBody: Data
+    var body: Data { lock.lock(); defer { lock.unlock() }; return responseBody }
+    private var onWriteBlocked: (() -> Void)?
+    private var pendingWrite: ((Bool) -> Void)?
     private var blockedTable: String?
     private var onBlocked: (() -> Void)?
     private var writes = 0
-    init(body: Data) { self.body = body }
+    init(body: Data) { self.responseBody = body }
+    func replaceBody(_ body: Data) { lock.lock(); defer { lock.unlock() }; responseBody = body }
+    func blockWrite(_ onBlocked: @escaping () -> Void) { lock.lock(); defer { lock.unlock() }; onWriteBlocked = onBlocked }
+    func suspendWrite(_ response: @escaping (Bool) -> Void) -> Bool {
+        lock.lock()
+        guard let callback = onWriteBlocked else { lock.unlock(); return false }
+        onWriteBlocked = nil; pendingWrite = response
+        lock.unlock(); callback(); return true
+    }
+    func releaseWrite(failing: Bool) {
+        lock.lock(); let callback = pendingWrite; pendingWrite = nil; lock.unlock()
+        callback?(failing)
+    }
     var writeCount: Int { lock.lock(); defer { lock.unlock() }; return writes }
     func block(table: String?, onBlocked: (() -> Void)?) {
         lock.lock(); defer { lock.unlock() }; blockedTable = table; self.onBlocked = onBlocked
@@ -396,11 +496,16 @@ private final class HomeCancellationProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
         if fixture.shouldSuspend(request) { return }
-        let body = url.lastPathComponent == "daily_logs" ? fixture.body : Data("[]".utf8)
-        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
-            headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
+        let body = ["daily_logs", "patch_record"].contains(url.lastPathComponent) ? fixture.body : Data("[]".utf8)
+        let respond: (Bool) -> Void = { [self] failing in
+            if failing { client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return }
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        if request.httpMethod != "GET", fixture.suspendWrite(respond) { return }
+        respond(false)
     }
     override func stopLoading() { }
 }

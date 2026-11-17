@@ -282,6 +282,14 @@ final class HomeViewModel: ObservableObject {
     }
 
     func saveVital(_ vital: HomeVital, value: Double) async {
+        guard let savingUser = user, let dataService, let repository = customizationRepository,
+              canTrackGoals(savingUser.id), !Task.isCancelled else { return }
+        let request = trackingGeneration
+        let identity: RecoveryIdentity
+        do {
+            identity = try repository.identity(for: savingUser)
+            try customizationCheck(request, identity: identity)
+        } catch { return }
         var log = snapshot.dailyLog ?? HomeDailyLog(date: HomeDate.todayString, caloriesConsumed: nil, caloriesBurned: nil, proteinConsumedG: nil, carbsConsumedG: nil, fatsConsumedG: nil, waterLiters: nil, sleepHours: nil, steps: nil, mood: nil, energy: nil, workoutDurationMinutes: nil, weightKg: nil, plannedWorkoutID: nil, plannedMealPlanID: nil, checklistItems: nil, plannedChecklistItems: nil, planItemsCompleted: nil)
         let key: String
         switch vital {
@@ -294,19 +302,28 @@ final class HomeViewModel: ObservableObject {
         case .workout: log.workoutDurationMinutes = value; key = "workout_duration_min"
         case .weight: log.weightKg = value; key = "weight_kg"
         }
-        snapshot.dailyLog = log
+        let existingDailyLogID = snapshot.dailyLogID
         do {
-            guard let dataService else { return }
-            if let dailyLogID = snapshot.dailyLogID {
-                let record: EntityRecord<HomeDailyLog> = try await dataService.update(.dailyLogs, id: dailyLogID, patch: .object([key: .number(value)]))
-                snapshot.dailyLog = record.payload
-            } else if let user {
-                let record: EntityRecord<HomeDailyLog> = try await dataService.create(.dailyLogs, payload: log, user: user)
-                snapshot.dailyLogID = record.id
-                snapshot.dailyLog = record.payload
+            try customizationCheck(request, identity: identity)
+            let record: EntityRecord<HomeDailyLog>
+            if let dailyLogID = existingDailyLogID {
+                record = try await dataService.update(.dailyLogs, id: dailyLogID, patch: .object([key: .number(value)]))
+            } else {
+                record = try await dataService.create(.dailyLogs, payload: log, user: savingUser)
             }
-            await persistDashboard()
+            try customizationCheck(request, identity: identity)
+            guard NutritionWeekSelection.owned(record.metadata, by: savingUser),
+                  existingDailyLogID == nil || record.id == existingDailyLogID else {
+                throw TrackPersistence.invalid("The saved vital response did not match this account and record and was not applied.")
+            }
+            snapshot.dailyLogID = record.id
+            snapshot.dailyLog = record.payload
+            // Pin the cache write to the captured owner, even if its actor runs after an account switch.
+            try customizationCheck(request, identity: identity)
+            try? await cache.write(snapshot, for: dashboardKey, userID: savingUser.id, ttl: 300)
         } catch {
+            do { try customizationCheck(request, identity: identity) } catch { return }
+            guard !(error is CancellationError), (error as? URLError)?.code != .cancelled else { return }
             self.error = AppError.from(error, title: "Could not save \(vital.title.lowercased())")
             await reload()
         }

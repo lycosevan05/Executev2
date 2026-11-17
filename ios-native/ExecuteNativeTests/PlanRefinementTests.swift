@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import Supabase
 @testable import ExecuteNative
 
 @MainActor
@@ -241,6 +242,97 @@ final class PlanRefinementTests: XCTestCase {
         let activeRecords = try data.rows[.aiPlans]!.map { try EntityRecord<JSONValue>(row: $0) }
         XCTAssertNil(PlanViewModel.selectActiveRecord(archivedRecords))
         XCTAssertNotNil(PlanViewModel.selectActiveRecord(activeRecords))
+    }
+
+    func testActualSDKAccountSwitchDuringSavedPlanCleanupCannotPatchOrPublishForNextOwner() async throws {
+        for switchPoint in ["master acknowledgment", "context read", "foreign context", "personalization read"] {
+            try await exercisePlanSaveSDKCase(switchPoint)
+        }
+    }
+
+    func testUnchangedSDKOwnerCompletesPlanCleanupAndInitialPersonalization() async throws {
+        try await exercisePlanSaveSDKCase("unchanged owner")
+    }
+
+    private func exercisePlanSaveSDKCase(_ switchPoint: String) async throws {
+        let owner = PlanSaveAuthProtocol.ownerA
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [PlanSaveAuthProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let client = SupabaseClient(supabaseURL: URL(string: "https://\(UUID().uuidString.lowercased()).plan-save-auth.invalid")!,
+            supabaseKey: "public-fixture-only", options: .init(
+                auth: .init(storage: PlanSaveAuthStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+                global: .init(session: session)))
+        _ = try await client.auth.verifyOTP(email: owner.email, token: "fixture-only", type: .email)
+        XCTAssertEqual(client.auth.currentSession?.user.id, owner.id)
+        let data = PlanFixtureData(), repository = PlanSaveSessionRepository(client: client, data: data, user: owner)
+        let suite = "PlanSaveSession.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vm = PlanViewModel(dataService: data, cache: UserScopedCacheStore(suiteName: suite),
+            router: AppRouter(), aiService: PlanFixtureAI(), hasPremiumAccess: { true },
+            draftStore: PlanDraftStore(defaults: defaults), saveRepository: repository)
+        await vm.start(for: owner)
+        if ["personalization read", "unchanged owner"].contains(switchPoint) {
+            await vm.beginSetup()
+            var answers = PlanQuestionnaireAnswers()
+            answers.age = "30"; answers.weightKg = "80"; answers.heightCm = "175"; answers.sex = "male"
+            answers.desiredOutcome = "Consistent energy"; answers.mainBarrier = "Limited time"
+            vm.questionnaire = answers
+            await vm.generateInitialPlan()
+        } else { vm.changeRequest = "More recovery"; await vm.refine() }
+        XCTAssertNotNil(vm.revisedOverview)
+        let originalPlanPayload = vm.plan?.planPayload
+        let other = PlanSaveAuthProtocol.ownerB
+        let foreignContext = BackendRow(id: UUID(), ownerID: other.id, ownerEmail: other.email, createdBy: other.email, userEmail: other.email,
+            createdDate: Date(), updatedDate: Date(), data: .object(["lastUpdatedAt": .string("preserve B context"), "unrelated": .bool(true)]))
+        let foreignProfile = BackendRow(id: UUID(), ownerID: other.id, ownerEmail: other.email, createdBy: other.email, userEmail: other.email,
+            createdDate: Date(), updatedDate: Date(), data: .object(["coaching_style": .string("preserve B profile")]))
+        let switchAccount: () async throws -> Void = {
+            _ = try await client.auth.verifyOTP(email: other.email, token: "fixture-only", type: .email)
+            XCTAssertEqual(client.auth.currentSession?.user.id, other.id)
+            data.rows[.userAIContexts] = [foreignContext]
+        }
+        if switchPoint == "master acknowledgment" { repository.afterMasterWrite = switchAccount }
+        else if switchPoint == "context read" { repository.beforeContextReturn = switchAccount }
+        else if switchPoint == "foreign context" { repository.beforeContextReturn = { data.rows[.userAIContexts] = [foreignContext] } }
+        else if switchPoint == "personalization read" {
+            repository.beforeProfileReturn = { try await switchAccount(); data.rows[.userProfiles] = [foreignProfile] }
+        }
+        // Deliberately do not call vm.stop(): the SDK can change before SwiftUI processes the auth event.
+        await vm.saveRevision()
+        if switchPoint == "unchanged owner" {
+            XCTAssertNil(vm.revisedOverview); XCTAssertNil(vm.editError)
+            XCTAssertEqual(vm.editStatus, "Your revised plan is saved.")
+            XCTAssertEqual(data.rows[.aiPlans]?.count, 2)
+            XCTAssertEqual(data.rows[.aiPlans]?.first(where: { $0.id == data.originalID })?.data["status"], .string("archived"))
+            XCTAssertEqual(data.rows[.workoutPlans]?.first?.data["status"], .string("archived"))
+            XCTAssertEqual(data.rows[.userAIContexts]?.first?.data["lastUpdatedAt"], .string("1970-01-01T00:00:00.000Z"))
+            for table in [EntityTable.userProfiles, .workoutProfiles, .nutritionProfiles, .goals] {
+                XCTAssertEqual(data.rows[table]?.count, 1)
+                XCTAssertEqual(data.rows[table]?.first?.ownerID, owner.id)
+            }
+            XCTAssertNotNil(vm.plan?.generationBatchID)
+            return
+        }
+        XCTAssertEqual(client.auth.currentSession?.user.id, switchPoint == "foreign context" ? owner.id : other.id)
+        XCTAssertEqual(data.creates, 1, switchPoint)
+        XCTAssertEqual(data.rows[.aiPlans]?.count, 2, switchPoint)
+        XCTAssertEqual(data.rows[.userAIContexts], [foreignContext], switchPoint)
+        if switchPoint == "personalization read" {
+            XCTAssertEqual(data.rows[.userProfiles], [foreignProfile])
+            XCTAssertFalse(repository.patchedTables.contains(.userProfiles))
+            XCTAssertNil(data.rows[.workoutProfiles]); XCTAssertNil(data.rows[.nutritionProfiles]); XCTAssertNil(data.rows[.goals])
+        } else { XCTAssertFalse(repository.patchedTables.contains(.userAIContexts), switchPoint) }
+        if switchPoint != "foreign context" { XCTAssertEqual(vm.plan?.planPayload, originalPlanPayload, switchPoint) }
+        XCTAssertNotNil(vm.revisedOverview, switchPoint)
+        XCTAssertFalse(vm.isSaving, switchPoint)
+        if switchPoint == "foreign context" {
+            XCTAssertEqual(vm.editStatus, "Your plan is saved. Some related updates need another attempt; use Save to finish.")
+        } else {
+            XCTAssertNil(vm.editStatus, switchPoint)
+            XCTAssertNil(vm.editError, switchPoint)
+        }
     }
 
     static func overview() -> JSONValue {
@@ -674,4 +766,87 @@ extension PlanImportTests {
         let request = try BYOPlan.request(.object([:]))
         XCTAssertNotNil(request.responseJSONSchema?["properties"]?["structured"]?["properties"]?["workout"]?["properties"]?["session_duration"])
     }
+}
+
+
+/// Uses the actual Supabase auth session/identity checks with deterministic entity responses.
+@MainActor private final class PlanSaveSessionRepository: RecoveryRepository {
+    private let sdk: SupabaseRecoveryRepository
+    private let data: PlanFixtureData
+    var afterMasterWrite: (() async throws -> Void)?
+    var beforeContextReturn: (() async throws -> Void)?
+    var beforeProfileReturn: (() async throws -> Void)?
+    var patchedTables: [EntityTable] = []
+    init(client: SupabaseClient, data: PlanFixtureData, user: ExecuteUser) {
+        sdk = SupabaseRecoveryRepository(client: client); self.data = data
+        for table in Array(data.rows.keys) { data.rows[table] = data.rows[table]!.map { Self.owned($0, user: user) } }
+    }
+    private static func owned(_ row: BackendRow, user: ExecuteUser) -> BackendRow {
+        guard row.ownerID == nil else { return row }
+        return BackendRow(id: row.id, ownerID: user.id, ownerEmail: user.email, createdBy: user.email, userEmail: user.email,
+            createdDate: row.createdDate, updatedDate: row.updatedDate, data: row.data)
+    }
+    func identity(for user: ExecuteUser) throws -> RecoveryIdentity { try sdk.identity(for: user) }
+    func validate(_ identity: RecoveryIdentity) throws { try sdk.validate(identity) }
+    func rows(_ table: EntityTable, fields: [String: String], identity: RecoveryIdentity) async throws -> [BackendRow] {
+        try validate(identity)
+        if table == .userAIContexts { try await beforeContextReturn?() }
+        if table == .userProfiles { try await beforeProfileReturn?() }
+        // Return the late result deliberately; the caller must reject changed SDK identity and foreign ownership.
+        return data.rows[table] ?? []
+    }
+    func recent(_ table: EntityTable, through date: String, identity: RecoveryIdentity) async throws -> [BackendRow] {
+        try await rows(table, fields: [:], identity: identity)
+    }
+    func write(_ table: EntityTable, id: UUID?, patch: JSONValue, identity: RecoveryIdentity) async throws -> BackendRow {
+        try validate(identity)
+        let result: EntityRecord<JSONValue>
+        if let id { patchedTables.append(table); result = try await data.update(table, id: id, patch: patch) }
+        else { result = try await data.create(table, payload: patch, user: identity.user) }
+        let row = Self.owned(result.metadata, user: identity.user)
+        if let index = data.rows[table]?.firstIndex(where: { $0.id == row.id }) { data.rows[table]![index] = row }
+        if table == .aiPlans, id == nil { try await afterMasterWrite?() }
+        return row
+    }
+}
+
+private final class PlanSaveAuthStorage: AuthLocalStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+    func store(key: String, value: Data) throws { lock.lock(); defer { lock.unlock() }; values[key] = value }
+    func retrieve(key: String) throws -> Data? { lock.lock(); defer { lock.unlock() }; return values[key] }
+    func remove(key: String) throws { lock.lock(); defer { lock.unlock() }; values[key] = nil }
+}
+
+private final class PlanSaveAuthProtocol: URLProtocol, @unchecked Sendable {
+    static let ownerA = ExecuteUser(id: UUID(uuidString: "51000000-0000-0000-0000-000000000001")!, email: "plan-a@example.invalid", displayName: "A")
+    static let ownerB = ExecuteUser(id: UUID(uuidString: "51000000-0000-0000-0000-000000000002")!, email: "plan-b@example.invalid", displayName: "B")
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".plan-save-auth.invalid") == true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url, url.path == "/auth/v1/verify" else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        do {
+            var body = request.httpBody ?? Data()
+            if body.isEmpty, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 1024)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    guard count > 0 else { break }; body.append(buffer, count: count)
+                }
+            }
+            let input = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            let owner = input?["email"] as? String == Self.ownerB.email ? Self.ownerB : Self.ownerA
+            let response: [String: Any] = ["access_token": "fixture-\(owner.id)-not-real", "refresh_token": "fixture-refresh-not-real",
+                "token_type": "bearer", "expires_in": 3600, "expires_at": Int(Date().timeIntervalSince1970) + 3600,
+                "user": ["id": owner.id.uuidString, "aud": "authenticated", "role": "authenticated", "email": owner.email,
+                    "app_metadata": [:], "user_metadata": [:], "created_at": "2026-11-16T00:00:00Z", "updated_at": "2026-11-16T00:00:00Z"]]
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: try JSONSerialization.data(withJSONObject: response))
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() { }
 }

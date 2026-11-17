@@ -72,6 +72,7 @@ final class PlanViewModel: ObservableObject {
     private var generationContext: JSONValue = .object([:])
 
     private let dataService: EntityDataServicing?
+    private let saveRepository: RecoveryRepository?
     private let aiService: AIResponding?
     private let hasPremiumAccess: () -> Bool
     private let cache: UserScopedCacheStore
@@ -91,9 +92,11 @@ final class PlanViewModel: ObservableObject {
         aiService: AIResponding? = nil,
         hasPremiumAccess: @escaping () -> Bool = { false },
         draftStore: PlanDraftStore? = nil,
-        canPersistDraft: @escaping (UUID) -> Bool = { _ in true }
+        canPersistDraft: @escaping (UUID) -> Bool = { _ in true },
+        saveRepository: RecoveryRepository? = nil
     ) {
         self.dataService = dataService
+        self.saveRepository = saveRepository
         self.cache = cache
         self.router = router
         self.aiService = aiService
@@ -261,12 +264,30 @@ final class PlanViewModel: ObservableObject {
         }
         guard !isSaving, !isRefining, let pendingPayload, let user, let dataService else { return }
         let request = generation
+        var identity: RecoveryIdentity?
+        func checkSave() throws {
+            try Task.checkCancellation()
+            guard request == generation, self.user?.id == user.id, canPersistDraft(user.id) else { throw CancellationError() }
+            if let saveRepository {
+                guard let identity else { throw CancellationError() }
+                try saveRepository.validate(identity)
+            }
+        }
         isSaving = true; editError = nil; editStatus = nil
         defer { if request == generation { isSaving = false } }
         do {
+            identity = try saveRepository?.identity(for: user)
+            try checkSave()
+            let saveData: EntityDataServicing
+            if let saveRepository {
+                saveData = try GoalSessionData(repository: saveRepository, user: user, active: {
+                    request == self.generation && self.user?.id == user.id && self.canPersistDraft(user.id) && !Task.isCancelled
+                })
+            } else { saveData = dataService }
+            try checkSave()
             // A retry checks the same batch first, including after a committed create whose response was lost.
-            let records: [EntityRecord<JSONValue>] = try await dataService.listAll(.aiPlans, isCurrent: { request == self.generation })
-            guard request == generation, !Task.isCancelled else { return }
+            let records: [EntityRecord<JSONValue>] = try await saveData.listAll(.aiPlans, isCurrent: { request == self.generation })
+            try checkSave()
             let batch = pendingPayload["generation_batch_id"]?.stringValue
             let existing = records.first { $0.payload["generation_batch_id"]?.stringValue == batch }
             if let existing {
@@ -286,15 +307,15 @@ final class PlanViewModel: ObservableObject {
                 guard hasPremiumAccess() else {
                     throw AppError(title: "Premium required", message: "Your membership changed before the revision could be saved.")
                 }
-                saved = try await dataService.create(.aiPlans, payload: pendingPayload, user: user)
+                saved = try await saveData.create(.aiPlans, payload: pendingPayload, user: user)
             }
-            guard request == generation, !Task.isCancelled else { return }
+            try checkSave()
             var cleanupFailed = false
             // Creating first protects the working plan when generation or persistence fails.
             for old in records where old.id != saved.id && old.payload["status"]?.stringValue == "active" && old.payload["plan_type"]?.stringValue == "daily" {
-                guard request == generation, !Task.isCancelled else { return }
+                try checkSave()
                 do {
-                    let _: EntityRecord<JSONValue> = try await dataService.update(.aiPlans, id: old.id, patch: .object(["status": .string("archived")]))
+                    let _: EntityRecord<JSONValue> = try await saveData.update(.aiPlans, id: old.id, patch: .object(["status": .string("archived")]))
                 } catch { cleanupFailed = true }
             }
             let supersededID = pendingPayload["supersedes_plan_id"]?.stringValue?.lowercased()
@@ -302,29 +323,32 @@ final class PlanViewModel: ObservableObject {
                 $0.id != saved.id && ($0.id.uuidString.lowercased() == supersededID || ($0.payload["status"]?.stringValue == "active" && $0.payload["plan_type"]?.stringValue == "daily"))
             }.map { $0.id.uuidString.lowercased() })
             do {
-                let children: [EntityRecord<JSONValue>] = try await dataService.listAll(.workoutPlans, isCurrent: { request == self.generation })
-                guard request == generation, !Task.isCancelled else { return }
+                let children: [EntityRecord<JSONValue>] = try await saveData.listAll(.workoutPlans, isCurrent: { request == self.generation })
+                try checkSave()
                 for child in children where oldIDs.contains(child.payload["source_plan_id"]?.stringValue?.lowercased() ?? "") && child.payload["status"]?.stringValue != "archived" {
-                    guard request == generation, !Task.isCancelled else { return }
-                    let _: EntityRecord<JSONValue> = try await dataService.update(.workoutPlans, id: child.id, patch: .object(["status": .string("archived")]))
+                    try checkSave()
+                    let _: EntityRecord<JSONValue> = try await saveData.update(.workoutPlans, id: child.id, patch: .object(["status": .string("archived")]))
                 }
-                let contexts: [EntityRecord<JSONValue>] = try await dataService.listAll(.userAIContexts, isCurrent: { request == self.generation })
-                guard request == generation, !Task.isCancelled else { return }
+                let contexts: [EntityRecord<JSONValue>] = try await saveData.listAll(.userAIContexts, isCurrent: { request == self.generation })
+                try checkSave()
                 for context in contexts {
-                    guard request == generation, !Task.isCancelled else { return }
-                    let _: EntityRecord<JSONValue> = try await dataService.update(.userAIContexts, id: context.id, patch: .object(["lastUpdatedAt": .string("1970-01-01T00:00:00.000Z")]))
+                    try checkSave()
+                    let _: EntityRecord<JSONValue> = try await saveData.update(.userAIContexts, id: context.id, patch: .object(["lastUpdatedAt": .string("1970-01-01T00:00:00.000Z")]))
                 }
             } catch { cleanupFailed = true }
+            try checkSave()
             if initialPreview, let answers = pendingPayload["plan_payload"]?["questionnaire"] {
-                do { try await saveInitialPersonalization(answers, user: user, request: request, data: dataService) }
+                do { try await saveInitialPersonalization(answers, user: user, request: request, data: saveData) }
                 catch { cleanupFailed = true }
             }
-            guard request == generation, !Task.isCancelled else { return }
-            self.activeRecord = saved
-            plan = try saved.payload.decoded(as: HomeAIPlan.self)
+            try checkSave()
+            let savedPlan = try saved.payload.decoded(as: HomeAIPlan.self)
             await cache.invalidate(CacheKey("home", "dashboard"), userID: user.id)
+            try checkSave()
             await cache.invalidate(planCacheKey, userID: user.id)
-            guard request == generation, !Task.isCancelled else { return }
+            try checkSave()
+            self.activeRecord = saved
+            plan = savedPlan
             // Leave preview and batch intact on incomplete cleanup so Save retries never create another plan.
             if cleanupFailed {
                 editStatus = "Your plan is saved. Some related updates need another attempt; use Save to finish."
@@ -335,7 +359,7 @@ final class PlanViewModel: ObservableObject {
                 editStatus = "Your revised plan is saved."
             }
         } catch {
-            guard request == generation else { return }
+            guard (try? checkSave()) != nil else { return }
             editError = AppError.from(error, title: "Could not save your plan")
         }
     }

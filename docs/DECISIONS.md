@@ -530,3 +530,8 @@ User separately approved the exact guarded one-row QA restoration, manually appl
 ## 2026-11-16 — Verify unpaid first-plan Premium handoff without creating data
 
 E27 accepts only the unpaid first-plan/Premium handoff subcase. Exact designated empty QA identity resolves uniquely; all17 owner-filtered table groups remain zero before/after all UI, and exported CSVs are byte-identical. Root live UI and independent local export review agree. Full W16 questionnaire/generation and W17 scanned-PDF remain open pending legitimate Premium on a disposable empty-plan account. No purchase/restore/entitlement change, AI request, source/build change or full lifecycle acceptance inferred; counts remain37/45 with8open and9release gates. Preserve populatedQA70 and existing integration/team.
+
+
+## 2026-11-16 — Bind Home vital and Plan cleanup completions to their initiating account
+
+E28 narrow W04 review found delayed Home vital acknowledgments could publish/cache under a replacement owner, and Plan save cleanup could read a newly active SDK account before UI stop. Capture SDK identity plus model generation/owner; validate before/after async work, use existing GoalSessionData for all Plan save/personalization work, reject foreign/wrong-ID vital responses and pin cache ownership. Preserve normal unchanged-owner saves.56affected methods pass,7new; normal optimized arm64+x86_64 Release simulator build and strict/deep codesign pass without DEBUG/test-launch flags. Candidate remains native-dev and uninstalled; full W04/live/device/archive acceptance remains open. User has no suitable Premium empty-plan QA; leave W16/W17 pending rather than purchase, restore or manufacture access. Counts37/45,8open,9gates unchanged.
