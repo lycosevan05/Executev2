@@ -55,6 +55,32 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(data.context()["active_plan_recommendations_not_completed_activity"], .null)
     }
 
+    func testMondayInsightsSeparatesRollingAndCalendarWeekAndOmitsPriorReadinessProse() throws {
+        let readiness = row(["date": .string("2026-11-16"), "energy": .number(8), "readiness_score": .number(75),
+            "guidance": .object(["recommendation": .string("STALE_WRONG_REST_PROSE")]),
+            "guidance_inputs": .string("STALE_INPUT"), "guidance_limitations": .string("STALE_LIMITATION"),
+            "training_recommendation": .string("STALE_RECOMMENDATION")])
+        let source: [EntityTable: [BackendRow]] = [
+            .workoutLogs: [row(["date": .string("2026-11-13"), "status": .string("completed")]),
+                          row(["date": .string("2026-11-16"), "status": .string("completed")]),
+                          row(["date": .string("2026-11-17"), "status": .string("completed")])],
+            .readinessCheckIns: [readiness]]
+        let saved = snapshot(source), context = saved.context()
+        XCTAssertEqual(context["local_weekday"], .string("Monday"))
+        XCTAssertEqual(context["rolling_seven_day_window"]?["start_date"], .string("2026-11-10"))
+        XCTAssertEqual(context["rolling_seven_day_window"]?["completed_workouts"], .number(2))
+        XCTAssertEqual(context["calendar_week_to_date"]?["start_date"], .string("2026-11-16"))
+        XCTAssertEqual(context["calendar_week_to_date"]?["completed_workouts"], .number(1))
+        let observed = try XCTUnwrap(context["readiness_check_ins"]?.recoveryArray?.first)
+        XCTAssertEqual(observed["date"], .string("2026-11-16")); XCTAssertEqual(observed["energy"], .number(8))
+        XCTAssertEqual(observed["readiness_score"], .number(75))
+        for key in ["guidance", "guidance_inputs", "guidance_limitations", "training_recommendation"] { XCTAssertNil(observed[key]) }
+        let prompt = try InsightsAI.request(saved).prompt
+        XCTAssertTrue(prompt.contains("use calendar_week_to_date.completed_workouts, never the rolling-seven-day count"))
+        XCTAssertFalse(prompt.contains("STALE_"))
+        XCTAssertEqual(saved.records[.readinessCheckIns], [readiness])
+    }
+
     func testNutrientThresholdsAndUnknownTargets() {
         XCTAssertEqual(InsightNutrient(id: "a", title: "A", unit: "g", current: 0, target: nil).status, "No target")
         XCTAssertEqual(InsightNutrient(id: "a", title: "A", unit: "g", current: 60, target: 100).status, "Below")
