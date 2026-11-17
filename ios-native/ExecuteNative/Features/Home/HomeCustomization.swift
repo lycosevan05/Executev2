@@ -23,7 +23,7 @@ struct HomeCustomizationSheet: View {
                         }
                     }
                     .onMove(perform: model.moveWidgets)
-                }
+                }.disabled(model.customizationBusy || model.customizationIntent != nil)
 
                 if !model.hiddenWidgets.isEmpty {
                     Section("Hidden widgets") {
@@ -34,7 +34,7 @@ struct HomeCustomizationSheet: View {
                             ))
                             .tint(ExecuteColor.chartreuseDark)
                         }
-                    }
+                    }.disabled(model.customizationBusy || model.customizationIntent != nil)
                 }
 
                 Section("Daily vitals") {
@@ -52,6 +52,7 @@ struct HomeCustomizationSheet: View {
 
                 Section {
                     Button("Reset Home layout", role: .destructive) { model.resetLayout() }
+                        .disabled(model.customizationBusy || model.customizationIntent != nil)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -156,7 +157,7 @@ struct HomeChecklistCustomizationSheet: View {
                             }
                         }
                         .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.customizationBusy || model.customizationIntent != nil)
-                    }
+                    }.disabled(model.customizationBusy || model.customizationIntent != nil)
                 }
             }
             .scrollContentBackground(.hidden)
