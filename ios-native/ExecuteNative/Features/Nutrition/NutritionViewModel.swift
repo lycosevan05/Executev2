@@ -10,6 +10,7 @@ final class NutritionViewModel: ObservableObject {
     @Published private(set) var isAnalyzing = false
     @Published private(set) var deletingIDs = Set<UUID>()
     @Published private(set) var aiEstimate: NutritionAIEstimate?
+    @Published private(set) var textFoodSaveReview: TextFoodSaveReview?
     @Published private(set) var error: AppError?
 
     private let dataService: EntityDataServicing?
@@ -17,9 +18,12 @@ final class NutritionViewModel: ObservableObject {
     private let cache: UserScopedCacheStore
     private let realtimeService: RealtimeSubscribing?
     private let router: AppRouter
+    private let textFoodSaver: TextFoodSave?
+    private let canSaveTextFood: (UUID) -> Bool
     private var user: ExecuteUser?
     private var subscriptions: [RealtimeSubscription] = []
     private var analysisGeneration = UUID()
+    private var activeTextSave: UUID?
     private var hasStarted = false
     private var activePlanID: UUID?
     private var activePlanSource: String?
@@ -31,7 +35,10 @@ final class NutritionViewModel: ObservableObject {
         cache: UserScopedCacheStore,
         realtimeService: RealtimeSubscribing?,
         router: AppRouter,
-        initialDate: Date = .now
+        initialDate: Date = .now,
+        textFoodRepository: RecoveryRepository? = nil,
+        textFoodDefaults: UserDefaults = .standard,
+        canSaveTextFood: @escaping (UUID) -> Bool = { _ in true }
     ) {
         let start = Calendar.current.startOfDay(for: initialDate)
         self.selectedDate = start
@@ -41,6 +48,8 @@ final class NutritionViewModel: ObservableObject {
         self.cache = cache
         self.realtimeService = realtimeService
         self.router = router
+        self.textFoodSaver = textFoodRepository.map { TextFoodSave(repository: $0, defaults: textFoodDefaults) }
+        self.canSaveTextFood = canSaveTextFood
     }
 
     static func preview() -> NutritionViewModel {
@@ -111,20 +120,26 @@ final class NutritionViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
+        if activeTextSave != nil { activeTextSave = nil; isSaving = false }
         clearAIEstimate()
+        textFoodSaveReview = nil
         self.user = user
         hasStarted = true
         await restoreCachedSnapshot()
         await reload()
         await startRealtime()
+        await reviewTextFoodSave()
     }
 
     func stop() async {
         clearAIEstimate()
+        textFoodSaveReview = nil
+        if activeTextSave != nil { activeTextSave = nil; isSaving = false }
+        hasStarted = false
+        user = nil
         let active = subscriptions
         subscriptions.removeAll()
         for subscription in active { await subscription.cancel() }
-        hasStarted = false
     }
 
     func refresh() async {
@@ -145,6 +160,7 @@ final class NutritionViewModel: ObservableObject {
         isInitialLoading = true
         await restoreCachedSnapshot()
         await reload()
+        await reviewTextFoodSave()
     }
 
     func moveDate(by days: Int) async {
@@ -177,8 +193,62 @@ final class NutritionViewModel: ObservableObject {
     }
 
     func saveCurrentEstimate(mealType: NutritionMealType) async -> Bool {
-        guard let estimate = aiEstimate else { return false }
-        return await add(estimate.drafts(mealType: mealType))
+        guard let estimate = aiEstimate, let owner = user, hasStarted, !isSaving, deletingIDs.isEmpty, canSaveTextFood(owner.id) else { return false }
+        guard let textFoodSaver else {
+            error = AppError(title: "AI food save unavailable", message: "A current authenticated save connection is required. Your estimate has been kept."); return false
+        }
+        let date = dateString, request = analysisGeneration
+        func current() -> Bool { self.hasStarted && self.user?.id == owner.id && self.dateString == date && self.analysisGeneration == request && self.canSaveTextFood(owner.id) }
+        let operation = UUID(); activeTextSave = operation
+        isSaving = true; error = nil
+        defer { if activeTextSave == operation { activeTextSave = nil; isSaving = false } }
+        var failure: AppError?
+        do { try await textFoodSaver.save(estimate: estimate, meal: mealType, user: owner, date: date, current: current) }
+        catch { failure = AppError.from(error, title: "AI food save needs review") }
+        guard current() else { return false }
+        await reload(isRefresh: true)
+        guard current() else { return false }
+        textFoodSaveReview = await textFoodSaver.review(user: owner, date: date, current: current)
+        guard current() else { return false }
+        if let failure { error = failure; return false }
+        guard !textFoodSaver.hasPending(owner: owner.id, date: date) else { return false }
+        aiEstimate = nil
+        await cache.invalidate(CacheKey("home", "dashboard"), userID: owner.id)
+        return current()
+    }
+
+    func reviewTextFoodSave() async {
+        guard let owner = user, let textFoodSaver, hasStarted, !isSaving else { return }
+        let date = dateString, request = analysisGeneration
+        func current() -> Bool { self.hasStarted && self.user?.id == owner.id && self.dateString == date && self.analysisGeneration == request && self.canSaveTextFood(owner.id) }
+        let review = await textFoodSaver.review(user: owner, date: date, current: current)
+        guard current() else { return }; textFoodSaveReview = review
+    }
+
+    func retryTextFoodSave() async {
+        guard let owner = user, let textFoodSaver, hasStarted, !isSaving, deletingIDs.isEmpty, canSaveTextFood(owner.id) else { return }
+        let date = dateString, request = analysisGeneration
+        func current() -> Bool { self.hasStarted && self.user?.id == owner.id && self.dateString == date && self.analysisGeneration == request && self.canSaveTextFood(owner.id) }
+        let operation = UUID(); activeTextSave = operation
+        isSaving = true; error = nil
+        defer { if activeTextSave == operation { activeTextSave = nil; isSaving = false } }
+        var failure: AppError?
+        do { try await textFoodSaver.resume(user: owner, date: date, current: current) }
+        catch { failure = AppError.from(error, title: "AI food save needs review") }
+        guard current() else { return }
+        await reload(isRefresh: true)
+        guard current() else { return }
+        textFoodSaveReview = await textFoodSaver.review(user: owner, date: date, current: current)
+        guard current() else { return }
+        if let failure { error = failure }
+        else if !textFoodSaver.hasPending(owner: owner.id, date: date) { aiEstimate = nil }
+        await cache.invalidate(CacheKey("home", "dashboard"), userID: owner.id)
+    }
+
+    func discardTextFoodSave() {
+        guard let owner = user, let textFoodSaver, !isSaving else { return }
+        textFoodSaver.discardLocal(user: owner, date: dateString)
+        textFoodSaveReview = nil; aiEstimate = nil; error = nil
     }
 
     func add(_ drafts: [NutritionEntryDraft]) async -> Bool {

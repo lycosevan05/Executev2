@@ -68,11 +68,13 @@ struct NutritionFoodLog: Codable, Equatable, Sendable {
     let notes: String?
     var sourceMealPlanID: String? = nil
     var plannedMealKey: String? = nil
+    var nativeTextFoodBatchID: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case date, foods, notes
         case sourceMealPlanID = "source_meal_plan_id"
         case plannedMealKey = "planned_meal_key"
+        case nativeTextFoodBatchID = "native_text_food_batch_id"
         case logMethod = "log_method"
         case mealType = "meal_type"
         case totalCalories = "total_calories"
@@ -338,14 +340,19 @@ enum NutritionCalculations {
     }
 
     static func intake(logs: [NutritionFoodLogRecord], mealPlan: NutritionMealPlan?, planID: UUID?, completed: [String]) -> NutritionMacroTotals {
-        let linked = logs.filter { record in
+        // Tagged text batches are explicit additional intake, not legacy meal-tick proxies.
+        // Preserve this distinction through later correction/deletion and typed reloads.
+        let explicitText = logs.filter { UUID(uuidString: $0.log.nativeTextFoodBatchID ?? "") != nil }
+        let textIDs = Set(explicitText.map(\.id))
+        let remaining = logs.filter { !textIDs.contains($0.id) }
+        let linked = remaining.filter { record in
             guard let planID else { return false }
             return DayPlanLogic.sameID(record.log.sourceMealPlanID, planID)
         }
         let linkedIDs = Set(linked.map(\.id))
         let linkedTypes = Set(linked.compactMap { $0.log.plannedMealKey?.lowercased() })
         let legacy = completed.filter { !linkedTypes.contains($0.lowercased()) }
-        return foodTotals(linked) + reconcile(foodTotals(logs.filter { !linkedIDs.contains($0.id) }), tickedTotals(mealPlan: mealPlan, completed: legacy))
+        return foodTotals(explicitText) + foodTotals(linked) + reconcile(foodTotals(remaining.filter { !linkedIDs.contains($0.id) }), tickedTotals(mealPlan: mealPlan, completed: legacy))
     }
 
     static func reconcile(_ first: NutritionMacroTotals, _ second: NutritionMacroTotals) -> NutritionMacroTotals {
