@@ -232,14 +232,16 @@ final class HomeViewModel: ObservableObject {
             generated.append(HomeChecklistItem(id: "custom:\(id.uuidString):\(date)", type: "custom", title: item.label ?? "Custom item", detail: "", source: "custom", customItemID: id, completed: false, completedAt: nil))
         }
 
-        let saved = Dictionary(uniqueKeysWithValues: (snapshot.dailyLog?.checklistItems ?? snapshot.dailyLog?.plannedChecklistItems ?? []).map { ($0.id, $0) })
-        let planCompleted = Set(snapshot.dailyLog?.planItemsCompleted ?? [])
+        let saved = (snapshot.dailyLog?.checklistItems ?? snapshot.dailyLog?.plannedChecklistItems ?? []).reduce(into: [String: HomeChecklistItem]()) { result, item in
+            if result[item.id.lowercased()] == nil { result[item.id.lowercased()] = item }
+        }
+        let planCompleted = Set((snapshot.dailyLog?.planItemsCompleted ?? []).map { $0.lowercased() })
         return generated.map { item in
             var result = item
-            let persisted = saved[item.id]
+            let persisted = saved[item.id.lowercased()]
             let completedByWorkout = item.type == "workout" && snapshot.dailyLog?.workoutDone == true
-            result.completed = completedByWorkout || planCompleted.contains(item.id) || persisted?.completed == true
-            result.completedAt = result.completed ? persisted?.completedAt ?? HomeDate.timestamp : nil
+            result.completed = completedByWorkout || planCompleted.contains(item.id.lowercased()) || persisted?.completed == true
+            result.completedAt = result.completed ? persisted?.completedAt : nil
             return result
         }
     }
@@ -249,31 +251,14 @@ final class HomeViewModel: ObservableObject {
             router.navigate(to: .dayPlan(kind: item.type == "workout" ? .workout : .meals, date: HomeDate.todayString))
             return
         }
-        var updated = checklistItems
-        guard let index = updated.firstIndex(where: { $0.id == item.id }) else { return }
-        updated[index].completed.toggle()
-        updated[index].completedAt = updated[index].completed ? HomeDate.timestamp : nil
-        applyChecklist(updated)
-        if updated.allSatisfy(\.completed) { celebrationIsPresented = true }
-
-        do {
-            let patch = checklistPatch(for: updated)
-            if let dailyLogID = snapshot.dailyLogID, let dataService {
-                let record: EntityRecord<HomeDailyLog> = try await dataService.update(.dailyLogs, id: dailyLogID, patch: patch)
-                snapshot.dailyLog = record.payload
-            } else if let dataService, let user {
-                var newLog = snapshot.dailyLog ?? HomeDailyLog(date: HomeDate.todayString, caloriesConsumed: nil, caloriesBurned: nil, proteinConsumedG: nil, carbsConsumedG: nil, fatsConsumedG: nil, waterLiters: nil, sleepHours: nil, steps: nil, mood: nil, energy: nil, workoutDurationMinutes: nil, weightKg: nil, plannedWorkoutID: nil, plannedMealPlanID: nil, checklistItems: nil, plannedChecklistItems: nil, planItemsCompleted: nil)
-                newLog.checklistItems = updated
-                newLog.plannedChecklistItems = updated
-                newLog.planItemsCompleted = updated.filter(\.completed).map(\.id)
-                let record: EntityRecord<HomeDailyLog> = try await dataService.create(.dailyLogs, payload: newLog, user: user)
-                snapshot.dailyLogID = record.id
-                snapshot.dailyLog = record.payload
-            }
-            await persistDashboard()
-        } catch {
-            self.error = AppError.from(error, title: "Could not save checklist update")
-            await reload()
+        let date = HomeDate.todayString, request = trackingGeneration
+        let saved = await performCustomization(kind: .completeItem, date: date, customItemID: item.customItemID) { row in
+            try HomeChecklistCompletion.patch(row: row?.data, item: item, date: date, timestamp: HomeDate.timestamp)
+        }
+        guard request == trackingGeneration else { return }
+        if saved, !checklistItems.isEmpty, checklistItems.allSatisfy(\.completed) { celebrationIsPresented = true }
+        if !saved, let message = customizationError {
+            error = TrackPersistence.invalid("\(message) Open checklist customization to check the pending change.")
         }
     }
 
@@ -522,10 +507,12 @@ final class HomeViewModel: ObservableObject {
             if !isEditingLayout, let layout { try await acceptCustomizationRow(layout, kind: .layout, request: request, identity: identity) }
             snapshot.customChecklistItems = try rows.filter { $0.data["is_active"] != .bool(false) }.map(customizationItem)
             if let intent = customizationIntent {
-                let candidates = intent.table == .userPageLayouts ? layouts : rows
-                let receipts = candidates.filter(intent.acknowledged)
-                guard receipts.count <= 1 else { throw TrackPersistence.invalid("Multiple save receipts need review; records were preserved.") }
-                if let saved = receipts.first { try await finishCustomization(saved, intent: intent, request: request, identity: identity) }
+                let candidates: [BackendRow]
+                if intent.kind == .completeItem { candidates = try await customizationRows(.dailyLogs, request: request, identity: identity) }
+                else { candidates = intent.table == .userPageLayouts ? layouts : rows }
+                if let saved = try customizationCurrent(intent, rows: candidates, user: user), intent.acknowledged(saved) {
+                    try await finishCustomization(saved, intent: intent, request: request, identity: identity)
+                }
             }
             await persistDashboard()
         } catch {
@@ -558,28 +545,6 @@ final class HomeViewModel: ObservableObject {
                 subscriptions.append(subscription)
             }
         }
-    }
-
-    private func applyChecklist(_ items: [HomeChecklistItem]) {
-        if snapshot.dailyLog == nil {
-            snapshot.dailyLog = HomeDailyLog(date: HomeDate.todayString, caloriesConsumed: nil, caloriesBurned: nil, proteinConsumedG: nil, carbsConsumedG: nil, fatsConsumedG: nil, waterLiters: nil, sleepHours: nil, steps: nil, mood: nil, energy: nil, workoutDurationMinutes: nil, weightKg: nil, plannedWorkoutID: nil, plannedMealPlanID: nil, checklistItems: items, plannedChecklistItems: items, planItemsCompleted: items.filter(\.completed).map(\.id))
-        } else {
-            snapshot.dailyLog?.checklistItems = items
-            snapshot.dailyLog?.plannedChecklistItems = items
-            snapshot.dailyLog?.planItemsCompleted = items.filter(\.completed).map(\.id)
-        }
-    }
-
-    private func checklistPatch(for items: [HomeChecklistItem]) -> JSONValue {
-        let completed = items.filter(\.completed)
-        return .object([
-            "checklist_items": .encoded(items),
-            "planned_checklist_items": .encoded(items),
-            "checklist_completed_count": .number(Double(completed.count)),
-            "checklist_total_count": .number(Double(items.count)),
-            "checklist_adherence_pct": .number(items.isEmpty ? 0 : Double((completed.count * 100) / items.count)),
-            "plan_items_completed": .encoded(completed.map(\.id))
-        ])
     }
 
     private func selectActivePlan(_ records: [EntityRecord<HomeAIPlan>]) -> EntityRecord<HomeAIPlan>? {
@@ -683,6 +648,11 @@ private extension HomeViewModel {
         return HomeCustomChecklistItem(id: row.id, label: value.label, days: value.days, endsOn: value.endsOn, isActive: value.isActive)
     }
     func customizationCurrent(_ intent: HomeCustomizationIntent, rows: [BackendRow], user: ExecuteUser) throws -> BackendRow? {
+        guard intent.owner == user.id else { throw CancellationError() }
+        if intent.kind == .completeItem {
+            guard let date = intent.values["date"]?.stringValue else { throw TrackPersistence.invalid("The pending checklist date is unreadable and was preserved.") }
+            return try TrackPersistence.uniqueDaily(rows, date: date)
+        }
         let receipts = rows.filter(intent.acknowledged)
         guard receipts.count <= 1 else { throw TrackPersistence.invalid("Multiple records acknowledge this change. They were preserved for review.") }
         if let receipt = receipts.first { return receipt }
@@ -699,7 +669,7 @@ private extension HomeViewModel {
         }
         customizationIntent = intent
     }
-    func performCustomization(kind: HomeCustomizationIntent.Kind, rowID: UUID? = nil, values: (BackendRow?) throws -> JSONValue) async -> Bool {
+    func performCustomization(kind: HomeCustomizationIntent.Kind, rowID: UUID? = nil, date: String? = nil, customItemID: UUID? = nil, values: (BackendRow?) throws -> JSONValue) async -> Bool {
         guard !customizationBusy, !customizationStorageUnreadable, customizationIntent == nil,
               let user, canTrackGoals(user.id), let repository = customizationRepository else {
             customizationError = "Refresh your account or resolve the pending customization before saving another change."; return false
@@ -709,15 +679,36 @@ private extension HomeViewModel {
         defer { if request == trackingGeneration { customizationBusy = false } }
         do {
             let identity = try repository.identity(for: user)
-            let table: EntityTable = kind == .layout ? .userPageLayouts : .customChecklistItems
-            let rows = try await customizationRows(table, request: request, identity: identity)
+            if kind == .completeItem, let customItemID {
+                let definitions = try await customizationRows(.customChecklistItems, request: request, identity: identity)
+                let matching = definitions.filter { $0.id == customItemID }
+                guard matching.count == 1, let definition = matching.first,
+                      isChecklistItemActive(try customizationItem(definition), weekday: Calendar.current.component(.weekday, from: Date()) - 1, date: date ?? "") else {
+                    throw TrackPersistence.invalid("The custom item changed or is no longer active. Refresh before completing it.")
+                }
+            }
+            let rows = try await customizationRows(kind.table, request: request, identity: identity)
             let row: BackendRow?
             if kind == .layout { row = try customizationLayout(rows, user: user) }
-            else if let rowID {
+            else if kind == .completeItem {
+                guard let date, date == HomeDate.todayString else { throw TrackPersistence.invalid("The day changed. Refresh before completing a task.") }
+                row = try TrackPersistence.uniqueDaily(rows, date: date)
+            } else if let rowID {
                 guard let existing = rows.first(where: { $0.id == rowID }) else { throw TrackPersistence.invalid("The custom item changed or is no longer available. Refresh it before removing it.") }
                 row = existing
             } else { row = nil }
-            let patch = try values(row)
+            var patch = try values(row)
+            if kind == .completeItem, row == nil {
+                let plans = try await customizationRows(.aiPlans, request: request, identity: identity)
+                let master = NutritionWeekSelection.master(rows: plans, user: user)
+                var fields = patch.objectValue!
+                fields["source"] = .string(master.flatMap(RecoverySelection.source) ?? "manual")
+                if let master {
+                    fields["source_plan_id"] = .string(master.id.uuidString.lowercased())
+                    fields["generation_batch_id"] = DayPlanLogic.value("generation_batch_id", in: master.data) ?? .null
+                }
+                patch = .object(fields)
+            }
             let original = JSONValue.object(Dictionary(uniqueKeysWithValues: (patch.objectValue ?? [:]).keys.map { ($0, row?.data[$0] ?? .null) }))
             let intent = HomeCustomizationIntent(owner: user.id, token: UUID(), kind: kind, rowID: row?.id, original: original, values: patch)
             let bytes = try JSONEncoder().encode(intent)
@@ -736,6 +727,9 @@ private extension HomeViewModel {
             throw TrackPersistence.invalid("Saved customization changed elsewhere. Review the pending change; it was not applied again.")
         }
         try customizationCheck(request, identity: identity)
+        if intent.kind == .completeItem, intent.values["date"] != .string(HomeDate.todayString) {
+            throw TrackPersistence.invalid("The day changed. Review the pending checklist change before completing another task.")
+        }
         let saved = try await customizationRepository!.write(intent.table, id: intent.rowID, patch: intent.patch, identity: identity)
         try customizationCheck(request, identity: identity)
         guard NutritionWeekSelection.owned(saved, by: identity.user), intent.acknowledged(saved) else {
@@ -753,6 +747,15 @@ private extension HomeViewModel {
             apply(layout: layout)
             try await cache.write(layout, for: layoutKey, userID: identity.user.id)
             try customizationCheck(request, identity: identity)
+        } else if kind == .completeItem {
+            // A receipt for yesterday can be reconciled without replacing today's dashboard.
+            if row.data["date"] == .string(HomeDate.todayString) {
+                snapshot.dailyLog = try row.data.decoded(as: HomeDailyLog.self)
+                snapshot.dailyLogID = row.id
+                error = nil
+                await persistDashboard()
+                try customizationCheck(request, identity: identity)
+            }
         } else {
             let item = try customizationItem(row)
             snapshot.customChecklistItems.removeAll { $0.id == item.id }

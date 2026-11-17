@@ -138,6 +138,142 @@ import Supabase
         XCTAssertFalse(defaults.dictionaryRepresentation().keys.contains { $0.hasPrefix("execute.cache.\(user.id.uuidString).") })
     }
 
+    private func originalChecklist(_ date: String) -> [JSONValue] {
+        [
+            .object(["id": .string("workout:" + date), "type": .string("workout"), "title": .string("Bodyweight Foundation A"),
+                "description": .string("Complete your supplied Bodyweight Foundation A session."), "status": .string("completed"),
+                "completed": .bool(true), "original_metadata": .object(["duration_minutes": .number(45), "nested": .array([.null, .string("keep")])])]),
+            .object(["id": .string("nutrition:" + date), "type": .string("nutrition"), "title": .string("Hit nutrition target"),
+                "description": .string("Use the supplied meal focus."), "status": .string("pending"), "future": .bool(true)]),
+            .object(["id": .string("recovery:" + date), "type": .string("recovery"), "title": .string("Recovery focus"),
+                "description": .string("Use the supplied recovery routine."), "status": .string("pending"), "duration_minutes": .number(10)])
+        ]
+    }
+    private func dailyWithChecklist(_ repo: TrackFixtureRepository) -> BackendRow {
+        let date = HomeDate.todayString, tasks = originalChecklist(date)
+        return repo.row(["date": .string(date), "checklist_items": .array(tasks), "planned_checklist_items": .array(tasks),
+            "plan_items_completed": .array([.string("workout:" + date), .string("legacy-completion")]),
+            "checklist_completed_count": .number(1), "checklist_total_count": .number(3), "checklist_adherence_pct": .number(33),
+            "workout_done": .bool(true), "source": .string("original-source"), "source_plan_id": .string(UUID().uuidString),
+            "generation_batch_id": .string("original-batch"), "unknown": .object(["keep": .array([.number(7), .null])]),
+            "planned_recovery_tasks": .array([.object(["duration_minutes": .number(10), "future": .string("keep")])])])
+    }
+    private func customDefinition(_ repo: TrackFixtureRepository) -> BackendRow {
+        repo.row(["label": .string("Synthetic walk"), "days": .array((0...6).map { .number(Double($0)) }), "is_active": .bool(true)])
+    }
+    private func customCompletionItem(_ definition: BackendRow, date: String = HomeDate.todayString) -> HomeChecklistItem {
+        HomeChecklistItem(id: "custom:\(definition.id.uuidString):\(date)", type: "custom", title: "Synthetic walk", detail: "", source: "custom",
+            customItemID: definition.id, completed: false, completedAt: nil)
+    }
+    func testCompletingCustomTaskPreservesEveryOriginalTaskAndUnknownDailyFieldExactly() async {
+        let repo = TrackFixtureRepository(user: user), baseline = dailyWithChecklist(repo), definition = customDefinition(repo)
+        repo.records[.dailyLogs] = [baseline]; repo.records[.customChecklistItems] = [definition]
+        let model = await model(repo), item = customCompletionItem(definition)
+        await model.toggleChecklistItem(item)
+        XCTAssertEqual(repo.writes, 1); XCTAssertNil(model.customizationIntent)
+        let saved = repo.records[.dailyLogs]![0], oldTasks = originalChecklist(HomeDate.todayString)
+        for key in ["checklist_items", "planned_checklist_items"] {
+            guard case .array(let tasks) = saved.data[key] else { XCTFail("Missing saved task array"); return }
+            XCTAssertEqual(Array(tasks.prefix(3)), oldTasks, "Every old field and missing field must remain exact")
+            XCTAssertEqual(tasks.count, 4); XCTAssertEqual(tasks[3]["id"], .string(item.id))
+            XCTAssertEqual(tasks[3]["completed"], .bool(true)); XCTAssertEqual(tasks[3]["status"], .string("completed"))
+            XCTAssertNotNil(tasks[3]["completed_at"]?.stringValue)
+            XCTAssertNil(tasks[0]["completed_at"], "Do not invent a completion time for the already-completed workout")
+        }
+        XCTAssertEqual(saved.data["plan_items_completed"], .array([.string("workout:" + HomeDate.todayString), .string("legacy-completion"), .string(item.id)]))
+        let changed = Set(["checklist_items", "planned_checklist_items", "plan_items_completed", "checklist_completed_count", "checklist_total_count", "checklist_adherence_pct"])
+        for (key, value) in baseline.data.objectValue! where !changed.contains(key) { XCTAssertEqual(saved.data[key], value, key) }
+        XCTAssertEqual(saved.data["checklist_total_count"], .number(4)); XCTAssertEqual(saved.data["checklist_completed_count"], .number(2))
+        XCTAssertEqual(saved.data["checklist_adherence_pct"], .number(50))
+        XCTAssertNil(model.checklistItems.first { $0.type == "workout" }?.completedAt)
+        // Use fresh saved completion, even though this caller still holds the old incomplete item.
+        await model.toggleChecklistItem(item)
+        let undone = repo.records[.dailyLogs]![0]
+        for key in ["checklist_items", "planned_checklist_items"] {
+            guard case .array(let tasks) = undone.data[key] else { XCTFail("Missing saved task array"); return }
+            XCTAssertEqual(Array(tasks.prefix(3)), oldTasks)
+            XCTAssertEqual(tasks[3]["completed"], .bool(false)); XCTAssertEqual(tasks[3]["status"], .string("pending")); XCTAssertNil(tasks[3]["completed_at"])
+        }
+        XCTAssertEqual(undone.data["plan_items_completed"], baseline.data["plan_items_completed"])
+    }
+    func testExistingTargetKeepsOriginalMetadataAndMissingCompanionArray() throws {
+        let date = HomeDate.todayString
+        let item = HomeChecklistItem(id: "nutrition:" + date, type: "nutrition", title: "Regenerated title", detail: "Regenerated description",
+            source: "meal_plan", customItemID: nil, completed: false, completedAt: nil)
+        let tasks = originalChecklist(date)
+        let raw = JSONValue.object(["date": .string(date), "planned_checklist_items": .array(tasks),
+            "plan_items_completed": .array([.string("workout:" + date)])])
+        let patch = try HomeChecklistCompletion.patch(row: raw, item: item, date: date, timestamp: "fixture-time")
+        XCTAssertNil(patch["checklist_items"], "A missing companion array need not be fabricated")
+        guard case .array(let saved) = patch["planned_checklist_items"] else { XCTFail("Missing planned tasks"); return }
+        XCTAssertEqual(saved[0], tasks[0]); XCTAssertEqual(saved[2], tasks[2])
+        var expectedTarget = tasks[1].objectValue!
+        expectedTarget["completed"] = .bool(true); expectedTarget["status"] = .string("completed"); expectedTarget["completed_at"] = .string("fixture-time")
+        XCTAssertEqual(saved[1], .object(expectedTarget), "Only the target's completion fields can change")
+    }
+    func testPriorDayPendingChecklistCannotReplayButCanBeReviewedAndDiscarded() async throws {
+        let repo = TrackFixtureRepository(user: user), date = "2000-01-01"
+        let item = HomeChecklistItem(id: "recovery:" + date, type: "recovery", title: "Recovery", detail: "", source: "recovery",
+            customItemID: nil, completed: false, completedAt: nil)
+        let row = repo.row(["date": .string(date)])
+        repo.records[.dailyLogs] = [row]
+        let values = try HomeChecklistCompletion.patch(row: row.data, item: item, date: date, timestamp: "fixture-time")
+        let original = JSONValue.object(Dictionary(uniqueKeysWithValues: values.objectValue!.keys.map { ($0, row.data[$0] ?? .null) }))
+        let intent = HomeCustomizationIntent(owner: user.id, token: UUID(), kind: .completeItem, rowID: row.id, original: original, values: values)
+        let defaults = UserDefaults(suiteName: "HomeCustomization.OldDay.\(UUID())")!
+        defaults.set(try JSONEncoder().encode(intent), forKey: HomeCustomizationIntent.key(user.id))
+        let model = await model(repo, defaults: defaults)
+        await model.retryCustomization(); XCTAssertEqual(repo.writes, 0); XCTAssertNotNil(model.customizationIntent)
+        await model.reviewCustomization(); await model.keepReviewedCustomization()
+        XCTAssertEqual(repo.writes, 0); XCTAssertNil(model.customizationIntent); XCTAssertNil(model.snapshot.dailyLog)
+        XCTAssertEqual(repo.records[.dailyLogs]![0], row)
+    }
+    func testChecklistLostAcknowledgementReconcilesAfterRelaunchWithoutRetoggling() async {
+        let repo = TrackFixtureRepository(user: user), baseline = dailyWithChecklist(repo), definition = customDefinition(repo)
+        repo.records[.dailyLogs] = [baseline]; repo.records[.customChecklistItems] = [definition]
+        let defaults = UserDefaults(suiteName: "HomeCustomization.ChecklistReceipt.\(UUID())")!
+        let first = await model(repo, defaults: defaults); repo.loseAck = true
+        await first.toggleChecklistItem(customCompletionItem(definition))
+        XCTAssertNotNil(first.customizationIntent); XCTAssertEqual(repo.writes, 1)
+        let acknowledged = repo.records[.dailyLogs]![0]
+        await first.stop(); let second = await model(repo, defaults: defaults)
+        XCTAssertNil(second.customizationIntent); XCTAssertEqual(second.snapshot.dailyLogID, baseline.id)
+        await second.retryCustomization()
+        XCTAssertEqual(repo.writes, 1); XCTAssertEqual(repo.records[.dailyLogs]![0], acknowledged)
+    }
+    func testChecklistPendingRetryCannotOverwriteNewTaskMetadata() async {
+        let repo = TrackFixtureRepository(user: user), baseline = dailyWithChecklist(repo), definition = customDefinition(repo)
+        repo.records[.dailyLogs] = [baseline]; repo.records[.customChecklistItems] = [definition]
+        let model = await model(repo); repo.failBeforeWrite = true
+        await model.toggleChecklistItem(customCompletionItem(definition)); XCTAssertNotNil(model.customizationIntent)
+        var data = baseline.data.objectValue!, tasks = originalChecklist(HomeDate.todayString), first = tasks[0].objectValue!
+        first["description"] = .string("Changed on another device"); tasks[0] = .object(first); data["checklist_items"] = .array(tasks)
+        let concurrent = repo.row(data, id: baseline.id); repo.records[.dailyLogs] = [concurrent]; repo.failBeforeWrite = false
+        await model.retryCustomization()
+        XCTAssertEqual(repo.writes, 0); XCTAssertEqual(repo.records[.dailyLogs]![0], concurrent); XCTAssertNotNil(model.customizationIntent)
+        await model.reviewCustomization(); await model.keepReviewedCustomization(); XCTAssertNil(model.customizationIntent)
+        XCTAssertEqual(repo.writes, 0)
+    }
+    func testChecklistRejectsDuplicateDaysForeignOwnerDuplicateTasksAndStaleDate() async {
+        let repo = TrackFixtureRepository(user: user), baseline = dailyWithChecklist(repo), definition = customDefinition(repo)
+        repo.records[.customChecklistItems] = [definition]
+        let model = await model(repo), item = customCompletionItem(definition)
+        repo.records[.dailyLogs] = [baseline, repo.row(baseline.data.objectValue!)]
+        await model.toggleChecklistItem(item); XCTAssertEqual(repo.writes, 0); XCTAssertNil(model.customizationIntent)
+        let foreign = BackendRow(id: baseline.id, ownerID: UUID(), ownerEmail: user.email, createdBy: user.email, userEmail: user.email,
+            createdDate: nil, updatedDate: nil, data: baseline.data)
+        repo.records[.dailyLogs] = [foreign]
+        await model.toggleChecklistItem(item); XCTAssertEqual(repo.writes, 0); XCTAssertNil(model.customizationIntent)
+        var malformed = baseline.data.objectValue!; malformed["checklist_items"] = .array([originalChecklist(HomeDate.todayString)[0], originalChecklist(HomeDate.todayString)[0]])
+        repo.records[.dailyLogs] = [repo.row(malformed, id: baseline.id)]
+        await model.toggleChecklistItem(item); XCTAssertEqual(repo.writes, 0); XCTAssertNil(model.customizationIntent)
+        repo.records[.dailyLogs] = [baseline]
+        await model.toggleChecklistItem(customCompletionItem(definition, date: "2000-01-01"))
+        XCTAssertEqual(repo.writes, 0); XCTAssertNil(model.customizationIntent); XCTAssertEqual(repo.records[.dailyLogs]![0], baseline)
+        repo.afterRead = { repo.valid = false }
+        await model.toggleChecklistItem(item); XCTAssertEqual(repo.writes, 0); XCTAssertNil(model.customizationIntent)
+    }
+
 }
 
 

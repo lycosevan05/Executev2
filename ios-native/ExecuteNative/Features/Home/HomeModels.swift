@@ -583,14 +583,23 @@ enum DailyActivityChecklist {
 
 /// One durable, owner-bound customization action. Receipts distinguish an acknowledged save from a safe retry.
 struct HomeCustomizationIntent: Codable, Equatable {
-    enum Kind: String, Codable { case layout, addItem, removeItem }
+    enum Kind: String, Codable {
+        case layout, addItem, removeItem, completeItem
+        var table: EntityTable {
+            switch self {
+            case .layout: return .userPageLayouts
+            case .addItem, .removeItem: return .customChecklistItems
+            case .completeItem: return .dailyLogs
+            }
+        }
+    }
     let owner: UUID
     let token: UUID
     let kind: Kind
     let rowID: UUID?
     let original: JSONValue
     let values: JSONValue
-    var table: EntityTable { kind == .layout ? .userPageLayouts : .customChecklistItems }
+    var table: EntityTable { kind.table }
     var patch: JSONValue {
         var result = values.objectValue ?? [:]
         result["native_home_mutation_id"] = .string(token.uuidString)
@@ -601,4 +610,72 @@ struct HomeCustomizationIntent: Codable, Equatable {
             && (values.objectValue ?? [:]).allSatisfy { row.data[$0.key] == $0.value }
     }
     static func key(_ owner: UUID) -> String { "execute.cache.\(owner.uuidString).home.customization-pending" }
+}
+
+
+/// Completion is a raw JSON merge: display labels are never a persistence source for existing tasks.
+enum HomeChecklistCompletion {
+    static func patch(row: JSONValue?, item: HomeChecklistItem, date: String, timestamp: String) throws -> JSONValue {
+        guard row == nil || row?["date"] == .string(date), item.id.hasSuffix(":" + date) else {
+            throw TrackPersistence.invalid("The checklist date changed. Refresh before completing a task.")
+        }
+        let keys = ["checklist_items", "planned_checklist_items"]
+        var arrays: [String: [JSONValue]] = [:]
+        for key in keys {
+            guard let raw = row?[key], raw != .null else { continue }
+            guard case .array(let tasks) = raw else { throw invalidChecklist() }
+            var seen = Set<String>()
+            for task in tasks {
+                guard task.objectValue != nil, let id = task["id"]?.stringValue, !id.isEmpty,
+                      seen.insert(id.lowercased()).inserted else { throw invalidChecklist() }
+            }
+            arrays[key] = tasks
+        }
+        if arrays.isEmpty { for key in keys { arrays[key] = [] } }
+        let rawCompleted = row?["plan_items_completed"]
+        var completedIDs: [JSONValue]
+        if rawCompleted == nil || rawCompleted == .null { completedIDs = [] }
+        else if case .array(let values) = rawCompleted, values.allSatisfy({ $0.stringValue != nil }) { completedIDs = values }
+        else { throw invalidChecklist() }
+        let target = item.id.lowercased()
+        let matching = keys.flatMap { arrays[$0] ?? [] }.filter { $0["id"]?.stringValue?.lowercased() == target }
+        let wasCompleted = completedIDs.contains { $0.stringValue?.lowercased() == target }
+            || matching.contains { $0["completed"] == .bool(true) || $0["status"] == .string("completed") }
+            || (item.type == "workout" && row?["workout_done"] == .bool(true))
+        let complete = !wasCompleted
+        let savedID = matching.first?["id"]?.stringValue ?? item.id
+        if complete {
+            if !completedIDs.contains(where: { $0.stringValue?.lowercased() == target }) { completedIDs.append(.string(savedID)) }
+        } else { completedIDs.removeAll { $0.stringValue?.lowercased() == target } }
+        let newTask = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(item))
+        for key in keys where arrays[key] != nil {
+            var tasks = arrays[key]!
+            let index = tasks.firstIndex { $0["id"]?.stringValue?.lowercased() == target }
+            var task = (index.map { tasks[$0] } ?? newTask).objectValue!
+            task["completed"] = .bool(complete)
+            task["status"] = .string(complete ? "completed" : "pending")
+            task["completed_at"] = complete ? .string(timestamp) : nil
+            if let index { tasks[index] = .object(task) } else { tasks.append(.object(task)) }
+            arrays[key] = tasks
+        }
+        // Count the union of saved tasks, including tasks hidden from the current Home display.
+        var taskIDs = Set<String>(), doneIDs = Set(completedIDs.compactMap { $0.stringValue?.lowercased() })
+        for task in keys.flatMap({ arrays[$0] ?? [] }) {
+            let id = task["id"]!.stringValue!.lowercased()
+            taskIDs.insert(id)
+            if task["completed"] == .bool(true) || task["status"] == .string("completed") { doneIDs.insert(id) }
+        }
+        let completed = taskIDs.intersection(doneIDs).count
+        var patch: [String: JSONValue] = [
+            "date": .string(date), "plan_items_completed": .array(completedIDs),
+            "checklist_completed_count": .number(Double(completed)),
+            "checklist_total_count": .number(Double(taskIDs.count)),
+            "checklist_adherence_pct": .number(taskIDs.isEmpty ? 0 : Double(completed * 100) / Double(taskIDs.count))
+        ]
+        for (key, tasks) in arrays { patch[key] = .array(tasks) }
+        return .object(patch)
+    }
+    private static func invalidChecklist() -> AppError {
+        TrackPersistence.invalid("Saved checklist data is unreadable or contains duplicate tasks. It was preserved for review.")
+    }
 }
