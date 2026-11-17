@@ -250,7 +250,11 @@ enum GoalDerivation {
                 "source": .string("ai_plan"), "status": .string("active"), "start_date": .string(today),
                 "target_date": .string(future(metric == .weight ? 90 : 30))]))
         }
-        let sessions = positive(workout?["days_per_week"], plan?["plan_payload"]?["training_split"]?["sessions_per_week"], plan?["training_split"]?["sessions_per_week"])
+        // Retain goalSync's profile-over-plan precedence. Current native masters use
+        // days_per_week (root, then nested); legacy sessions_per_week remains a fallback.
+        let sessions = positive(workout?["days_per_week"],
+            plan?["training_split"]?["days_per_week"], plan?["plan_payload"]?["training_split"]?["days_per_week"],
+            plan?["plan_payload"]?["training_split"]?["sessions_per_week"], plan?["training_split"]?["sessions_per_week"])
         append(.workouts, target: sessions, title: "Train \(sessions.map { $0.formatted() } ?? "")x per week", category: "fitness")
         let steps = positive(profile?["step_goal_daily"]) ?? 10_000
         append(.steps, target: steps, title: "Hit \(steps.formatted()) steps daily", category: "fitness")

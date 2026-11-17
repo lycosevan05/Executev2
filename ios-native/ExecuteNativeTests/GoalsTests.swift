@@ -115,6 +115,20 @@ final class GoalsTests: XCTestCase {
         XCTAssertTrue(GoalDerivation.candidates(plan: nil, workout: nil, profile: nil, nutrition: nil, today: today).isEmpty)
     }
 
+    func testWorkoutDerivationUsesCanonicalSavedDaysWhenProfileHasNoOverride() {
+        let split: JSONValue = .object(["days_per_week": .number(3)])
+        let actualShape: JSONValue = .object(["training_split": split, "plan_payload": .object(["training_split": split])])
+        func target(_ plan: JSONValue, profile: JSONValue = .object([:])) -> JSONValue? {
+            GoalDerivation.candidates(plan: plan, workout: profile, profile: nil, nutrition: nil, today: today)
+                .first { $0["metric_field"] == .string("sessions_this_week") }?["target_value"]
+        }
+        XCTAssertEqual(target(actualShape), .number(3))
+        XCTAssertEqual(target(.object(["training_split": split])), .number(3))
+        XCTAssertEqual(target(.object(["plan_payload": .object(["training_split": split])])), .number(3))
+        XCTAssertEqual(target(actualShape, profile: .object(["days_per_week": .number(5)])), .number(5))
+        XCTAssertEqual(target(.object(["training_split": split, "plan_payload": .object(["training_split": .object(["sessions_per_week": .number(6)])])])), .number(3))
+    }
+
     func testDerivationLostCreateIsIdempotentAndManualGoalRemainsExact() async throws {
         let data = GoalsData(), manual = goal(.steps)
         data.rows[.userProfiles] = [GoalsData.row(["step_goal_daily": .number(7000)])]
