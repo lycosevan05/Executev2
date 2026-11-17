@@ -510,3 +510,8 @@ Verification: initial combined94fixture methods found one Recovery account-chang
 ## 2026-11-16 — Resolve retained non-Home customization scope
 
 W45 is functionally accepted by source comparison and normal native Insights/Profile entry-point evidence. Original Insights Customize only toggles its label; its layout hook never controls rendering. Profile layout hooks are unused, while its functional preference panels remain native. Retain those actions without inventing an unmounted layout engine. Counts:28/45accepted,17open,9separate release gates. Mutation/provider/restoration checks and final17-table baseline comparison remain distinct E24 work.
+
+
+## 2026-11-16 — Accept consolidated daily-data workflows; retain W41 metadata failure
+
+E25 closes W27/W35/W36/W37/W38/W42/W43/W44 through normal provider/UI/correction/relaunch and final owner-filtered17-table CSV comparison after allUI.36/45accepted,9open,9separate release gates.51baseline→70final,all51oldIDsretain,49capturedrows exact,19expectednew. Scoped local agent comparisons are not separate live connections. Home custom completion overwrites original checklist metadata and invents an old completion timestamp; W41 stays open for a targeted fresh-raw-data fix. Guarded one-row QA restoration/rollback prepared but no SQL repair executed; existing verification authorization remains SELECT-only.
