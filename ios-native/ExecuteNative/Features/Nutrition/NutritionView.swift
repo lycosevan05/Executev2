@@ -37,7 +37,9 @@ private struct NutritionScreen: View {
             cache: environment.cache,
             realtimeService: environment.realtimeService,
             router: environment.router,
-            initialDate: initialDate
+            initialDate: initialDate,
+            textFoodRepository: environment.makeRecoveryRepository(),
+            canSaveTextFood: { environment.appState.allowsDraftWrites(for: $0) }
         ))
         self.presentation = presentation
         self.captureEnvironment = environment
@@ -56,7 +58,7 @@ private struct NutritionScreen: View {
             hydrationContent: { date in AnyView(NutritionWeekHydrationView(environment: captureEnvironment, date: date).id(date)) }
         )
         .task(id: signedInUser?.id) {
-            if let signedInUser { await model.start(for: signedInUser) }
+            if let signedInUser { await model.start(for: signedInUser) } else { await model.stop() }
         }
         .onChange(of: signedInUser?.id) { _ in grocerySession.activate(nil) }
         .onDisappear { Task { await model.stop() } }
@@ -112,6 +114,7 @@ struct NutritionDashboardView: View {
         ScrollView {
             LazyVStack(spacing: ExecuteSpacing.md) {
                 NutritionDateNavigator(model: model)
+                TextFoodSaveRecoveryView(model: model)
 
                 if let error = model.error {
                     NutritionInlineError(error: error) {
@@ -832,6 +835,7 @@ private struct NutritionAIEntrySheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: ExecuteSpacing.md) {
+                    TextFoodSaveRecoveryView(model: model)
                     Text("Describe everything you ate. Execute will separate the foods and estimate nutrition for each one.")
                         .font(ExecuteTypography.body(13))
                         .foregroundStyle(ExecuteColor.olive)

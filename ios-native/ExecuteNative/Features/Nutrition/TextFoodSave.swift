@@ -39,7 +39,7 @@ struct TextFoodBatch: Codable {
     }
     func payload(_ index: Int) throws -> JSONValue {
         guard valid, items.indices.contains(index), let log = NutritionEntryFactory.payload(from: items[index].draft, date: date, time: time) else { throw TextFoodSave.invalidIntent() }
-        var fields = try JSONValue.decode(log).objectValue ?? [:]
+        var fields = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(log)).objectValue ?? [:]
         fields["native_mutation_id"] = .string(items[index].receipt.uuidString.lowercased())
         fields["native_text_food_batch_id"] = .string(id.uuidString.lowercased())
         return .object(fields)
@@ -260,8 +260,8 @@ struct TextFoodSaveRecoveryView: View {
                     Text("Pending AI food save · \(review.date)").font(ExecuteTypography.title(17))
                     Text(review.message).font(ExecuteTypography.body(13))
                     ForEach(review.items) { item in Text("\(item.name): \(item.status)").font(ExecuteTypography.body(13)) }
-                    Button("Verify batch and finish saved totals") { Task { await model.retryTextFoodSave() } }.disabled(model.isSaving || !review.canRetry)
-                    Button("Discard local batch; keep saved foods") { model.discardTextFoodSave() }.disabled(model.isSaving)
+                    Button("Check saved foods and finish") { Task { await model.retryTextFoodSave() } }.disabled(model.isSaving || !review.canRetry)
+                    Button("Keep saved foods and close this attempt") { model.discardTextFoodSave() }.disabled(model.isSaving)
                 }.padding(ExecuteSpacing.md)
             }
         }

@@ -58,6 +58,7 @@
 		6F03E8C2D37190E56093C3A0 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17207BBC6015E0CC6A3E9F6F /* AIService.swift */; };
 		72B41B9AFF16B3ADF192368A /* JSONBCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A318512948BBB8B2878D0DBD /* JSONBCompatibilityTests.swift */; };
 		744088A61AE3AF94A879D623 /* NutritionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B8E33740661EED9D3E9B610 /* NutritionViewModel.swift */; };
+		EB73229DA49B9F9825DAF2D4 /* TextFoodSave.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26EBB6ADB71E8642BF0089A3 /* TextFoodSave.swift */; };
 		7A47F279F79748DF6165C7C5 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 3B7EC00F0807861BFB2E3E6F /* Supabase */; };
 		7BAE005FA23C3F4C06AAC384 /* PlanViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6196C67B3E06966564038000 /* PlanViewModel.swift */; };
 		7F6BA815C4AD47E4D70769C0 /* PlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86566F576D7100D2FE8DB318 /* PlanView.swift */; };
@@ -102,6 +103,7 @@
 		C18ADC14C1BE980B5EFEAE6D /* ActiveLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C532DFD189C3AF2462EEE67 /* ActiveLimitationsView.swift */; };
 		F27120EF36A99B63E3573BBA /* RecoveryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EFB14D84B12BEA090386DBB /* RecoveryViewModel.swift */; };
 		3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F30ADD4AE865BF13490528 /* RecoveryTests.swift */; };
+		28F6A36263BF50B841887F44 /* TextFoodSaveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC5EDAEB147138A92DC250AF /* TextFoodSaveTests.swift */; };
 		11871F421EF00B26555CE0E1 /* HomeCustomizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5C5CA6A03606E3DF8AA606 /* HomeCustomizationTests.swift */; };
 		53682322A5FEAE12608DEC85 /* InsightsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A4A29B9371DCB2FD8BA297C /* InsightsTests.swift */; };
 		32F79EE7C0DA753C4D90A869 /* CustomTrackerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7CEABF9B9105E9F4482B0DA /* CustomTrackerTests.swift */; };
@@ -194,6 +196,7 @@
 		6F5E76FBDDAA19F40D793C13 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
 		7A60F8FF3D9A5482C38D70B4 /* AuthenticationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticationView.swift; sourceTree = "<group>"; };
 		7B8E33740661EED9D3E9B610 /* NutritionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionViewModel.swift; sourceTree = "<group>"; };
+		26EBB6ADB71E8642BF0089A3 /* TextFoodSave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextFoodSave.swift; sourceTree = "<group>"; };
 		81F7350C741A63C443C73FAB /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
 		83082AC387DEF2F78F63F41F /* HomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViewModel.swift; sourceTree = "<group>"; };
 		86566F576D7100D2FE8DB318 /* PlanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanView.swift; sourceTree = "<group>"; };
@@ -244,6 +247,7 @@
 		9C532DFD189C3AF2462EEE67 /* ActiveLimitationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveLimitationsView.swift; sourceTree = "<group>"; };
 		1EFB14D84B12BEA090386DBB /* RecoveryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryViewModel.swift; sourceTree = "<group>"; };
 		42F30ADD4AE865BF13490528 /* RecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryTests.swift; sourceTree = "<group>"; };
+		EC5EDAEB147138A92DC250AF /* TextFoodSaveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextFoodSaveTests.swift; sourceTree = "<group>"; };
 		AB5C5CA6A03606E3DF8AA606 /* HomeCustomizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeCustomizationTests.swift; sourceTree = "<group>"; };
 		7A4A29B9371DCB2FD8BA297C /* InsightsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsTests.swift; sourceTree = "<group>"; };
 		F7CEABF9B9105E9F4482B0DA /* CustomTrackerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTrackerTests.swift; sourceTree = "<group>"; };
@@ -396,6 +400,7 @@
 				4C7BC7F3B0D3114F6C5F717A /* SplitDayTests.swift */,
 				D6F6B9C2F5E1C9C74A38F06B /* WeekBuildTests.swift */,
 				42F30ADD4AE865BF13490528 /* RecoveryTests.swift */,
+				EC5EDAEB147138A92DC250AF /* TextFoodSaveTests.swift */,
 				AB5C5CA6A03606E3DF8AA606 /* HomeCustomizationTests.swift */,
 				7A4A29B9371DCB2FD8BA297C /* InsightsTests.swift */,
 				F7CEABF9B9105E9F4482B0DA /* CustomTrackerTests.swift */,
@@ -643,6 +648,7 @@
 				FE9FC9C2303C8173A4677703 /* GroceryView.swift */,
 				AE25C4639242FD157DEA0F44 /* NutritionView.swift */,
 				7B8E33740661EED9D3E9B610 /* NutritionViewModel.swift */,
+				26EBB6ADB71E8642BF0089A3 /* TextFoodSave.swift */,
 			);
 			path = Nutrition;
 			sourceTree = "<group>";
@@ -793,6 +799,7 @@
 				DF7C87CBF44A922E2D4E13DA /* SplitDayTests.swift in Sources */,
 				1B44536D74D931868A434554 /* WeekBuildTests.swift in Sources */,
 				3A91EA24A7B3C902158CF9ED /* RecoveryTests.swift in Sources */,
+				28F6A36263BF50B841887F44 /* TextFoodSaveTests.swift in Sources */,
 				11871F421EF00B26555CE0E1 /* HomeCustomizationTests.swift in Sources */,
 				53682322A5FEAE12608DEC85 /* InsightsTests.swift in Sources */,
 				32F79EE7C0DA753C4D90A869 /* CustomTrackerTests.swift in Sources */,
@@ -870,6 +877,7 @@
 				6F1328D5517C634785C55088 /* GroceryView.swift in Sources */,
 				9DF757D899E32B28B11C4445 /* NutritionView.swift in Sources */,
 				744088A61AE3AF94A879D623 /* NutritionViewModel.swift in Sources */,
+				EB73229DA49B9F9825DAF2D4 /* TextFoodSave.swift in Sources */,
 				7F6BA815C4AD47E4D70769C0 /* PlanView.swift in Sources */,
 				EF11E8389B1DD1A9392319FA /* PlanQuestionsView.swift in Sources */,
 				3117A664087082600FED670E /* PlanQuestions.swift in Sources */,
