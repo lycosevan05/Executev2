@@ -19,7 +19,8 @@ private struct TrackScreen: View {
             cache: environment.cache,
             realtimeService: environment.realtimeService,
             router: environment.router,
-            canWrite: { environment.appState.allowsDraftWrites(for: $0) }
+            canWrite: { environment.appState.allowsDraftWrites(for: $0) },
+            repository: environment.makeRecoveryRepository()
         ))
     }
 
@@ -40,6 +41,7 @@ private struct TrackScreen: View {
 struct TrackDashboardView: View {
     @ObservedObject var model: TrackViewModel
     @State private var selectedMetric: TrackMetric?
+    @State private var selectedCustom: CustomTrackerDefinition?
     @State private var isManagePresented = false
 
     private let columns = [
@@ -53,6 +55,9 @@ struct TrackDashboardView: View {
                 if let error = model.error {
                     TrackInlineError(error: error) { Task { await model.refresh() } }
                 }
+
+                TrackPendingCard(model: model)
+                ForEach(model.currentWarnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
 
                 TrackFoodSummaryCard(
                     caloriesConsumed: model.snapshot.dailyLog?.caloriesConsumed ?? 0,
@@ -74,12 +79,16 @@ struct TrackDashboardView: View {
                         .disabled(!model.canLog(metric))
                     }
 
+                    ForEach(model.visibleCustomTrackers) { item in
+                        TrackCustomCard(definition: item, value: model.customDisplay(item.id)) { selectedCustom = item }
+                            .disabled(!model.canLogCustom)
+                    }
                     TrackAddMetricCard { isManagePresented = true }
                 }
 
                 TrackCompletionCard(
                     completed: model.loggedMetricCount,
-                    total: model.visibleMetrics.count,
+                    total: model.visibleMetrics.count + model.visibleCustomTrackers.count,
                     progress: model.completionProgress
                 )
             }
@@ -114,6 +123,11 @@ struct TrackDashboardView: View {
                 units: model.unitSystem ?? .metric
             ) { entry in
                 Task { await model.save(entry, for: metric) }
+            }
+        }
+        .sheet(item: $selectedCustom) { item in
+            TrackCustomLogSheet(definition: item, value: model.customValue(item.id)) { value in
+                Task { await model.saveCustom(id: item.id, value: value) }
             }
         }
         .sheet(isPresented: $isManagePresented) {
@@ -219,14 +233,14 @@ private struct TrackFoodSummaryCard: View {
     }
 
     private var summary: String {
-        let eaten = Int(caloriesConsumed.rounded())
-        let burned = Int(caloriesBurned.rounded())
+        let eaten = caloriesConsumed.rounded()
+        let burned = caloriesBurned.rounded()
         if eaten > 0, burned > 0 {
             let net = eaten - burned
-            return "\(eaten) eaten · \(burned) burned · \(abs(net)) net \(net >= 0 ? "surplus" : "deficit")"
+            return "\(eaten.formatted()) eaten · \(burned.formatted()) burned · \(abs(net).formatted()) net \(net >= 0 ? "surplus" : "deficit")"
         }
-        if eaten > 0 { return "\(eaten) kcal eaten today" }
-        return "\(burned) kcal burned today"
+        if eaten > 0 { return "\(eaten.formatted()) kcal eaten today" }
+        return "\(burned.formatted()) kcal burned today"
     }
 }
 
@@ -421,8 +435,9 @@ private struct TrackManageMetricsSheet: View {
                         .tint(ExecuteColor.chartreuseDark)
                     }
                 } footer: {
-                    Text("Keep at least one tracking card active.")
+                    Text("Choose the cards to show. Hidden cards retain their saved values.")
                 }
+                TrackCustomManagement(model: model)
             }
             .scrollContentBackground(.hidden)
             .background(ExecuteColor.parchment)
@@ -450,10 +465,7 @@ private struct TrackLogSheet: View {
     @State private var selectedHabits: Set<String>
     @State private var weightInput: TrackWeightInput
 
-    private let habits = [
-        "Morning hydration", "No phone in bed", "Stretch 10min",
-        "Read 15min", "Cold shower", "Meditation"
-    ]
+    private let habits: [String]
 
     init(
         metric: TrackMetric,
@@ -464,6 +476,8 @@ private struct TrackLogSheet: View {
     ) {
         self.metric = metric
         self.save = save
+        let known = ["Morning hydration", "No phone in bed", "Stretch 10min", "Read 15min", "Cold shower", "Meditation"]
+        self.habits = known + currentHabits.filter { !known.contains($0) }
         let initial = metric.isAdditive ? metric.defaultEntry : currentValue ?? metric.defaultEntry
         let weight = TrackWeightInput(kilograms: initial, units: units)
         _weightInput = State(initialValue: weight)
@@ -504,7 +518,6 @@ private struct TrackLogSheet: View {
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(ExecuteFilledButtonStyle())
-                .disabled(metric == .habits && selectedHabits.isEmpty)
                 .padding(ExecuteSpacing.md)
             }
             .background(ExecuteColor.parchmentLight)
@@ -629,7 +642,8 @@ private struct TrackHistoryScreen: View {
             cache: environment.cache,
             realtimeService: nil,
             router: environment.router,
-            canWrite: { environment.appState.allowsDraftWrites(for: $0) }
+            canWrite: { environment.appState.allowsDraftWrites(for: $0) },
+            repository: environment.makeRecoveryRepository()
         ))
     }
 
@@ -637,6 +651,8 @@ private struct TrackHistoryScreen: View {
         Group {
             if model.isInitialLoading, model.snapshot.history.isEmpty {
                 ProgressView("Loading history…").tint(ExecuteColor.chartreuseDark)
+            } else if let error = model.error, model.snapshot.history.isEmpty {
+                TrackInlineError(error: error) { Task { await model.refresh() } }
             } else if model.snapshot.history.isEmpty {
                 ExecuteEmptyState(
                     title: "No tracking history yet",
@@ -646,8 +662,9 @@ private struct TrackHistoryScreen: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: ExecuteSpacing.sm) {
+                        if let error = model.error { TrackInlineError(error: error) { Task { await model.refresh() } } }
                         ForEach(model.snapshot.history) { entry in
-                            TrackHistoryCard(entry: entry, units: model.unitSystem ?? .metric)
+                            TrackHistoryCard(entry: entry, units: model.unitSystem ?? .metric, definitions: model.customTrackers)
                         }
                     }
                     .padding(ExecuteSpacing.md)
@@ -674,6 +691,7 @@ private struct TrackHistoryScreen: View {
 private struct TrackHistoryCard: View {
     let entry: TrackHistoryEntry
     let units: ProfileUnitSystem
+    let definitions: [CustomTrackerDefinition]
     private let columns = [GridItem(.adaptive(minimum: 92), spacing: ExecuteSpacing.xs)]
 
     var body: some View {
@@ -681,9 +699,20 @@ private struct TrackHistoryCard: View {
             Text(dateLabel)
                 .font(ExecuteTypography.label(13).weight(.bold))
                 .foregroundStyle(ExecuteColor.charcoal)
+            ForEach(entry.warnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
+            if !entry.log.hasTrackingData { Text("No recorded value · saved empty fields retained").font(.caption) }
             LazyVGrid(columns: columns, alignment: .leading, spacing: ExecuteSpacing.xs) {
-                if let eaten = entry.log.caloriesConsumed, eaten != 0 {
-                    TrackHistoryPill(symbol: "fork.knife", value: Int(eaten.rounded()).formatted(), unit: "kcal", tint: ExecuteColor.chartreuseDark)
+                if let eaten = entry.log.caloriesConsumed {
+                    TrackHistoryPill(symbol: "fork.knife", value: eaten.formatted(.number.precision(.fractionLength(0))), unit: "kcal", tint: ExecuteColor.chartreuseDark)
+                }
+                ForEach((entry.log.customData ?? [:]).keys.sorted(), id: \.self) { id in
+                    let definition = definitions.first { $0.id == id }
+                    VStack(alignment: .leading) {
+                        Text(definition?.label ?? id).font(.caption).bold()
+                        if let value = try? TrackPersistence.number(entry.log.customData?[id]) {
+                            Text("\(value.formatted()) \(definition?.unit ?? "")").font(.caption)
+                        } else { Text("No readable value · original preserved").font(.caption) }
+                    }
                 }
                 ForEach(TrackMetric.defaultOrder.filter(entry.log.isLogged)) { metric in
                     TrackHistoryPill(
@@ -721,7 +750,7 @@ private struct TrackHistoryCard: View {
         if metric == .weight { value = units.displayedWeight(kilograms: value) }
         switch metric {
         case .sleep, .water, .weight: return value.formatted(.number.precision(.fractionLength(1)))
-        case .steps, .caloriesBurned, .mood, .energy: return Int(value.rounded()).formatted()
+        case .steps, .caloriesBurned, .mood, .energy: return value.formatted(.number.precision(.fractionLength(0)))
         case .habits: return "\(entry.log.habitsCompleted?.count ?? 0)"
         }
     }

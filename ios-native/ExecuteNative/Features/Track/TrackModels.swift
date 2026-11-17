@@ -145,6 +145,7 @@ struct TrackDailyLog: Codable, Equatable, Sendable {
     var weightKg: Double?
     var energy: Double?
     var habitsCompleted: [String]?
+    var customData: [String: JSONValue]? = nil
 
     enum CodingKeys: String, CodingKey {
         case date, source, steps, mood, energy
@@ -156,6 +157,7 @@ struct TrackDailyLog: Codable, Equatable, Sendable {
         case waterLiters = "water_liters"
         case weightKg = "weight_kg"
         case habitsCompleted = "habits_completed"
+        case customData = "custom_data"
     }
 
     static func empty(
@@ -185,6 +187,7 @@ struct TrackDailyLog: Codable, Equatable, Sendable {
 struct TrackHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     let log: TrackDailyLog
+    var warnings: [String] = []
 }
 
 struct TrackSnapshot: Codable, Equatable, Sendable {
@@ -289,11 +292,11 @@ extension TrackDailyLog {
     }
 
     func isLogged(_ metric: TrackMetric) -> Bool {
-        if metric == .habits { return !(habitsCompleted ?? []).isEmpty }
-        return (numericValue(for: metric) ?? 0) != 0
+        if metric == .habits { return habitsCompleted != nil }
+        return numericValue(for: metric) != nil
     }
 
     var hasTrackingData: Bool {
-        TrackMetric.allCases.contains(where: isLogged) || (caloriesConsumed ?? 0) != 0
+        TrackMetric.allCases.contains(where: isLogged) || caloriesConsumed != nil || customData != nil
     }
 }
