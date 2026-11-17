@@ -11,7 +11,20 @@ struct HomeCustomizationSheet: View {
                 Section("Visible widgets") {
                     ForEach(model.widgetOrder) { widget in
                         HStack {
-                            Image(systemName: "line.3.horizontal").foregroundStyle(ExecuteColor.mist)
+                            Menu {
+                                Button("Move \(widget.title) up") { move(widget, down: false) }
+                                    .disabled(model.widgetOrder.first == widget)
+                                    .accessibilityIdentifier("home.customization.\(widget.rawValue).move-up")
+                                Button("Move \(widget.title) down") { move(widget, down: true) }
+                                    .disabled(model.widgetOrder.last == widget)
+                                    .accessibilityIdentifier("home.customization.\(widget.rawValue).move-down")
+                            } label: {
+                                Image(systemName: "line.3.horizontal")
+                                    .foregroundStyle(ExecuteColor.mist)
+                                    .frame(minWidth: 44, minHeight: 44)
+                            }
+                            .accessibilityLabel("Reorder \(widget.title)")
+                            .accessibilityIdentifier("home.customization.\(widget.rawValue).reorder")
                             Text(widget.title)
                             Spacer()
                             Toggle("", isOn: Binding(
@@ -19,6 +32,8 @@ struct HomeCustomizationSheet: View {
                                 set: { model.setWidget(widget, isVisible: $0) }
                             ))
                             .labelsHidden()
+                            .accessibilityLabel("Show \(widget.title)")
+                            .accessibilityIdentifier("home.customization.\(widget.rawValue).visible")
                             .tint(ExecuteColor.chartreuseDark)
                         }
                     }
@@ -32,6 +47,8 @@ struct HomeCustomizationSheet: View {
                                 get: { false },
                                 set: { model.setWidget(widget, isVisible: $0) }
                             ))
+                            .accessibilityLabel("Show \(widget.title)")
+                            .accessibilityIdentifier("home.customization.\(widget.rawValue).visible")
                             .tint(ExecuteColor.chartreuseDark)
                         }
                     }.disabled(model.customizationBusy || model.customizationIntent != nil)
@@ -78,6 +95,12 @@ struct HomeCustomizationSheet: View {
         .interactiveDismissDisabled(model.customizationBusy)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+    }
+
+    private func move(_ widget: HomeWidget, down: Bool) {
+        guard let index = model.widgetOrder.firstIndex(of: widget),
+              down ? index + 1 < model.widgetOrder.count : index > 0 else { return }
+        model.moveWidgets(from: IndexSet(integer: index), to: down ? index + 2 : index - 1)
     }
 }
 
