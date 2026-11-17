@@ -69,6 +69,13 @@ struct RecoveryDashboardView: View {
                     if let error = model.error {
                         ExecuteErrorState(error: error) { if let user { Task { await model.retry(user: user) } } }
                     }
+                    if model.hasUnreadableLimitationIntent, let user {
+                        Button("Discard unreadable local attempt and reload") {
+                            Task { await model.discardUnreadableLimitationIntent(user: user) }
+                        }
+                        .disabled(model.busy || model.loading)
+                        .accessibilityIdentifier("recovery.limitation.discardUnreadable")
+                    }
                     if model.loaded {
                         if let status = model.status { Text(status).font(.callout).foregroundStyle(ExecuteColor.chartreuseDark).accessibilityIdentifier("recovery.status") }
                         Group {

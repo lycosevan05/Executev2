@@ -29,6 +29,8 @@ final class RecoveryViewModel: ObservableObject {
     private struct LimitationIntent: Codable { let id: UUID?; let patch: JSONValue }
     private let defaults: UserDefaults
     private var pendingLimitation: LimitationIntent?
+    private var unreadableIntentOwner: UUID?
+    var hasUnreadableLimitationIntent: Bool { unreadableIntentOwner != nil }
     var hasPendingLimitation: Bool { pendingLimitation != nil }
     private func intentKey(_ user: ExecuteUser) -> String { "execute.cache.\(user.id.uuidString).recovery.limitation-intent" }
     private func valid(_ intent: LimitationIntent) -> Bool {
@@ -46,6 +48,14 @@ final class RecoveryViewModel: ObservableObject {
         let key = intentKey(user)
         if let pendingLimitation, let data = try? JSONEncoder().encode(pendingLimitation) { defaults.set(data, forKey: key) }
         else { defaults.removeObject(forKey: key) }
+    }
+    func discardUnreadableLimitationIntent(user: ExecuteUser) async {
+        guard !busy, !loading, unreadableIntentOwner == user.id,
+              let identity, identity.user.id == user.id,
+              (try? repository.validate(identity)) != nil else { return }
+        defaults.removeObject(forKey: intentKey(user))
+        unreadableIntentOwner = nil; pendingLimitation = nil
+        await load(user: user)
     }
     func closeLimitationAttempt() {
         guard !busy, loaded, let identity else { return }
@@ -115,7 +125,7 @@ final class RecoveryViewModel: ObservableObject {
     func stop() {
         generation = UUID(); guidanceGeneration = UUID(); identity = nil
         snapshot = RecoverySnapshot(); draft = RecoveryCheckIn(); loaded = false; loading = true
-        pendingLimitation = nil
+        pendingLimitation = nil; unreadableIntentOwner = nil
         busy = false; generating = false; saveNeedsRetry = false; contextNeedsRetry = false; error = nil; guidanceError = nil; status = nil; isEditing = true
     }
     private func current(_ request: UUID, _ identity: RecoveryIdentity) -> Bool {
@@ -135,6 +145,7 @@ final class RecoveryViewModel: ObservableObject {
         guard !busy else { return }
         if identity?.user.id != user.id { contextNeedsRetry = false; pendingLimitation = nil }
         let request = UUID(); generation = request; guidanceGeneration = UUID()
+        unreadableIntentOwner = nil
         loading = true; loaded = false; saveNeedsRetry = false; error = nil; guidanceError = nil; status = nil; generating = false
         // Clear an earlier account immediately; never retain old health data behind a spinner.
         snapshot = RecoverySnapshot(); draft = RecoveryCheckIn(); isEditing = true; tab = defaultTab
@@ -142,9 +153,14 @@ final class RecoveryViewModel: ObservableObject {
             let identity = try repository.identity(for: user)
             self.identity = identity
             if let data = defaults.data(forKey: intentKey(user)) {
-                let pending = try JSONDecoder().decode(LimitationIntent.self, from: data)
-                guard valid(pending) else { throw AppError(title: "Pending limitation needs review", message: "The saved local attempt could not be validated. No records were changed.") }
-                pendingLimitation = pending
+                do {
+                    let pending = try JSONDecoder().decode(LimitationIntent.self, from: data)
+                    guard valid(pending) else { throw CancellationError() }
+                    pendingLimitation = pending
+                } catch {
+                    unreadableIntentOwner = user.id
+                    throw AppError(title: "Pending limitation needs review", message: "The local attempt could not be read. Discard only this unreadable local attempt to reload saved records; server records are retained.")
+                }
             }
             let date = dateString
             let checkIns = try await repository.rows(.readinessCheckIns, fields: ["date": date], identity: identity)

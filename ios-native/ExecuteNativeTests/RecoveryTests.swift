@@ -662,3 +662,31 @@ extension RecoveryTests {
         XCTAssertEqual(repo.records[.dailyLogs]?.first?.data, unrelated.data)
     }
 }
+
+extension RecoveryTests {
+    func testUnreadableIntentCanOnlyBeDiscardedByItsCurrentOwner() async {
+        for corrupt in [Data("not JSON".utf8), Data("{\"id\":null,\"patch\":{\"native_limitation_mutation_id\":\"invalid\"}}".utf8)] {
+            let defaults = UserDefaults(suiteName: "RecoveryCorrupt.\(UUID())")!
+            let key = "execute.cache.\(user.id.uuidString).recovery.limitation-intent"
+            defaults.set(corrupt, forKey: key)
+            let other = ExecuteUser(id: UUID(), email: "other@example.invalid", displayName: "Other")
+            let otherKey = "execute.cache.\(other.id.uuidString).recovery.limitation-intent"
+            defaults.set(corrupt, forKey: otherKey)
+            let repo = RecoveryFixtureRepository()
+            let vm = RecoveryViewModel(repository: repo, ai: RecoveryFixtureAI(), cache: UserScopedCacheStore(suiteName: "RecoveryCorruptCache.\(UUID())"), date: noon, clock: { self.noon }, timeZone: utc, defaults: defaults)
+            await vm.load(user: user)
+            XCTAssertTrue(vm.hasUnreadableLimitationIntent); XCTAssertFalse(vm.loaded)
+            await vm.discardUnreadableLimitationIntent(user: other)
+            XCTAssertEqual(defaults.data(forKey: key), corrupt)
+            vm.stop()
+            await vm.discardUnreadableLimitationIntent(user: user)
+            XCTAssertEqual(defaults.data(forKey: key), corrupt)
+            await vm.load(user: user)
+            await vm.discardUnreadableLimitationIntent(user: user)
+            XCTAssertTrue(vm.loaded); XCTAssertFalse(vm.hasUnreadableLimitationIntent)
+            XCTAssertNil(defaults.data(forKey: key))
+            XCTAssertEqual(defaults.data(forKey: otherKey), corrupt)
+            XCTAssertEqual(repo.writes, 0)
+        }
+    }
+}
