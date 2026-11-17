@@ -75,8 +75,8 @@ struct TrackCustomManagement: View {
     @State private var unit = ""
     @State private var symbol = "pencil"
     @State private var message: String?
-    @State private var removing: CustomTrackerDefinition?
-    @State private var transferring = false
+    let onRemove: (CustomTrackerDefinition) -> Void
+    let onTransfer: () -> Void
     var body: some View {
         Section("Custom trackers") {
             if let settingsError = model.settingsError { Text(settingsError).foregroundStyle(.red) }
@@ -85,7 +85,7 @@ struct TrackCustomManagement: View {
                     Toggle(isOn: Binding(get: { !item.hidden }, set: { _ in model.toggleCustom(item.id) })) {
                         Label("\(item.label) · \(item.unit)", systemImage: item.symbol)
                     }
-                    Button("Remove \(item.label)", role: .destructive) { removing = item }.frame(minHeight: 44)
+                    Button("Remove \(item.label)", role: .destructive) { onRemove(item) }.frame(minHeight: 44)
                 }
             }
             TextField("Tracker name", text: $name)
@@ -98,17 +98,13 @@ struct TrackCustomManagement: View {
                 catch { message = error.localizedDescription }
             }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.settingsError != nil)
             if let message { Text(message).foregroundStyle(.red) }
-            Button("Import or export tracker definitions") { transferring = true }
+            Button("Import or export tracker definitions", action: onTransfer)
             Text("Definitions and visibility are saved on this device for \(model.accountLabel). Recorded values stay with your account.").font(.caption)
         }
-        .confirmationDialog("Remove this tracker from this device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
-            if let removing { Button("Remove \(removing.label)", role: .destructive) { model.removeCustom(removing.id); self.removing = nil } }
-        } message: { Text("Saved historical values are retained. Export definitions first if you want to restore the same tracker later.") }
-        .sheet(isPresented: $transferring) { TrackDefinitionTransfer(model: model) }
     }
 }
 
-private struct TrackDefinitionTransfer: View {
+struct TrackDefinitionTransfer: View {
     @ObservedObject var model: TrackViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""

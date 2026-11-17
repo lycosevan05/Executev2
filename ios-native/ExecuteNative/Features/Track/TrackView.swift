@@ -410,6 +410,8 @@ private struct TrackInlineError: View {
 private struct TrackManageMetricsSheet: View {
     @ObservedObject var model: TrackViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var removing: CustomTrackerDefinition?
+    @State private var transferring = false
 
     var body: some View {
         NavigationStack {
@@ -437,7 +439,7 @@ private struct TrackManageMetricsSheet: View {
                 } footer: {
                     Text("Choose the cards to show. Hidden cards retain their saved values.")
                 }
-                TrackCustomManagement(model: model)
+                TrackCustomManagement(model: model, onRemove: { removing = $0 }, onTransfer: { transferring = true })
             }
             .scrollContentBackground(.hidden)
             .background(ExecuteColor.parchment)
@@ -451,6 +453,17 @@ private struct TrackManageMetricsSheet: View {
                 }
             }
         }
+        .confirmationDialog("Remove this tracker from this device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
+            if let removing {
+                Button("Remove \(removing.label)", role: .destructive) {
+                    model.removeCustom(removing.id)
+                    self.removing = nil
+                }
+            }
+        } message: {
+            Text("Saved historical values are retained. Export definitions first if you want to restore the same tracker later.")
+        }
+        .sheet(isPresented: $transferring) { TrackDefinitionTransfer(model: model) }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
