@@ -180,7 +180,57 @@ final class PerformanceDestinationModel: ObservableObject {
         case progress(UUID, JSONValue, Double, String, String)
         case setStatus(UUID, JSONValue, String)
         case edit(UUID, JSONValue, JSONValue, String)
+
+        var valid: Bool {
+            func text(_ value: JSONValue?, max: Int, empty: Bool = false) -> Bool {
+                guard let string = value?.stringValue else { return false }
+                return string.count <= max && (empty || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            func number(_ value: JSONValue?, positive: Bool = false) -> Bool {
+                guard case .number(let n) = value, n.isFinite else { return false }
+                return positive ? n > 0 : n >= 0
+            }
+            func date(_ value: JSONValue?, optional: Bool) -> Bool {
+                if value == nil || value == .null { return optional }
+                return value?.stringValue.flatMap(DayPlanLogic.date) != nil
+            }
+            switch self {
+            case .create(let value, let token):
+                let allowed = Set(["title", "target_value", "start_value", "current_value", "target_direction", "unit", "category", "source", "status", "start_date", "native_mutation_id", "target_date", "metric_source", "metric_field", "target_mode", "cadence"])
+                guard let fields = value.objectValue, Set(fields.keys).isSubset(of: allowed), UUID(uuidString: token) != nil,
+                      value["native_mutation_id"] == .string(token), text(value["title"], max: 160), text(value["unit"], max: 40, empty: true),
+                      text(value["category"], max: 40), value["source"] == .string("manual"), value["status"] == .string("active"),
+                      number(value["target_value"]), number(value["start_value"]), value["current_value"] == value["start_value"],
+                      date(value["start_date"], optional: false), date(value["target_date"], optional: true),
+                      let target = value["target_value"]?.doubleValue, let start = value["start_value"]?.doubleValue else { return false }
+                let direction = value["target_direction"]?.stringValue
+                guard ["increase", "decrease", "complete_count"].contains(direction ?? ""), direction == "decrease" ? target < start : target > start else { return false }
+                if value["metric_source"] != nil || value["metric_field"] != nil {
+                    guard let metric = GoalActivityMetric.resolve(value), value["unit"] == .string(metric.unit),
+                          value["target_mode"] == .string(metric.recurring ? "recurring" : "absolute"),
+                          value["cadence"] == .string(metric == .workouts ? "weekly" : "daily") else { return false }
+                    return true
+                }
+                return value["target_mode"] == nil && value["cadence"] == nil
+            case .progress(_, let baseline, let value, let token, let day):
+                return baseline.objectValue != nil && number(baseline["target_value"]) && number(baseline["current_value"])
+                    && value.isFinite && value >= 0 && UUID(uuidString: token) != nil && DayPlanLogic.date(day) != nil
+            case .setStatus(_, let baseline, let status):
+                return baseline.objectValue != nil && ["active", "completed", "paused", "archived"].contains(status)
+            case .edit(_, let baseline, let patch, let token):
+                let allowed = Set(["title", "target_value", "target_date", "native_mutation_id", "unit", "status", "native_goal_user_edited"])
+                guard baseline.objectValue != nil, let fields = patch.objectValue, Set(fields.keys).isSubset(of: allowed),
+                      UUID(uuidString: token) != nil, patch["native_mutation_id"] == .string(token),
+                      text(patch["title"], max: 160), number(patch["target_value"], positive: true),
+                      patch["target_date"] != nil, date(patch["target_date"], optional: true),
+                      patch["unit"] == nil || text(patch["unit"], max: 40, empty: true),
+                      patch["native_goal_user_edited"] == nil || patch["native_goal_user_edited"] == .bool(true),
+                      patch["status"] == nil || ["active", "completed"].contains(patch["status"]?.stringValue ?? "") else { return false }
+                return true
+            }
+        }
     }
+    var canRetryPending: Bool { pending?.valid == true }
 
     init(destination: PerformanceDestination, data: EntityDataServicing?, cache: UserScopedCacheStore,
          defaults: UserDefaults = .standard, repository: RecoveryRepository? = nil, canWrite: @escaping (UUID) -> Bool = { _ in true }) {
@@ -195,9 +245,16 @@ final class PerformanceDestinationModel: ObservableObject {
             catch { self.error = AppError.from(error, title: "Goals need a current session"); isLoading = false; return }
         }
         if destination == .goals || { if case .progress = destination { return true }; return false }(),
-           let bytes = defaults.data(forKey: pendingKey(user.id)), let restored = try? JSONDecoder().decode(Pending.self, from: bytes) {
-            pending = restored; hasPendingWrite = true
-            writeError = AppError(title: "Finish your previous save", message: "A goal save needs acknowledgment. Retry the same attempt to check its saved value and trend entry.")
+           let bytes = defaults.data(forKey: pendingKey(user.id)) {
+            hasPendingWrite = true
+            if let restored = try? JSONDecoder().decode(Pending.self, from: bytes), restored.valid {
+                pending = restored
+                writeError = AppError(title: "Finish your previous save", message: "A goal save needs acknowledgment. Retry the same attempt to check its saved value and trend entry.")
+            } else {
+                writeError = Self.invalidPending()
+                isLoading = false
+                return
+            }
         }
         await refresh()
     }
@@ -214,7 +271,7 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func refresh() async {
-        guard !isSaving, !refreshing else { return }
+        guard !isSaving, !refreshing, !(hasPendingWrite && pending == nil) else { return }
         do { try bindCurrentSession() }
         catch { self.error = AppError.from(error, title: "Goals need a current session"); isLoading = false; return }
         guard let data, let loadingUser = user else { return }
@@ -279,7 +336,7 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func createGoal(title: String, target: String, unit: String, start: String, decreasing: Bool, tracking: GoalActivityMetric = .manual, targetDate: String = "", category: String = "performance") async {
-        guard !isSaving, pending == nil else { return }
+        guard !isSaving, pending == nil, !hasPendingWrite else { return }
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.count <= 160, unit.count <= 40,
               let targetValue = Double(target), targetValue.isFinite,
@@ -306,7 +363,7 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func logProgress(_ goal: EntityRecord<PerformanceGoal>, value: String, add: Bool) async {
-        guard !isSaving, pending == nil, goal.payload.status != "archived", goal.payload.status != "paused" else { return }
+        guard !isSaving, pending == nil, !hasPendingWrite, goal.payload.status != "archived", goal.payload.status != "paused" else { return }
         guard let number = Double(value), number.isFinite,
               let current = goal.payload.currentValue, let target = goal.payload.targetValue else {
             writeError = AppError(title: "Check the value", message: "Enter a finite number for a goal with a numeric target and current value."); return
@@ -321,14 +378,14 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func togglePause(_ goal: EntityRecord<PerformanceGoal>) async {
-        guard !isSaving, pending == nil, goal.payload.status != "archived" else { return }
+        guard !isSaving, pending == nil, !hasPendingWrite, goal.payload.status != "archived" else { return }
         let resumed = GoalActivityMetric.resolve(goal.metadata.data)?.recurring == true ? "active" : goal.payload.fraction == 1 ? "completed" : "active"
         pending = .setStatus(goal.id, goal.metadata.data, goal.payload.status == "paused" ? resumed : "paused")
         await retryWrite()
     }
 
     func editGoal(_ goal: EntityRecord<PerformanceGoal>, title: String, target: String, unit: String, targetDate: String) async {
-        guard !isSaving, pending == nil, goal.payload.status != "archived" else { return }
+        guard !isSaving, pending == nil, !hasPendingWrite, goal.payload.status != "archived" else { return }
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.count <= 160, unit.count <= 40,
               let target = Double(target), target.isFinite, target > 0,
@@ -353,13 +410,13 @@ final class PerformanceDestinationModel: ObservableObject {
     }
 
     func archiveGoal(_ goal: EntityRecord<PerformanceGoal>) async {
-        guard !isSaving, pending == nil else { return }
+        guard !isSaving, pending == nil, !hasPendingWrite else { return }
         pending = .setStatus(goal.id, goal.metadata.data, "archived")
         await retryWrite()
     }
 
     func restoreGoal(_ goal: EntityRecord<PerformanceGoal>) async {
-        guard !isSaving, pending == nil, goal.payload.status == "archived" else { return }
+        guard !isSaving, pending == nil, !hasPendingWrite, goal.payload.status == "archived" else { return }
         pending = .setStatus(goal.id, goal.metadata.data, "paused")
         await retryWrite()
     }
@@ -369,6 +426,7 @@ final class PerformanceDestinationModel: ObservableObject {
         do { try bindCurrentSession() }
         catch { writeError = AppError.from(error, title: "Goals need a current session"); return }
         guard let pending, let data, let user, canWrite(user.id) else { return }
+        guard pending.valid else { hasPendingWrite = true; writeError = Self.invalidPending(); return }
         let request = generation
         isSaving = true; hasPendingWrite = true; writeError = nil; status = nil
         defer { if request == generation { isSaving = false } }
@@ -383,7 +441,9 @@ final class PerformanceDestinationModel: ObservableObject {
             case .create(let payload, let token):
                 let matching = rows.filter { $0.payload["native_mutation_id"]?.stringValue == token }
                 guard matching.count <= 1 else { throw Self.changedGoal() }
-                if matching.isEmpty {
+                if let existing = matching.first {
+                    guard (payload.objectValue ?? [:]).allSatisfy({ existing.payload[$0.key] == $0.value }) else { throw Self.changedGoal() }
+                } else {
                     let _: EntityRecord<JSONValue> = try await data.create(.goals, payload: payload, user: user)
                 }
             case .edit(let id, let baseline, let patch, let token):
@@ -414,10 +474,13 @@ final class PerformanceDestinationModel: ObservableObject {
                 guard history.allSatisfy({ $0.ownerID == nil || $0.ownerID == user.id }) else { throw Self.changedGoal() }
                 let matching = history.filter { $0.payload["native_mutation_id"]?.stringValue == token }
                 guard matching.count <= 1 else { throw Self.changedGoal() }
-                if matching.isEmpty {
-                    let _: EntityRecord<JSONValue> = try await data.create(.goalProgressEntries, payload: JSONValue.object([
-                        "goal_id": .string(id.uuidString.lowercased()), "date": .string(date), "value": .number(value),
-                        "target_value_snapshot": baseline["target_value"] ?? .null, "source": .string("manual"), "native_mutation_id": .string(token)]), user: user)
+                let expected: JSONValue = .object([
+                    "goal_id": .string(id.uuidString.lowercased()), "date": .string(date), "value": .number(value),
+                    "target_value_snapshot": baseline["target_value"] ?? .null, "source": .string("manual"), "native_mutation_id": .string(token)])
+                if let existing = matching.first {
+                    guard (expected.objectValue ?? [:]).allSatisfy({ existing.payload[$0.key] == $0.value }) else { throw Self.changedGoal() }
+                } else {
+                    let _: EntityRecord<JSONValue> = try await data.create(.goalProgressEntries, payload: expected, user: user)
                 }
             }
             guard request == generation, !Task.isCancelled else { return }
@@ -438,6 +501,10 @@ final class PerformanceDestinationModel: ObservableObject {
         pending = nil; hasPendingWrite = false; writeError = nil
         if let user { defaults.removeObject(forKey: pendingKey(user.id)) }
         status = "Refresh to check the saved goal. A previously acknowledged value may already be saved."
+    }
+
+    private static func invalidPending() -> AppError {
+        AppError(title: "Saved goal attempt needs review", message: "The local pending attempt could not be verified. It was kept without writing or resuming automatic tracking. Discard only this local attempt, then refresh to inspect saved server values; discarding does not undo a server save.")
     }
 
     private static func changedGoal() -> AppError {

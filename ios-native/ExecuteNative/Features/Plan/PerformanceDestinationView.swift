@@ -38,11 +38,11 @@ private struct PerformanceScreen: View {
             VStack(alignment: .leading, spacing: ExecuteSpacing.md) {
                 if let error = model.error { ExecuteErrorState(error: error, retry: { Task { await model.refresh() } }) }
                 if let error = model.writeError {
-                    ExecuteErrorState(error: error, retry: model.hasPendingWrite ? { Task { await model.retryWrite() } } : nil)
+                    ExecuteErrorState(error: error, retry: model.canRetryPending ? { Task { await model.retryWrite() } } : nil)
                     if model.hasPendingWrite {
                         Text("A value may already be saved. Retry finishes this same attempt without adding another goal or trend entry.")
                             .font(ExecuteTypography.body(13))
-                        Button("Close attempt and refresh") { model.cancelPendingWrite(); Task { await model.refresh() } }
+                        Button("Discard local pending attempt and refresh") { model.cancelPendingWrite(); Task { await model.refresh() } }
                     }
                 }
                 if let status = model.status { Text(status).font(ExecuteTypography.body(13)).accessibilityIdentifier("performance.status") }

@@ -233,6 +233,69 @@ final class GoalsTests: XCTestCase {
         do { try await next.delete(.goals, id: UUID()); XCTFail("No destructive goal deletion") } catch {}
         XCTAssertEqual(repository.writes, 0)
     }
+
+    func testCorruptPendingStaysBlockedUntilExplicitLocalDiscard() async throws {
+        let data = GoalsData(), defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let key = "execute.cache.\(user.id.uuidString).goals.pending-write"
+        let broken = Data("not a valid attempt".utf8)
+        defaults.set(broken, forKey: key)
+        let model = model(data, defaults: defaults); await model.start(for: user)
+        XCTAssertTrue(model.hasPendingWrite); XCTAssertFalse(model.canRetryPending); XCTAssertNotNil(model.writeError)
+        await model.refresh()
+        await model.createGoal(title: "Blocked", target: "10", unit: "steps", start: "0", decreasing: false)
+        XCTAssertEqual(data.creates, 0); XCTAssertEqual(defaults.data(forKey: key), broken)
+        model.cancelPendingWrite()
+        XCTAssertNil(defaults.data(forKey: key)); XCTAssertFalse(model.hasPendingWrite)
+        await model.refresh(); XCTAssertNil(model.error)
+    }
+
+    func testMalformedRestoredEditCannotPatchUnapprovedFields() async throws {
+        let data = GoalsData(), defaults = UserDefaults(suiteName: UUID().uuidString)!
+        data.rows[.goals] = [goal()]
+        let first = model(data, defaults: defaults); await first.start(for: user)
+        data.loseWrite = true
+        await first.editGoal(try XCTUnwrap(first.goals.first), title: "Valid", target: "200", unit: "steps", targetDate: "")
+        let key = "execute.cache.\(user.id.uuidString).goals.pending-write"
+        let bytes = try XCTUnwrap(defaults.data(forKey: key))
+        var document = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        var edit = try XCTUnwrap(document["edit"] as? [String: Any])
+        var patch = try XCTUnwrap(edit["_2"] as? [String: Any])
+        patch["metric_source"] = "untrusted-replacement"
+        edit["_2"] = patch; document["edit"] = edit
+        let corrupted = try JSONSerialization.data(withJSONObject: document)
+        defaults.set(corrupted, forKey: key); first.stop()
+        let second = model(data, defaults: defaults); await second.start(for: user); await second.retryWrite()
+        XCTAssertFalse(second.canRetryPending); XCTAssertTrue(second.hasPendingWrite)
+        XCTAssertEqual(data.updates, 1); XCTAssertNil(data.rows[.goals]?.first?.data["metric_source"])
+        XCTAssertEqual(defaults.data(forKey: key), corrupted)
+    }
+
+    func testCreateReceiptMustMatchIntendedPayloadNotOnlyToken() async throws {
+        let data = GoalsData(), model = model(data); await model.start(for: user)
+        data.loseWrite = true
+        await model.createGoal(title: "Expected", target: "10", unit: "steps", start: "0", decreasing: false)
+        let row = try XCTUnwrap(data.rows[.goals]?.first)
+        var fields = row.data.objectValue!; fields["title"] = .string("Changed")
+        data.rows[.goals] = [GoalsData.row(fields, id: row.id, owner: user.id)]
+        await model.retryWrite()
+        XCTAssertTrue(model.hasPendingWrite); XCTAssertNotNil(model.writeError); XCTAssertEqual(data.creates, 1)
+    }
+
+    func testProgressReceiptMustMatchGoalDateAndValue() async throws {
+        let data = GoalsData(), model = model(data); data.rows[.goals] = [goal()]
+        await model.start(for: user)
+        data.loseWrite = true
+        await model.logProgress(try XCTUnwrap(model.goals.first), value: "3", add: false)
+        // First lost acknowledgment was the goal patch; the next is the history create.
+        data.loseWrite = true; await model.retryWrite()
+        let row = try XCTUnwrap(data.rows[.goalProgressEntries]?.first)
+        var fields = row.data.objectValue!; fields["value"] = .number(99)
+        data.rows[.goalProgressEntries] = [GoalsData.row(fields, id: row.id, owner: user.id)]
+        await model.retryWrite()
+        XCTAssertTrue(model.hasPendingWrite); XCTAssertNotNil(model.writeError)
+        XCTAssertEqual(data.creates, 1); XCTAssertEqual(data.rows[.goalProgressEntries]?.first?.data["value"], .number(99))
+    }
+
 }
 
 @MainActor
