@@ -186,8 +186,10 @@ import Supabase
         XCTAssertEqual(saved.data["checklist_total_count"], .number(4)); XCTAssertEqual(saved.data["checklist_completed_count"], .number(2))
         XCTAssertEqual(saved.data["checklist_adherence_pct"], .number(50))
         XCTAssertNil(model.checklistItems.first { $0.type == "workout" }?.completedAt)
-        // Use fresh saved completion, even though this caller still holds the old incomplete item.
-        await model.toggleChecklistItem(item)
+        // Uncomplete from the newly displayed state, not the pre-save item.
+        guard let completedItem = model.checklistItems.first(where: { $0.id == item.id }) else { XCTFail("Missing completed custom task"); return }
+        XCTAssertTrue(completedItem.completed)
+        await model.toggleChecklistItem(completedItem)
         let undone = repo.records[.dailyLogs]![0]
         for key in ["checklist_items", "planned_checklist_items"] {
             guard case .array(let tasks) = undone.data[key] else { XCTFail("Missing saved task array"); return }
@@ -195,6 +197,24 @@ import Supabase
             XCTAssertEqual(tasks[3]["completed"], .bool(false)); XCTAssertEqual(tasks[3]["status"], .string("pending")); XCTAssertNil(tasks[3]["completed_at"])
         }
         XCTAssertEqual(undone.data["plan_items_completed"], baseline.data["plan_items_completed"])
+    }
+    func testUncheckedStaleTaskCannotUndoConcurrentLegacyCompletion() async throws {
+        let repo = TrackFixtureRepository(user: user), definition = customDefinition(repo)
+        repo.records[.customChecklistItems] = [definition]
+        let model = await model(repo), unchecked = customCompletionItem(definition)
+        // Another client completes after Home rendered the unchecked task, using legacy status only.
+        var task = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(unchecked)).objectValue!
+        task.removeValue(forKey: "completed"); task["status"] = .string("completed")
+        task["completed_at"] = .string("other-client-time"); task["future"] = .string("keep")
+        let concurrent = repo.row(["date": .string(HomeDate.todayString), "checklist_items": .array([.object(task)]),
+            "planned_checklist_items": .array([.object(task)])])
+        repo.records[.dailyLogs] = [concurrent]
+        await model.toggleChecklistItem(unchecked)
+        XCTAssertEqual(repo.writes, 0); XCTAssertNil(model.customizationIntent)
+        XCTAssertNotNil(model.customizationError); XCTAssertEqual(repo.records[.dailyLogs]![0], concurrent)
+        let refreshed = try concurrent.data.decoded(as: HomeDailyLog.self)
+        XCTAssertEqual(refreshed.checklistItems?.first?.completed, true, "Legacy status must display the saved state after refresh")
+        XCTAssertEqual(refreshed.checklistItems?.first?.completedAt, "other-client-time")
     }
     func testExistingTargetKeepsOriginalMetadataAndMissingCompanionArray() throws {
         let date = HomeDate.todayString

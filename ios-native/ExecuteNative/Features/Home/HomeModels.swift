@@ -350,6 +350,7 @@ struct HomeChecklistItem: Codable, Identifiable, Sendable, Equatable {
 }
 
 extension HomeChecklistItem {
+    private enum LegacyCodingKeys: String, CodingKey { case status }
     // Shared web planning items have id/type/title/description/status. Native UI state is optional.
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -359,7 +360,8 @@ extension HomeChecklistItem {
         detail = try values.decodeIfPresent(String.self, forKey: .detail) ?? ""
         source = try values.decodeIfPresent(String.self, forKey: .source) ?? "plan"
         customItemID = try values.decodeIfPresent(UUID.self, forKey: .customItemID)
-        completed = try values.decodeIfPresent(Bool.self, forKey: .completed) ?? false
+        let legacyStatus = try? decoder.container(keyedBy: LegacyCodingKeys.self).decode(String.self, forKey: .status)
+        completed = (try values.decodeIfPresent(Bool.self, forKey: .completed) ?? false) || legacyStatus == "completed"
         completedAt = try values.decodeIfPresent(String.self, forKey: .completedAt)
     }
 }
@@ -642,7 +644,10 @@ enum HomeChecklistCompletion {
         let wasCompleted = completedIDs.contains { $0.stringValue?.lowercased() == target }
             || matching.contains { $0["completed"] == .bool(true) || $0["status"] == .string("completed") }
             || (item.type == "workout" && row?["workout_done"] == .bool(true))
-        let complete = !wasCompleted
+        guard wasCompleted == item.completed else {
+            throw TrackPersistence.invalid("This task's completion changed since it was displayed. Refresh before changing it again.")
+        }
+        let complete = !item.completed
         let savedID = matching.first?["id"]?.stringValue ?? item.id
         if complete {
             if !completedIDs.contains(where: { $0.stringValue?.lowercased() == target }) { completedIDs.append(.string(savedID)) }
