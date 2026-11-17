@@ -12,6 +12,17 @@ final class HomeViewModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var error: AppError?
     @Published var celebrationIsPresented = false
+    @Published private(set) var customizationBusy = false
+    @Published private(set) var customizationError: String?
+    @Published private(set) var customizationIntent: HomeCustomizationIntent?
+    @Published private(set) var customizationReviewed = false
+    @Published private(set) var customizationReviewSummary: String?
+    var isEditingLayout = false
+    private let customizationRepository: RecoveryRepository?
+    private var customizationReviewRow: BackendRow?
+    private var customizationStorageUnreadable = false
+    private var customizationRevision = UUID()
+    var customizationOwner: UUID? { user?.id }
 
     private let dataService: SupabaseDataService?
     private let cache: UserScopedCacheStore
@@ -36,7 +47,8 @@ final class HomeViewModel: ObservableObject {
         realtimeService: RealtimeSubscribing?,
         router: AppRouter,
         defaults: UserDefaults = .standard,
-        canTrackGoals: @escaping (UUID) -> Bool = { _ in false }
+        canTrackGoals: @escaping (UUID) -> Bool = { _ in false },
+        customizationRepository: RecoveryRepository? = nil
     ) {
         self.dataService = dataService
         self.cache = cache
@@ -44,6 +56,7 @@ final class HomeViewModel: ObservableObject {
         self.router = router
         self.canTrackGoals = canTrackGoals
         self.defaults = defaults
+        self.customizationRepository = customizationRepository
     }
 
     static func preview(name: String = "Alex") -> HomeViewModel {
@@ -117,6 +130,8 @@ final class HomeViewModel: ObservableObject {
         widgetOrder = HomeWidget.defaultOrder
         hiddenWidgets = []
         self.user = user
+        customizationBusy = false; customizationError = nil; customizationReviewed = false; customizationReviewSummary = nil
+        restoreCustomizationIntent(user.id)
         selectedVitals = Self.loadVitals(from: defaults, key: preferenceKey(vitalDefaultsKey, userID: user.id))
         hiddenChecklistDefaults = Set(defaults.stringArray(forKey: preferenceKey(checklistDefaultsKey, userID: user.id)) ?? [])
         hasStarted = true
@@ -128,12 +143,16 @@ final class HomeViewModel: ObservableObject {
     }
 
     func refresh() async {
+        guard !customizationBusy else { return }
         await reload(isRefresh: true)
+        await loadLayoutFromServer()
     }
 
     func stop() async {
         trackingGeneration = UUID()
         user = nil
+        customizationBusy = false; customizationError = nil; customizationIntent = nil; customizationReviewed = false
+        customizationReviewRow = nil; customizationReviewSummary = nil; customizationStorageUnreadable = false; isEditingLayout = false
         selectedVitals = HomeVital.defaults
         hiddenChecklistDefaults = []
         snapshot = .empty
@@ -256,6 +275,7 @@ final class HomeViewModel: ObservableObject {
     }
 
     func toggleVital(_ vital: HomeVital) {
+        if let user, (customizationRepository != nil || dataService != nil), !canTrackGoals(user.id) { return }
         if selectedVitals.contains(vital) {
             guard selectedVitals.count > 1 else { return }
             selectedVitals.removeAll { $0 == vital }
@@ -267,6 +287,8 @@ final class HomeViewModel: ObservableObject {
     }
 
     func setChecklistDefaultVisible(_ type: String, isVisible: Bool) {
+        if let user, (customizationRepository != nil || dataService != nil), !canTrackGoals(user.id) { return }
+        guard ["workout", "nutrition", "recovery"].contains(type) else { return }
         if isVisible { hiddenChecklistDefaults.remove(type) } else { hiddenChecklistDefaults.insert(type) }
         if let user { defaults.set(Array(hiddenChecklistDefaults), forKey: preferenceKey(checklistDefaultsKey, userID: user.id)) }
     }
@@ -321,45 +343,42 @@ final class HomeViewModel: ObservableObject {
         hiddenWidgets.removeAll()
     }
 
-    func saveLayout() async {
-        let persisted = PersistedHomeLayout(recordID: layoutRecordID, order: widgetOrder, hidden: Array(hiddenWidgets))
-        try? await cache.write(persisted, for: layoutKey)
-        guard let dataService, let user else { return }
-        do {
-            let payload = HomePageLayoutWrite(userID: user.id.uuidString, pageKey: "home", widgetOrder: widgetOrder.map(\.rawValue), hiddenWidgets: hiddenWidgets.map(\.rawValue))
-            if let layoutRecordID {
-                let _: EntityRecord<HomePageLayout> = try await dataService.update(.userPageLayouts, id: layoutRecordID, patch: .encoded(payload))
-            } else {
-                let record: EntityRecord<HomePageLayoutWrite> = try await dataService.create(.userPageLayouts, payload: payload, user: user)
-                layoutRecordID = record.id
+    @discardableResult func saveLayout() async -> Bool {
+        // Preview/injected local-only mode preserves the existing owner-bound cache behavior.
+        if customizationRepository == nil, dataService == nil, let user {
+            let request = trackingGeneration
+            do {
+                try await cache.write(PersistedHomeLayout(recordID: layoutRecordID, order: widgetOrder, hidden: Array(hiddenWidgets)), for: layoutKey, userID: user.id)
+                return request == trackingGeneration && self.user?.id == user.id
+            } catch { customizationError = "The local layout could not be saved."; return false }
+        }
+        return await performCustomization(kind: .layout) { row in
+            func retainingUnknown(_ key: String, known: [String]) throws -> JSONValue {
+                var unknown: [JSONValue] = []
+                if let raw = row?.data[key], raw != .null {
+                    guard case .array(let values) = raw, values.allSatisfy({ $0.stringValue != nil }) else { throw TrackPersistence.invalid("Saved layout fields need review before replacement.") }
+                    unknown = values.filter { $0.stringValue.flatMap(HomeWidget.init(rawValue:)) == nil }
+                }
+                return .array(known.map(JSONValue.string) + unknown)
             }
-        } catch {
-            self.error = AppError.from(error, title: "Could not save Home layout")
+            return .object(["page_key": .string("home"), "user_id": .string(self.user!.id.uuidString),
+                "widget_order": try retainingUnknown("widget_order", known: self.widgetOrder.map(\.rawValue)),
+                "hidden_widgets": try retainingUnknown("hidden_widgets", known: HomeWidget.defaultOrder.filter(self.hiddenWidgets.contains).map(\.rawValue))])
         }
     }
-
-    func addCustomChecklistItem(label: String, days: [Int], endsOn: String?) async {
-        guard let dataService, let user, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        do {
-            let payload = HomeCustomChecklistItemWrite(label: label.trimmingCharacters(in: .whitespacesAndNewlines), days: days, endsOn: endsOn, isActive: true)
-            let record: EntityRecord<HomeCustomChecklistItemWrite> = try await dataService.create(.customChecklistItems, payload: payload, user: user)
-            snapshot.customChecklistItems.append(HomeCustomChecklistItem(id: record.id, label: record.payload.label, days: record.payload.days, endsOn: record.payload.endsOn, isActive: record.payload.isActive))
-            await persistDashboard()
-        } catch {
-            self.error = AppError.from(error, title: "Could not add checklist item")
+    @discardableResult func addCustomChecklistItem(label: String, days: [Int], endsOn: String?) async -> Bool {
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, label.count <= 200, days.allSatisfy({ (0...6).contains($0) }),
+              endsOn == nil || (DayPlanLogic.date(endsOn!) != nil && endsOn! >= HomeDate.todayString) else {
+            customizationError = "Enter a name, valid weekdays and an end date today or later."; return false
+        }
+        return await performCustomization(kind: .addItem) { _ in
+            .object(["label": .string(label), "days": .array(Array(Set(days)).sorted().map { .number(Double($0)) }),
+                "endsOn": endsOn.map(JSONValue.string) ?? .null, "is_active": .bool(true)])
         }
     }
-
-    func deactivateCustomChecklistItem(_ item: HomeCustomChecklistItem) async {
-        guard let dataService else { return }
-        let id = item.id
-        snapshot.customChecklistItems.removeAll { $0.id == id }
-        do {
-            let _: EntityRecord<HomeCustomChecklistItemPayload> = try await dataService.update(.customChecklistItems, id: id, patch: .object(["is_active": .bool(false)]))
-            await persistDashboard()
-        } catch {
-            self.error = AppError.from(error, title: "Could not remove checklist item")
-        }
+    @discardableResult func deactivateCustomChecklistItem(_ item: HomeCustomChecklistItem) async -> Bool {
+        await performCustomization(kind: .removeItem, rowID: item.id) { _ in .object(["is_active": .bool(false)]) }
     }
 
     func openPlan() { router.select(.plan) }
@@ -384,6 +403,7 @@ final class HomeViewModel: ObservableObject {
         }
         let loadingUserID = user?.id
         let trackingRequest = trackingGeneration
+        let customizationReadRevision = customizationRevision
         isRefreshing = isRefresh
         error = nil
         let today = HomeDate.todayString
@@ -411,7 +431,8 @@ final class HomeViewModel: ObservableObject {
             async let customItems: [EntityRecord<HomeCustomChecklistItemPayload>] = dataService.list(.customChecklistItems, orderBy: "-updated_date", limit: 50)
 
             let (planRecords, profileRecords, nutritionRecords, readinessValues, dailyValues, foodValues, workoutValues, mealValues, goalValues, customValues) = try await (plans, profiles, nutritionProfiles, readinessRecords, dailyLogs, foodLogs, workouts, meals, goals, customItems)
-            guard loadingUserID == user?.id else { return }
+            guard loadingUserID == user?.id, trackingRequest == trackingGeneration else { return }
+            guard customizationReadRevision == customizationRevision else { isRefreshing = false; return }
             let activePlan = selectActivePlan(planRecords)
             let overviewDay = activePlan?.payload.resolvedWeeklyOverview?.days?.first { $0.date == today }
             let dailyRecord = dailyValues.first { $0.payload.date == today }
@@ -434,17 +455,20 @@ final class HomeViewModel: ObservableObject {
             )
             await persistDashboard()
         } catch {
+            guard trackingRequest == trackingGeneration, loadingUserID == user?.id, customizationReadRevision == customizationRevision else { return }
             if snapshot.activePlan == nil && snapshot.dailyLog == nil && snapshot.userProfile == nil {
                 self.error = AppError.from(error, title: "Couldn't load your dashboard")
             }
         }
+        guard trackingRequest == trackingGeneration, loadingUserID == user?.id else { return }
         isInitialLoading = false
         isRefreshing = false
     }
 
     private func restoreCachedDashboard() async {
-        let request = trackingGeneration, owner = user?.id
-        let cached = await cache.read(dashboardKey, as: HomeDashboardSnapshot.self)
+        let request = trackingGeneration
+        guard let owner = user?.id else { return }
+        let cached = await cache.read(dashboardKey, as: HomeDashboardSnapshot.self, userID: owner)
         guard request == trackingGeneration, owner == user?.id else { return }
         switch cached {
         case .fresh(let cached), .stale(let cached): snapshot = cached
@@ -453,12 +477,14 @@ final class HomeViewModel: ObservableObject {
     }
 
     private func persistDashboard() async {
-        try? await cache.write(snapshot, for: dashboardKey, ttl: 300)
+        guard let owner = user?.id else { return }
+        try? await cache.write(snapshot, for: dashboardKey, userID: owner, ttl: 300)
     }
 
     private func restoreCachedLayout() async {
-        let request = trackingGeneration, owner = user?.id
-        let cached = await cache.read(layoutKey, as: PersistedHomeLayout.self)
+        let request = trackingGeneration
+        guard let owner = user?.id else { return }
+        let cached = await cache.read(layoutKey, as: PersistedHomeLayout.self, userID: owner)
         guard request == trackingGeneration, owner == user?.id else { return }
         switch cached {
         case .fresh(let cached), .stale(let cached): apply(layout: cached)
@@ -467,19 +493,25 @@ final class HomeViewModel: ObservableObject {
     }
 
     private func loadLayoutFromServer() async {
-        guard let dataService else { return }
-        let loadingUserID = user?.id
+        guard let repository = customizationRepository, let user, canTrackGoals(user.id), !customizationBusy else { return }
+        let request = trackingGeneration
         do {
-            let records: [EntityRecord<HomePageLayout>] = try await dataService.list(.userPageLayouts, orderBy: "-updated_date", limit: 20)
-            guard loadingUserID == user?.id else { return }
-            guard let record = records.first(where: { $0.payload.pageKey == "home" }) else { return }
-            let parsedOrder = (record.payload.widgetOrder ?? []).compactMap(HomeWidget.init(rawValue:))
-            let parsedHidden = (record.payload.hiddenWidgets ?? []).compactMap(HomeWidget.init(rawValue:))
-            let layout = PersistedHomeLayout(recordID: record.id, order: mergedOrder(saved: parsedOrder, hidden: Set(parsedHidden)), hidden: parsedHidden)
-            apply(layout: layout)
-            try? await cache.write(layout, for: layoutKey)
+            let identity = try repository.identity(for: user)
+            let layouts = try await customizationRows(.userPageLayouts, request: request, identity: identity)
+            let rows = try await customizationRows(.customChecklistItems, request: request, identity: identity)
+            let layout = try customizationLayout(layouts, user: user)
+            if !isEditingLayout, let layout { try await acceptCustomizationRow(layout, kind: .layout, request: request, identity: identity) }
+            snapshot.customChecklistItems = try rows.filter { $0.data["is_active"] != .bool(false) }.map(customizationItem)
+            if let intent = customizationIntent {
+                let candidates = intent.table == .userPageLayouts ? layouts : rows
+                let receipts = candidates.filter(intent.acknowledged)
+                guard receipts.count <= 1 else { throw TrackPersistence.invalid("Multiple save receipts need review; records were preserved.") }
+                if let saved = receipts.first { try await finishCustomization(saved, intent: intent, request: request, identity: identity) }
+            }
+            await persistDashboard()
         } catch {
-            // The local layout remains available if the profile request is offline.
+            guard request == trackingGeneration, self.user?.id == user.id else { return }
+            customizationError = (error as? AppError)?.message ?? "Customization could not refresh. Saved records were preserved."
         }
     }
 
@@ -501,7 +533,7 @@ final class HomeViewModel: ObservableObject {
         let tables: [EntityTable] = [.dailyLogs, .foodLogs, .readinessCheckIns, .aiPlans, .mealPlans, .workoutPlans, .workoutLogs, .goals, .customChecklistItems, .userProfiles, .nutritionProfiles, .userPageLayouts]
         for table in tables {
             if let subscription = try? await realtimeService.subscribe(to: table, onChange: { [weak self] _ in
-                Task { await self?.reload() }
+                Task { await self?.refresh() }
             }) {
                 subscriptions.append(subscription)
             }
@@ -581,38 +613,11 @@ private struct PersistedHomeLayout: Codable, Sendable {
     let hidden: [HomeWidget]
 }
 
-private struct HomePageLayoutWrite: Codable, Sendable {
-    let userID: String
-    let pageKey: String
-    let widgetOrder: [String]
-    let hiddenWidgets: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case userID = "user_id"
-        case pageKey = "page_key"
-        case widgetOrder = "widget_order"
-        case hiddenWidgets = "hidden_widgets"
-    }
-}
-
 private struct HomeCustomChecklistItemPayload: Codable, Sendable {
     let label: String?
     let days: [Int]?
     let endsOn: String?
     let isActive: Bool?
-
-    enum CodingKeys: String, CodingKey {
-        case label, days
-        case endsOn = "endsOn"
-        case isActive = "is_active"
-    }
-}
-
-private struct HomeCustomChecklistItemWrite: Codable, Sendable {
-    let label: String
-    let days: [Int]
-    let endsOn: String?
-    let isActive: Bool
 
     enum CodingKeys: String, CodingKey {
         case label, days
@@ -627,5 +632,167 @@ private extension JSONValue {
             return .null
         }
         return json
+    }
+}
+
+private extension HomeViewModel {
+    func customizationCheck(_ request: UUID, identity: RecoveryIdentity) throws {
+        guard request == trackingGeneration, user?.id == identity.user.id, canTrackGoals(identity.user.id), !Task.isCancelled,
+              let repository = customizationRepository else { throw CancellationError() }
+        try repository.validate(identity)
+    }
+    func customizationRows(_ table: EntityTable, request: UUID, identity: RecoveryIdentity) async throws -> [BackendRow] {
+        try customizationCheck(request, identity: identity)
+        let rows = try await customizationRepository!.rows(table, fields: [:], identity: identity)
+        try customizationCheck(request, identity: identity)
+        guard rows.allSatisfy({ NutritionWeekSelection.owned($0, by: identity.user) }) else {
+            throw TrackPersistence.invalid("Records belonging to another account were preserved. Refresh the correct account.")
+        }
+        return rows
+    }
+    func customizationLayout(_ rows: [BackendRow], user: ExecuteUser) throws -> BackendRow? {
+        let matching = rows.filter { $0.data["page_key"] == .string("home") }
+        guard matching.count <= 1 else { throw TrackPersistence.invalid("More than one Home layout exists. Both were preserved for review.") }
+        if let row = matching.first, let owner = row.data["user_id"], owner != .null {
+            guard owner.stringValue.flatMap(UUID.init(uuidString:)) == user.id else { throw TrackPersistence.invalid("The Home layout has conflicting ownership and was preserved.") }
+        }
+        return matching.first
+    }
+    func customizationItem(_ row: BackendRow) throws -> HomeCustomChecklistItem {
+        let value = try row.data.decoded(as: HomeCustomChecklistItemPayload.self)
+        return HomeCustomChecklistItem(id: row.id, label: value.label, days: value.days, endsOn: value.endsOn, isActive: value.isActive)
+    }
+    func customizationCurrent(_ intent: HomeCustomizationIntent, rows: [BackendRow], user: ExecuteUser) throws -> BackendRow? {
+        let receipts = rows.filter(intent.acknowledged)
+        guard receipts.count <= 1 else { throw TrackPersistence.invalid("Multiple records acknowledge this change. They were preserved for review.") }
+        if let receipt = receipts.first { return receipt }
+        if intent.kind == .layout { return try customizationLayout(rows, user: user) }
+        if let id = intent.rowID { return rows.first { $0.id == id } }
+        return nil
+    }
+    func restoreCustomizationIntent(_ owner: UUID) {
+        customizationIntent = nil; customizationStorageUnreadable = false
+        guard let bytes = defaults.data(forKey: HomeCustomizationIntent.key(owner)) else { return }
+        guard let intent = try? JSONDecoder().decode(HomeCustomizationIntent.self, from: bytes), intent.owner == owner,
+              intent.values.objectValue != nil, intent.original.objectValue != nil else {
+            customizationStorageUnreadable = true; customizationError = "A pending customization could not be read. It was preserved for review."; return
+        }
+        customizationIntent = intent
+    }
+    func performCustomization(kind: HomeCustomizationIntent.Kind, rowID: UUID? = nil, values: (BackendRow?) throws -> JSONValue) async -> Bool {
+        guard !customizationBusy, !customizationStorageUnreadable, customizationIntent == nil,
+              let user, canTrackGoals(user.id), let repository = customizationRepository else {
+            customizationError = "Refresh your account or resolve the pending customization before saving another change."; return false
+        }
+        let request = trackingGeneration
+        customizationBusy = true; customizationError = nil; customizationReviewed = false; customizationRevision = UUID()
+        defer { if request == trackingGeneration { customizationBusy = false } }
+        do {
+            let identity = try repository.identity(for: user)
+            let table: EntityTable = kind == .layout ? .userPageLayouts : .customChecklistItems
+            let rows = try await customizationRows(table, request: request, identity: identity)
+            let row: BackendRow?
+            if kind == .layout { row = try customizationLayout(rows, user: user) }
+            else if let rowID {
+                guard let existing = rows.first(where: { $0.id == rowID }) else { throw TrackPersistence.invalid("The custom item changed or is no longer available. Refresh it before removing it.") }
+                row = existing
+            } else { row = nil }
+            let patch = try values(row)
+            let original = JSONValue.object(Dictionary(uniqueKeysWithValues: (patch.objectValue ?? [:]).keys.map { ($0, row?.data[$0] ?? .null) }))
+            let intent = HomeCustomizationIntent(owner: user.id, token: UUID(), kind: kind, rowID: row?.id, original: original, values: patch)
+            let bytes = try JSONEncoder().encode(intent)
+            defaults.set(bytes, forKey: HomeCustomizationIntent.key(user.id))
+            guard defaults.data(forKey: HomeCustomizationIntent.key(user.id)) == bytes else { throw TrackPersistence.invalid("The pending customization could not be saved safely.") }
+            customizationIntent = intent
+            try await submitCustomization(intent, request: request, identity: identity)
+            return true
+        } catch { customizationFailure(error, request: request); return false }
+    }
+    func submitCustomization(_ intent: HomeCustomizationIntent, request: UUID, identity: RecoveryIdentity) async throws {
+        let rows = try await customizationRows(intent.table, request: request, identity: identity)
+        let current = try customizationCurrent(intent, rows: rows, user: identity.user)
+        if let current, intent.acknowledged(current) { try await finishCustomization(current, intent: intent, request: request, identity: identity); return }
+        guard current?.id == intent.rowID, (intent.original.objectValue ?? [:]).allSatisfy({ (current?.data[$0.key] ?? .null) == $0.value }) else {
+            throw TrackPersistence.invalid("Saved customization changed elsewhere. Review the pending change; it was not applied again.")
+        }
+        try customizationCheck(request, identity: identity)
+        let saved = try await customizationRepository!.write(intent.table, id: intent.rowID, patch: intent.patch, identity: identity)
+        try customizationCheck(request, identity: identity)
+        guard NutritionWeekSelection.owned(saved, by: identity.user), intent.acknowledged(saved) else {
+            throw TrackPersistence.invalid("The save acknowledgement was incomplete. Check the saved change before trying again.")
+        }
+        try await finishCustomization(saved, intent: intent, request: request, identity: identity)
+    }
+    func acceptCustomizationRow(_ row: BackendRow, kind: HomeCustomizationIntent.Kind, request: UUID, identity: RecoveryIdentity) async throws {
+        try customizationCheck(request, identity: identity)
+        if kind == .layout {
+            let value = try row.data.decoded(as: HomePageLayout.self)
+            let order = (value.widgetOrder ?? []).compactMap(HomeWidget.init(rawValue:))
+            let hidden = (value.hiddenWidgets ?? []).compactMap(HomeWidget.init(rawValue:))
+            let layout = PersistedHomeLayout(recordID: row.id, order: mergedOrder(saved: order, hidden: Set(hidden)), hidden: hidden)
+            apply(layout: layout)
+            try await cache.write(layout, for: layoutKey, userID: identity.user.id)
+            try customizationCheck(request, identity: identity)
+        } else {
+            let item = try customizationItem(row)
+            snapshot.customChecklistItems.removeAll { $0.id == item.id }
+            if item.isActive != false { snapshot.customChecklistItems.append(item) }
+            await persistDashboard()
+            try customizationCheck(request, identity: identity)
+        }
+    }
+    func finishCustomization(_ row: BackendRow, intent: HomeCustomizationIntent, request: UUID, identity: RecoveryIdentity) async throws {
+        guard customizationIntent?.token == intent.token else { throw CancellationError() }
+        try await acceptCustomizationRow(row, kind: intent.kind, request: request, identity: identity)
+        try customizationCheck(request, identity: identity)
+        defaults.removeObject(forKey: HomeCustomizationIntent.key(intent.owner)); customizationIntent = nil
+        customizationReviewed = false; customizationReviewSummary = nil; customizationError = nil
+    }
+    func customizationFailure(_ failure: Error, request: UUID) {
+        guard request == trackingGeneration else { return }
+        customizationError = (failure as? AppError)?.message ?? "Customization was not confirmed. Refresh and check the saved change before retrying."
+    }
+}
+
+extension HomeViewModel {
+    func retryCustomization() async {
+        guard !customizationBusy, let intent = customizationIntent, let user, let repository = customizationRepository else { return }
+        let request = trackingGeneration; customizationBusy = true; customizationError = nil; customizationRevision = UUID()
+        defer { if request == trackingGeneration { customizationBusy = false } }
+        do { let identity = try repository.identity(for: user); try await submitCustomization(intent, request: request, identity: identity) }
+        catch { customizationFailure(error, request: request) }
+    }
+    func reviewCustomization() async {
+        guard !customizationBusy, let intent = customizationIntent, let user, let repository = customizationRepository else { return }
+        let request = trackingGeneration; customizationBusy = true; customizationReviewed = false; customizationError = nil
+        defer { if request == trackingGeneration { customizationBusy = false } }
+        do {
+            let identity = try repository.identity(for: user)
+            let rows = try await customizationRows(intent.table, request: request, identity: identity)
+            let row = try customizationCurrent(intent, rows: rows, user: user)
+            if let row, intent.acknowledged(row) { try await finishCustomization(row, intent: intent, request: request, identity: identity); return }
+            customizationReviewRow = row; customizationReviewed = true
+            let current = JSONValue.object(Dictionary(uniqueKeysWithValues: (intent.values.objectValue ?? [:]).keys.map { ($0, row?.data[$0] ?? .null) }))
+            func display(_ value: JSONValue) -> String { String(data: (try? JSONEncoder().encode(value)) ?? Data(), encoding: .utf8) ?? "unavailable" }
+            customizationReviewSummary = "Saved: \(display(current))\nPending: \(display(intent.values))"
+        } catch { customizationFailure(error, request: request) }
+    }
+    func keepReviewedCustomization() async {
+        guard !customizationBusy, customizationReviewed, let intent = customizationIntent, let user, let repository = customizationRepository else { return }
+        let request = trackingGeneration; customizationBusy = true
+        defer { if request == trackingGeneration { customizationBusy = false } }
+        do {
+            let identity = try repository.identity(for: user)
+            let rows = try await customizationRows(intent.table, request: request, identity: identity)
+            let row = try customizationCurrent(intent, rows: rows, user: user)
+            if let row, intent.acknowledged(row) { try await finishCustomization(row, intent: intent, request: request, identity: identity); return }
+            guard row?.id == customizationReviewRow?.id, row?.data == customizationReviewRow?.data else {
+                customizationReviewed = false; throw TrackPersistence.invalid("Saved data changed after review. Check it again before discarding the local change.")
+            }
+            try customizationCheck(request, identity: identity)
+            if let row { try await acceptCustomizationRow(row, kind: intent.kind, request: request, identity: identity) }
+            defaults.removeObject(forKey: HomeCustomizationIntent.key(user.id)); customizationIntent = nil
+            customizationReviewed = false; customizationReviewSummary = nil; customizationError = nil
+        } catch { customizationFailure(error, request: request) }
     }
 }

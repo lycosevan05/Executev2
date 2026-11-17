@@ -580,3 +580,25 @@ enum DailyActivityChecklist {
         if case .array(let items) = value { return items }; return []
     }
 }
+
+/// One durable, owner-bound customization action. Receipts distinguish an acknowledged save from a safe retry.
+struct HomeCustomizationIntent: Codable, Equatable {
+    enum Kind: String, Codable { case layout, addItem, removeItem }
+    let owner: UUID
+    let token: UUID
+    let kind: Kind
+    let rowID: UUID?
+    let original: JSONValue
+    let values: JSONValue
+    var table: EntityTable { kind == .layout ? .userPageLayouts : .customChecklistItems }
+    var patch: JSONValue {
+        var result = values.objectValue ?? [:]
+        result["native_home_mutation_id"] = .string(token.uuidString)
+        return .object(result)
+    }
+    func acknowledged(_ row: BackendRow) -> Bool {
+        (rowID == nil || rowID == row.id) && row.data["native_home_mutation_id"] == .string(token.uuidString)
+            && (values.objectValue ?? [:]).allSatisfy { row.data[$0.key] == $0.value }
+    }
+    static func key(_ owner: UUID) -> String { "execute.cache.\(owner.uuidString).home.customization-pending" }
+}

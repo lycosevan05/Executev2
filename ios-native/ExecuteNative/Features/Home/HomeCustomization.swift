@@ -7,6 +7,7 @@ struct HomeCustomizationSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                HomeCustomizationStatus(model: model)
                 Section("Visible widgets") {
                     ForEach(model.widgetOrder) { widget in
                         HStack {
@@ -62,15 +63,18 @@ struct HomeCustomizationSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         Task {
-                            await model.saveLayout()
-                            dismiss()
+                            if await model.saveLayout() { dismiss() }
                         }
                     }
                     .font(ExecuteTypography.label(15).weight(.bold))
                     .foregroundStyle(ExecuteColor.chartreuseDark)
+                    .disabled(model.customizationBusy || model.customizationIntent != nil)
                 }
             }
+            .onAppear { model.isEditingLayout = true }
+            .onDisappear { model.isEditingLayout = false }
         }
+        .interactiveDismissDisabled(model.customizationBusy)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
@@ -88,6 +92,7 @@ struct HomeChecklistCustomizationSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                HomeCustomizationStatus(model: model)
                 Section("Default items") {
                     checklistToggle("workout", title: "Today's Workout")
                     checklistToggle("nutrition", title: "Nutrition Plan")
@@ -102,6 +107,8 @@ struct HomeChecklistCustomizationSheet: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(item.label ?? "Custom item")
                                 Text(itemSchedule(item)).font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.mist)
+                                Button("Remove item", role: .destructive) { Task { await model.deactivateCustomChecklistItem(item) } }
+                                    .frame(minHeight: 44).disabled(model.customizationBusy || model.customizationIntent != nil)
                             }
                             .swipeActions {
                                 Button(role: .destructive) { Task { await model.deactivateCustomChecklistItem(item) } } label: {
@@ -121,13 +128,13 @@ struct HomeChecklistCustomizationSheet: View {
                         TextField("e.g. Take a 20-min walk", text: $label)
                         VStack(alignment: .leading, spacing: ExecuteSpacing.xs) {
                             Text("Active on").font(ExecuteTypography.caption(11)).foregroundStyle(ExecuteColor.mist)
-                            HStack(spacing: 5) {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 5)], spacing: 5) {
                                 ForEach(Array(dayLabels.enumerated()), id: \.offset) { index, day in
                                     Button(day) {
                                         if selectedDays.contains(index) { selectedDays.remove(index) } else { selectedDays.insert(index) }
                                     }
                                     .font(ExecuteTypography.caption(10).weight(.bold))
-                                    .frame(width: 34, height: 34)
+                                    .frame(minWidth: 44, minHeight: 44)
                                     .background(selectedDays.contains(index) ? ExecuteColor.chartreuse : ExecuteColor.parchmentLight)
                                     .foregroundStyle(selectedDays.contains(index) ? ExecuteColor.charcoal : ExecuteColor.olive)
                                     .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
@@ -138,22 +145,25 @@ struct HomeChecklistCustomizationSheet: View {
                             ForEach(ChecklistRecurrence.allCases) { option in Text(option.title).tag(option) }
                         }
                         if recurrence == .custom {
-                            DatePicker("End date", selection: $customEndDate, displayedComponents: .date)
+                            DatePicker("End date", selection: $customEndDate, in: Date()..., displayedComponents: .date)
                         }
                         Button("Add item") {
                             let endDate = recurrence.endDate(custom: customEndDate)
-                            Task { await model.addCustomChecklistItem(label: label, days: selectedDays.sorted(), endsOn: endDate) }
-                            label = ""
-                            selectedDays = Set(0...6)
-                            recurrence = .forever
-                            isAddingItem = false
+                            Task {
+                                if await model.addCustomChecklistItem(label: label, days: selectedDays.sorted(), endsOn: endDate) {
+                                    label = ""; selectedDays = Set(0...6); recurrence = .forever; isAddingItem = false
+                                }
+                            }
                         }
-                        .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.customizationBusy || model.customizationIntent != nil)
                     }
                 }
             }
             .scrollContentBackground(.hidden)
             .background(ExecuteColor.parchment)
+            .onChange(of: model.customizationOwner) { _ in
+                label = ""; selectedDays = Set(0...6); recurrence = .forever; isAddingItem = false
+            }
             .navigationTitle("Customize Checklist")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -305,5 +315,29 @@ private enum ChecklistRecurrence: String, CaseIterable, Identifiable {
         formatter.timeZone = .current
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
+    }
+}
+
+
+private struct HomeCustomizationStatus: View {
+    @ObservedObject var model: HomeViewModel
+    var body: some View {
+        if model.customizationBusy || model.customizationError != nil || model.customizationIntent != nil {
+            Section("Save status") {
+                if model.customizationBusy { ProgressView("Saving…") }
+                if let message = model.customizationError { Text(message).font(.callout).foregroundStyle(.red) }
+                if model.customizationIntent != nil {
+                    Text("A change is awaiting confirmation. Check it before adding another item or saving a different layout.").font(.callout)
+                    if let summary = model.customizationReviewSummary { Text(summary).font(.caption).textSelection(.enabled) }
+                    Button("Check saved change") { Task { await model.reviewCustomization() } }
+                    Button("Retry pending change") { Task { await model.retryCustomization() } }
+                    if model.customizationReviewed {
+                        Button("Keep saved data and discard pending change", role: .destructive) { Task { await model.keepReviewedCustomization() } }
+                    }
+                } else if model.customizationError != nil {
+                    Button("Refresh customization") { Task { await model.refresh() } }
+                }
+            }.disabled(model.customizationBusy)
+        }
     }
 }
