@@ -2,9 +2,9 @@
 
 Execute is now wired to Supabase for auth, data, storage, realtime updates, and Edge Functions. AI calls are routed through a Supabase Edge Function that uses `OPENAI_API_KEY` server-side.
 
-## Native migration completion — 2026-11-15
+## Native migration completion — 2026-11-16
 
-The [authoritative completion checklist](docs/native-parity-audit.md) fixes the retained native scope at **45 required workflows: 27 functionally accepted, 18 open, plus 9 separate release gates**. Workflow counts are distinct from fixture-test counts; do not use rough migration percentages. It replaces old missing-destination/platform-blocked audit summaries and separates implementation, fixtures, live simulator/provider/database and physical acceptance. Use standalone `ios-native`.
+The [authoritative completion checklist](docs/native-parity-audit.md) fixes the retained native scope at **45 required workflows: 28 functionally accepted, 17 open, plus 9 separate release gates**. Workflow counts are distinct from fixture-test counts; do not use rough migration percentages. W45 non-Home customization disposition is accepted: Insights layout controls were not connected to rendering, while functional Profile preference panels remain native. Current mutation workflows are implemented and undergoing consolidated live/persistence acceptance E24. The checklist replaces old missing-destination/platform-blocked audit summaries and separates implementation, fixtures, live simulator/provider/database and physical acceptance. Use standalone `ios-native`.
 
 The canonical chronological progress record is the [Execute Document](https://docs.google.com/spreadsheets/d/1_OzvTKdgPQoWczXRffeqoZuHOj5Nh2tlQ1xYuJYecLY/edit), maintained by a separate agent from verified milestone evidence. Update the checklist, checkpoint and evidence after coherent milestones. Report accepted workflows, remaining rows, critical path and next concrete action.
 

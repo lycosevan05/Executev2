@@ -505,3 +505,8 @@ Text-food estimates are scoped to request generation, account identity and selec
 Home visible-vitals/default-checklist settings use the deletion-purge-compatible owner prefix; unowned global legacy values remain preserved without attribution. Account boundaries reset dashboard/layout identity and state, and cached restoration checks the current request/owner. Profile shows active limitations read-only; management remains in Recovery. The panel is recreated per owner. Checked-in Xcode device family now matches project.yml's existing iPhone-only policy.
 
 Verification: initial combined94fixture methods found one Recovery account-change retry failure; the scoped retry fix resets/loads the new account rather than retaining the old error. Six directly affected tests subsequently passed (3Home preference/layout and3Recovery account/intent cases). Other initially passing Goals/Performance/Recovery cases are reused; no live acceptance inferred. Profile integration compile errors were fixed before that successful run. Required workflow counts stay27/45 accepted,18open,9gates.
+
+
+## 2026-11-16 — Resolve retained non-Home customization scope
+
+W45 is functionally accepted by source comparison and normal native Insights/Profile entry-point evidence. Original Insights Customize only toggles its label; its layout hook never controls rendering. Profile layout hooks are unused, while its functional preference panels remain native. Retain those actions without inventing an unmounted layout engine. Counts:28/45accepted,17open,9separate release gates. Mutation/provider/restoration checks and final17-table baseline comparison remain distinct E24 work.
