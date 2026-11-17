@@ -31,6 +31,7 @@ struct RecoveryDashboardView: View {
     @ObservedObject var model: RecoveryViewModel
     let user: ExecuteUser?
     @State private var adding = false
+    @State private var showInactive = false
     @State private var area = RecoveryViewModel.bodyAreas[0]
     @State private var severity = RecoveryViewModel.severities[0].value
     @State private var notes = ""
@@ -157,10 +158,14 @@ struct RecoveryDashboardView: View {
     private var limitations: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Logging limitations helps tailor training around your current constraints.").font(.callout)
-            if model.snapshot.injuries.isEmpty {
-                Text("No limitations logged.").font(.headline)
+            if model.activeLimitations.isEmpty {
+                Text("No active limitations logged.").font(.headline)
             }
-            ForEach(model.snapshot.injuries) { row in
+            if !model.inactiveLimitations.isEmpty {
+                Toggle("Show inactive limitations", isOn: $showInactive)
+                    .accessibilityIdentifier("recovery.limitation.showInactive")
+            }
+            ForEach(showInactive ? model.snapshot.injuries : model.activeLimitations) { row in
                 card {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(row.data["body_area"]?.stringValue ?? "Physical limitation").font(.headline)
@@ -168,10 +173,13 @@ struct RecoveryDashboardView: View {
                         if let notes = row.data["notes"]?.stringValue, !notes.isEmpty { Text(notes).font(.body) }
                         let active = row.data["is_active"]?.boolValue != false
                         Toggle("Active", isOn: Binding(get: { active }, set: { active in Task { await model.setActive(row, active) } }))
+                            .disabled(model.busy || model.generating)
                             .accessibilityIdentifier("recovery.limitation.active")
                         if active {
                             Button("Archive limitation", role: .destructive) { Task { await model.setActive(row, false) } }
                                 .frame(minHeight: 44)
+                                .disabled(model.busy || model.generating)
+                                .accessibilityIdentifier("recovery.limitation.archive")
                         } else { Text("Inactive · retained in your history").font(.caption) }
                     }
                 }

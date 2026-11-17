@@ -26,6 +26,27 @@ final class RecoveryViewModel: ObservableObject {
     private var guidanceGeneration = UUID()
     private var saveNeedsRetry = false
     private var contextNeedsRetry = false
+    private var pendingLimitation: (id: UUID?, patch: JSONValue)?
+    var activeLimitations: [BackendRow] { snapshot.injuries.filter { $0.data["is_active"]?.boolValue != false } }
+    var inactiveLimitations: [BackendRow] { snapshot.injuries.filter { $0.data["is_active"]?.boolValue == false } }
+    private func unique(_ rows: [BackendRow], label: String) throws -> BackendRow? {
+        guard rows.count <= 1 else {
+            throw AppError(title: "Multiple \(label) records", message: "Your saved records need review. No record was selected or overwritten.")
+        }
+        return rows.first
+    }
+
+    private func dailyRecord(_ rows: [BackendRow], plan: BackendRow?) throws -> BackendRow? {
+        if let plan {
+            let linked = rows.filter { $0.data["source_plan_id"]?.stringValue?.lowercased() == plan.id.uuidString.lowercased() }
+            if let batch = plan.data["generation_batch_id"]?.stringValue, !batch.isEmpty {
+                let exact = linked.filter { $0.data["generation_batch_id"]?.stringValue == batch }
+                if !exact.isEmpty { return try unique(exact, label: "daily") }
+            }
+            if !linked.isEmpty { return try unique(linked, label: "daily") }
+        }
+        return try unique(rows, label: "daily")
+    }
 
     init(repository: RecoveryRepository, ai: AIResponding, cache: UserScopedCacheStore,
          date: Date? = nil, source: String? = nil, clock: @escaping () -> Date = Date.init, timeZone: TimeZone = .current) {
@@ -65,6 +86,7 @@ final class RecoveryViewModel: ObservableObject {
     func stop() {
         generation = UUID(); guidanceGeneration = UUID(); identity = nil
         snapshot = RecoverySnapshot(); draft = RecoveryCheckIn(); loaded = false; loading = true
+        pendingLimitation = nil
         busy = false; generating = false; saveNeedsRetry = false; contextNeedsRetry = false; error = nil; guidanceError = nil; status = nil; isEditing = true
     }
     private func current(_ request: UUID, _ identity: RecoveryIdentity) -> Bool {
@@ -82,7 +104,7 @@ final class RecoveryViewModel: ObservableObject {
     }
     func load(user: ExecuteUser) async {
         guard !busy else { return }
-        if identity?.user.id != user.id { contextNeedsRetry = false }
+        if identity?.user.id != user.id { contextNeedsRetry = false; pendingLimitation = nil }
         let request = UUID(); generation = request; guidanceGeneration = UUID()
         loading = true; loaded = false; saveNeedsRetry = false; error = nil; guidanceError = nil; status = nil; generating = false
         // Clear an earlier account immediately; never retain old health data behind a spinner.
@@ -100,14 +122,15 @@ final class RecoveryViewModel: ObservableObject {
             let profiles = try await repository.rows(.userProfiles, fields: [:], identity: identity)
             let nutrition = try await repository.rows(.nutritionProfiles, fields: [:], identity: identity)
             guard current(request, identity) else { return }
-            var selectedDaily = RecoverySelection.canonical(daily, plan: plan)
+            let selectedCheckIn = try unique(checkIns, label: "check-in")
+            var selectedDaily = try dailyRecord(daily, plan: plan)
             if let patch = RecoveryDailyProjection.patch(plan: plan, date: date, existing: selectedDaily) {
                 selectedDaily = try await repository.write(.dailyLogs, id: selectedDaily?.id, patch: patch, identity: identity)
                 guard current(request, identity) else { return }
                 await changed(identity, request: request)
                 guard current(request, identity) else { return }
             }
-            snapshot = RecoverySnapshot(checkIn: RecoverySelection.sorted(checkIns).first,
+            snapshot = RecoverySnapshot(checkIn: selectedCheckIn,
                 dailyLog: selectedDaily, masterPlan: plan, injuries: injuries,
                 workout: workouts.sorted { ($0.data["completed_at"]?.stringValue ?? "") > ($1.data["completed_at"]?.stringValue ?? "") }.first,
                 userProfile: RecoverySelection.sorted(profiles).first?.data ?? .null,
@@ -144,7 +167,11 @@ final class RecoveryViewModel: ObservableObject {
         }
     }
     func retry(user: ExecuteUser) async {
-        if saveNeedsRetry && loaded { await save() }
+        guard identity?.user.id == user.id || !loaded else { return }
+        if let pending = pendingLimitation, loaded {
+            _ = await mutateLimitation(id: pending.id, patch: pending.patch)
+        }
+        else if saveNeedsRetry && loaded { await save() }
         else if contextNeedsRetry, loaded, let identity, identity.user.id == user.id {
             guard !busy, !generating else { return }
             let request = generation
@@ -175,7 +202,15 @@ final class RecoveryViewModel: ObservableObject {
             let dailyRows = try await repository.rows(.dailyLogs, fields: ["date": date], identity: identity)
             guard current(request, identity) else { return }
             snapshot.masterPlan = RecoverySelection.canonical(plans)
-            let daily = RecoverySelection.canonical(dailyRows, plan: snapshot.masterPlan)
+            let checkIn = try unique(rows, label: "check-in")
+            let daily = try dailyRecord(dailyRows, plan: snapshot.masterPlan)
+            let workouts = try await repository.rows(.workoutLogs, fields: ["date": date, "status": "completed"], identity: identity)
+            let profiles = try await repository.rows(.userProfiles, fields: [:], identity: identity)
+            let nutrition = try await repository.rows(.nutritionProfiles, fields: [:], identity: identity)
+            guard current(request, identity) else { return }
+            snapshot.workout = workouts.sorted { ($0.data["completed_at"]?.stringValue ?? "") > ($1.data["completed_at"]?.stringValue ?? "") }.first
+            snapshot.userProfile = RecoverySelection.sorted(profiles).first?.data ?? .null
+            snapshot.nutritionProfile = RecoverySelection.sorted(nutrition).first?.data ?? .null
             snapshot.dailyLog = daily
             var patch = inputs.patch
             let result = RecoveryReadiness.calculate(checkIn: inputs, daily: snapshot.dailyLog?.data ?? .null,
@@ -183,7 +218,7 @@ final class RecoveryViewModel: ObservableObject {
                 nutrition: snapshot.nutritionProfile, plan: snapshot.masterPlan?.data ?? .null, now: clock(), timeZone: timeZone)
             patch["date"] = .string(date)
             patch["readiness_score"] = .number(Double(isToday ? result.score : inputs.preview))
-            let record = try await repository.write(.readinessCheckIns, id: RecoverySelection.sorted(rows).first?.id, patch: .object(patch), identity: identity)
+            let record = try await repository.write(.readinessCheckIns, id: checkIn?.id, patch: .object(patch), identity: identity)
             guard current(request, identity) else { return }
             snapshot.checkIn = record // Retain partial success so retry updates rather than duplicates.
             await changed(identity, request: request)
@@ -226,9 +261,37 @@ final class RecoveryViewModel: ObservableObject {
         busy = true; saveNeedsRetry = false; error = nil; status = nil
         defer { if request == generation { busy = false } }
         do {
-            // Commit local state only after acknowledgement, so errors need no optimistic rollback.
-            let saved = try await repository.write(.injuryProfiles, id: id, patch: patch, identity: identity)
+            var fields = patch.objectValue ?? [:]
+            if let pending = pendingLimitation {
+                var previous = pending.patch.objectValue ?? [:]
+                previous.removeValue(forKey: "native_limitation_mutation_id")
+                fields.removeValue(forKey: "native_limitation_mutation_id")
+                guard pending.id == id, previous == fields else {
+                    throw AppError(title: "Finish the previous save", message: "Retry the previous limitation before starting another change.")
+                }
+                fields = pending.patch.objectValue ?? [:]
+            } else {
+                fields["native_limitation_mutation_id"] = .string(UUID().uuidString)
+                pendingLimitation = (id, .object(fields))
+            }
+            let rows = try await repository.rows(.injuryProfiles, fields: [:], identity: identity)
             guard current(request, identity) else { return false }
+            let matches = rows.filter { $0.data["native_limitation_mutation_id"] == fields["native_limitation_mutation_id"] }
+            let acknowledged = try unique(matches, label: "limitation receipt")
+            if let id, acknowledged == nil, !rows.contains(where: { $0.id == id }) {
+                throw AppError(title: "Limitation changed", message: "Reload before changing a limitation that is no longer available.")
+            }
+            let saved: BackendRow
+            if let acknowledged {
+                guard fields.allSatisfy({ acknowledged.data[$0.key] == $0.value }) else {
+                    throw AppError(title: "Limitation changed", message: "The saved limitation changed after this attempt. Reload to review it.")
+                }
+                saved = acknowledged
+            } else {
+                saved = try await repository.write(.injuryProfiles, id: id, patch: .object(fields), identity: identity)
+            }
+            guard current(request, identity) else { return false }
+            pendingLimitation = nil
             snapshot.injuries.removeAll { $0.id == saved.id }; snapshot.injuries.append(saved)
             await changed(identity, request: request)
             await invalidateContext(identity, request: request)
@@ -245,7 +308,7 @@ final class RecoveryViewModel: ObservableObject {
         defer { if request == generation { busy = false } }
         do {
             let rows = try await repository.rows(.dailyLogs, fields: ["date": dateString], identity: identity)
-            guard current(request, identity), let log = RecoverySelection.canonical(rows, plan: snapshot.masterPlan),
+            guard current(request, identity), let log = try dailyRecord(rows, plan: snapshot.masterPlan),
                   log.data["planned_recovery_tasks"]?.recoveryArray?.contains(where: { $0["id"]?.stringValue == id }) == true else { return }
             let saved = try await repository.write(.dailyLogs, id: log.id,
                 patch: .object(["plan_items_completed": RecoverySelection.toggledItems(log.data, id: id)]), identity: identity)
@@ -269,7 +332,7 @@ final class RecoveryViewModel: ObservableObject {
             let dailyRows = try await repository.rows(.dailyLogs, fields: ["date": date], identity: identity)
             guard current(request, identity), guidanceGeneration == aiRequest else { return }
             snapshot.injuries = injuries; snapshot.masterPlan = RecoverySelection.canonical(plans)
-            snapshot.dailyLog = RecoverySelection.canonical(dailyRows, plan: snapshot.masterPlan)
+            snapshot.dailyLog = try dailyRecord(dailyRows, plan: snapshot.masterPlan)
             // Always fetch fresh personalization context; never reuse the web's potentially stale summary cache.
             var records: [String: [BackendRow]] = [:]
             for table in [EntityTable.userProfiles, .workoutProfiles, .nutritionProfiles, .goals] {

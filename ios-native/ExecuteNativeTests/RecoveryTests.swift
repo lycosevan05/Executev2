@@ -536,3 +536,86 @@ extension RecoveryTests {
         }
     }
 }
+
+extension RecoveryTests {
+    func testDuplicateCheckInAndDailyDatesNeverSelectAnArbitraryRow() async {
+        for table in [EntityTable.readinessCheckIns, .dailyLogs] {
+            let repo = RecoveryFixtureRepository()
+            repo.records[table] = [RecoveryFixtureRepository.row(["date": .string("2026-10-31")]), RecoveryFixtureRepository.row(["date": .string("2026-10-31")])]
+            let vm = model(repo)
+            await vm.load(user: user)
+            XCTAssertFalse(vm.loaded)
+            XCTAssertNotNil(vm.error)
+            XCTAssertEqual(repo.writes, 0)
+        }
+    }
+
+    func testSaveUsesWorkoutCompletedAfterInitialLoadAndPreservesDailyFields() async {
+        let repo = RecoveryFixtureRepository.populated(date: "2026-10-31"), vm = model(repo)
+        await vm.load(user: user)
+        let daily = repo.records[.dailyLogs]![0]
+        var fields = daily.data.objectValue!
+        fields["workout_done"] = .bool(true); fields["water_liters"] = .number(0.83)
+        fields["future"] = .object(["retain": .bool(true)])
+        repo.records[.dailyLogs] = [RecoveryFixtureRepository.row(fields, id: daily.id)]
+        let workout = RecoveryFixtureRepository.row(["date": .string("2026-10-31"), "status": .string("completed"), "completed_at": .string("2026-10-31T11:00:00Z"), "post_workout_feeling": .string("Energized")])
+        repo.records[.workoutLogs] = [workout]
+        await vm.save(generate: false)
+        XCTAssertEqual(vm.snapshot.workout?.id, workout.id)
+        XCTAssertEqual(vm.snapshot.checkIn?.data["readiness_score"], .number(Double(vm.readiness.score)))
+        XCTAssertEqual(repo.records[.dailyLogs]?[0].data["water_liters"], .number(0.83))
+        XCTAssertEqual(repo.records[.dailyLogs]?[0].data["future"], fields["future"])
+    }
+
+    func testLimitationLostAcknowledgmentRetriesSameReceiptWithoutDuplicate() async {
+        let repo = RecoveryFixtureRepository(), vm = model(repo)
+        await vm.load(user: user)
+        repo.loseResponseTable = .injuryProfiles
+        let first = await vm.addLimitation(area: "Hip", severity: "mild_discomfort", notes: "Synthetic")
+        XCTAssertFalse(first)
+        XCTAssertEqual(repo.records[.injuryProfiles]?.count, 1)
+        let saved = repo.records[.injuryProfiles]![0], writes = repo.writes
+        await vm.retry(user: user)
+        XCTAssertNil(vm.error)
+        XCTAssertEqual(repo.writes, writes)
+        XCTAssertEqual(vm.activeLimitations.first?.id, saved.id)
+        XCTAssertEqual(repo.records[.injuryProfiles]?.count, 1)
+        await vm.setActive(saved, false)
+        XCTAssertTrue(vm.activeLimitations.isEmpty)
+        XCTAssertEqual(vm.inactiveLimitations.first?.id, saved.id)
+        await vm.setActive(vm.inactiveLimitations[0], true)
+        XCTAssertEqual(vm.activeLimitations.first?.id, saved.id)
+        XCTAssertEqual(vm.activeLimitations.first?.data["notes"], .string("Synthetic"))
+    }
+
+    func testLimitationRetryCannotOverwriteChangedAcknowledgedReceipt() async {
+        let repo = RecoveryFixtureRepository(), vm = model(repo)
+        await vm.load(user: user)
+        repo.loseResponseTable = .injuryProfiles
+        _ = await vm.addLimitation(area: "Hip", severity: "mild_discomfort", notes: "Synthetic")
+        let saved = repo.records[.injuryProfiles]![0]
+        var fields = saved.data.objectValue!; fields["notes"] = .string("Changed elsewhere")
+        repo.records[.injuryProfiles] = [RecoveryFixtureRepository.row(fields, id: saved.id)]
+        let writes = repo.writes
+        await vm.retry(user: user)
+        XCTAssertNotNil(vm.error)
+        XCTAssertEqual(repo.writes, writes)
+        XCTAssertEqual(repo.records[.injuryProfiles]?[0].data["notes"], .string("Changed elsewhere"))
+    }
+
+    func testProfileLimitationsReadIsActiveOnlyAndNeverWrites() async {
+        let repo = RecoveryFixtureRepository()
+        repo.records[.injuryProfiles] = [RecoveryFixtureRepository.row(["body_area": .string("Hip"), "is_active": .bool(true)]), RecoveryFixtureRepository.row(["body_area": .string("Wrist"), "is_active": .bool(false)])]
+        let panel = ActiveLimitationsModel(repository: repo)
+        await panel.load(user: user)
+        XCTAssertEqual(panel.rows.count, 1)
+        XCTAssertEqual(panel.rows.first?.data["body_area"], .string("Hip"))
+        XCTAssertEqual(repo.writes, 0)
+        panel.stop()
+        XCTAssertTrue(panel.rows.isEmpty)
+        repo.valid = false
+        await panel.load(user: user)
+        XCTAssertTrue(panel.rows.isEmpty)
+        XCTAssertNotNil(panel.error)
+    }
+}
