@@ -19,6 +19,40 @@ import UniformTypeIdentifiers
         ].merging(values) { _, new in new })])
     }
 
+    func testCancelledTextEstimateCannotReappearAfterDismissal() async {
+        let ai = CaptureAI()
+        let nutrition = NutritionViewModel(dataService: nil, aiService: ai, cache: UserScopedCacheStore(suiteName: "TextCancel.\(UUID())"), realtimeService: nil, router: AppRouter())
+        ai.beforeReturn = { nutrition.clearAIEstimate() }
+        await nutrition.analyze("Synthetic oats")
+        XCTAssertNil(nutrition.aiEstimate)
+        XCTAssertFalse(nutrition.isAnalyzing)
+        XCTAssertNil(nutrition.error)
+    }
+
+    func testStoppedTextEstimateCannotPublishResultOrFailure() async {
+        for shouldFail in [false, true] {
+            let ai = CaptureAI()
+            let nutrition = NutritionViewModel(dataService: nil, aiService: ai, cache: UserScopedCacheStore(suiteName: "TextStop.\(UUID())"), realtimeService: nil, router: AppRouter())
+            ai.beforeCompletion = { await nutrition.stop() }
+            ai.failResponse = shouldFail
+            await nutrition.analyze("Synthetic oats")
+            XCTAssertNil(nutrition.aiEstimate)
+            XCTAssertNil(nutrition.error)
+            XCTAssertFalse(nutrition.isAnalyzing)
+        }
+    }
+
+    func testTextEstimateUsesFoodValuesAndExplicitReviewWithoutWriting() async throws {
+        let ai = CaptureAI(), data = CaptureData()
+        let nutrition = NutritionViewModel(dataService: data, aiService: ai, cache: UserScopedCacheStore(suiteName: "TextReview.\(UUID())"), realtimeService: nil, router: AppRouter())
+        await nutrition.analyze("Synthetic oats")
+        let estimate = try XCTUnwrap(nutrition.aiEstimate)
+        XCTAssertEqual(estimate.drafts(mealType: .snack).first?.calories, 300)
+        XCTAssertEqual(data.creates, 0)
+        XCTAssertEqual(data.updates, 0)
+        XCTAssertFalse(nutrition.isAnalyzing)
+    }
+
     func testBarcodeCheckDigitsLeadingZerosAndUPCEExpansion() {
         XCTAssertEqual(FoodBarcode.normalized(" 0360-0029 1452 "), "036000291452")
         XCTAssertEqual(FoodBarcode.normalized("0036000291452"), "0036000291452")
@@ -393,9 +427,13 @@ import UniformTypeIdentifiers
 @MainActor private final class CaptureAI: AIResponding {
     var requests: [LLMRequest] = []
     var beforeReturn: (() -> Void)?
+    var beforeCompletion: (() async -> Void)?
+    var failResponse = false
     static var estimate: NutritionAIEstimate { NutritionAIEstimate(foods: [NutritionFoodItem(name: "Synthetic oats", portion: "1 bowl", calories: 300, protein: 15, carbs: 40, fats: 8)], totalCalories: 999, totalProtein: 999, totalCarbs: 999, totalFats: 999) }
     func structuredResponse<Response: Decodable & Sendable>(_ request: LLMRequest, as type: Response.Type) async throws -> Response {
         requests.append(request); beforeReturn?()
+        await beforeCompletion?()
+        if failResponse { throw URLError(.timedOut) }
         return try JSONDecoder().decode(Response.self, from: JSONEncoder().encode(Self.estimate))
     }
     func textResponse(_ request: LLMRequest) async throws -> String { XCTFail("Unexpected text AI request"); return "" }

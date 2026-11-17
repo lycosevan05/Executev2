@@ -19,6 +19,7 @@ final class NutritionViewModel: ObservableObject {
     private let router: AppRouter
     private var user: ExecuteUser?
     private var subscriptions: [RealtimeSubscription] = []
+    private var analysisGeneration = UUID()
     private var hasStarted = false
     private var activePlanID: UUID?
     private var activePlanSource: String?
@@ -110,6 +111,7 @@ final class NutritionViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
+        clearAIEstimate()
         self.user = user
         hasStarted = true
         await restoreCachedSnapshot()
@@ -118,6 +120,7 @@ final class NutritionViewModel: ObservableObject {
     }
 
     func stop() async {
+        clearAIEstimate()
         let active = subscriptions
         subscriptions.removeAll()
         for subscription in active { await subscription.cancel() }
@@ -134,6 +137,7 @@ final class NutritionViewModel: ObservableObject {
               deletingIDs.isEmpty,
               day <= Calendar.current.startOfDay(for: .now),
               day != selectedDate else { return }
+        clearAIEstimate()
         selectedDate = day
         snapshot = .empty(date: dateString)
         aiEstimate = nil
@@ -340,10 +344,14 @@ final class NutritionViewModel: ObservableObject {
     func analyze(_ description: String) async {
         let description = description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !description.isEmpty else { return }
+        let requestID = UUID()
+        analysisGeneration = requestID
+        let owner = user?.id
+        let date = dateString
         isAnalyzing = true
         error = nil
         aiEstimate = nil
-        defer { isAnalyzing = false }
+        defer { if analysisGeneration == requestID { isAnalyzing = false } }
 
         guard let aiService else {
             aiEstimate = NutritionAIEstimate(
@@ -369,16 +377,18 @@ final class NutritionViewModel: ObservableObject {
 
         do {
             let result = try await aiService.structuredResponse(request, as: NutritionAIEstimate.self)
+            guard analysisGeneration == requestID, user?.id == owner, dateString == date else { return }
             guard !result.drafts(mealType: .snack).isEmpty else {
                 throw AppError(title: "No food found", message: "Describe the meal with a little more detail and try again.")
             }
             aiEstimate = result
         } catch {
+            guard analysisGeneration == requestID, user?.id == owner, dateString == date else { return }
             self.error = AppError.from(error, title: "Couldn't estimate this meal")
         }
     }
 
-    func clearAIEstimate() { aiEstimate = nil }
+    func clearAIEstimate() { analysisGeneration = UUID(); aiEstimate = nil; isAnalyzing = false }
     func clearError() { error = nil }
     func openBilling() { router.navigate(to: .billing) }
     func openMealPlan() { router.navigate(to: .dayPlan(kind: .meals, date: dateString)) }

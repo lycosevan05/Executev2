@@ -900,6 +900,7 @@ private struct NutritionAIEntrySheet: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .onAppear { isDescriptionFocused = true }
+        .onDisappear { model.clearAIEstimate() }
     }
 }
 
