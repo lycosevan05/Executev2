@@ -113,11 +113,27 @@ final class AppEnvironment: ObservableObject {
                 headers: ["apikey": configuration.supabaseAnonKey]
             )
             let subscriptionService = RevenueCatSubscriptionService(configuration: configuration)
+            let accountService: SupabaseAccountService
+#if EXECUTE_STAGED_DELETION_ACCEPTANCE
+            if let ownerID = configuration.stagedDeletionOwnerID {
+                let stagedFunctions = StagedDeletionFunctionService(
+                    client: client, functions: uploadClient, authService: authService, ownerID: ownerID
+                )
+                accountService = SupabaseAccountService(
+                    functions: stagedFunctions,
+                    readiness: .stagedAcceptance { authService.hasLocalSession(for: ownerID) }
+                )
+            } else {
+                accountService = SupabaseAccountService(functions: functions)
+            }
+#else
+            accountService = SupabaseAccountService(functions: functions)
+#endif
             let environment = AppEnvironment(
                 configuration: configuration,
                 configurationError: nil,
                 authService: authService,
-                accountService: SupabaseAccountService(functions: functions, readiness: .awaitingServerVerification),
+                accountService: accountService,
                 cache: cache,
                 router: router,
                 subscriptionService: subscriptionService,

@@ -10,6 +10,9 @@ struct AppConfiguration: Equatable {
     var revenueCatOfferingID = "default"
     var revenueCatMonthlyProductID = "execute_premium_month"
     var revenueCatAnnualProductID = "execute_premium_annual"
+#if EXECUTE_STAGED_DELETION_ACCEPTANCE
+    var stagedDeletionOwnerID: UUID? = nil
+#endif
 
     var callbackURL: URL {
         URL(string: "\(callbackScheme)://login-callback")!
@@ -27,10 +30,18 @@ struct AppConfiguration: Equatable {
         let uploadBucket = value("SupabaseUploadBucket")
         let callbackScheme = value("AuthCallbackScheme")
 
+        let isStagedDeletionFixture: Bool
+#if EXECUTE_STAGED_DELETION_ACCEPTANCE
+        let stagedDeletionOwnerID = stagedOwnerID(configuredOrigin: urlString, environment: ProcessInfo.processInfo.environment)
+        isStagedDeletionFixture = stagedDeletionOwnerID != nil
+#else
+        isStagedDeletionFixture = false
+#endif
+
         guard !urlString.isEmpty, !urlString.contains("$("),
               let supabaseURL = URL(string: urlString),
               supabaseURL.scheme == "https",
-              supabaseURL.host?.hasSuffix(".supabase.co") == true else {
+              supabaseURL.host?.hasSuffix(".supabase.co") == true || isStagedDeletionFixture else {
             throw AppError(
                 title: "Supabase configuration is missing",
                 message: "Add the project URL to ios-native/Configuration/Local.xcconfig."
@@ -53,6 +64,9 @@ struct AppConfiguration: Equatable {
             uploadBucket: uploadBucket.isEmpty ? "uploads" : uploadBucket,
             callbackScheme: callbackScheme
         )
+#if EXECUTE_STAGED_DELETION_ACCEPTANCE
+        configuration.stagedDeletionOwnerID = stagedDeletionOwnerID
+#endif
         // These are public identifiers, configurable for a separate native-dev app.
         func identifier(_ key: String, fallback: String) -> String {
             let configured = value(key)
@@ -64,4 +78,14 @@ struct AppConfiguration: Equatable {
         configuration.revenueCatAnnualProductID = identifier("RevenueCatAnnualProductID", fallback: configuration.revenueCatAnnualProductID)
         return configuration
     }
+
+#if EXECUTE_STAGED_DELETION_ACCEPTANCE
+    private static func stagedOwnerID(configuredOrigin: String, environment: [String: String]) -> UUID? {
+        // Only the isolated HTTPS fixture can enable the staged route.
+        guard configuredOrigin == "https://127.0.0.1:55474",
+              environment["EXECUTE_STAGED_DELETION_ORIGIN"] == configuredOrigin,
+              let owner = environment["EXECUTE_STAGED_DELETION_OWNER_UUID"] else { return nil }
+        return UUID(uuidString: owner)
+    }
+#endif
 }
