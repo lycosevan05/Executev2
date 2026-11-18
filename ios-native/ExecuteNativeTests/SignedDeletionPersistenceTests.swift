@@ -1,3 +1,4 @@
+import Security
 import Supabase
 import XCTest
 @testable import ExecuteNative
@@ -26,7 +27,12 @@ final class SignedDeletionPersistenceTests: XCTestCase {
 
     func testCacheAndKeychainArePurgedAfterDeletion() throws {
         let (target, witness) = try fixture()
-        XCTAssertNil(try AuthClient.Configuration.defaultLocalStorage.retrieve(key: Self.sessionKey))
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "supabase.gotrue.swift",
+            kSecAttrAccount as String: Self.sessionKey,
+        ]
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, nil), errSecItemNotFound)
         XCTAssertFalse(UserDefaults.standard.bool(forKey: "execute.auth.storage.removalFailed.\(Self.sessionKey)"))
         let keys = UserDefaults.standard.dictionaryRepresentation().keys
         XCTAssertFalse(keys.contains { $0.hasPrefix("execute.cache.\(target.uuidString).") })
