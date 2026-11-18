@@ -597,3 +597,7 @@ The pinned Supabase SDK emits signedOut even if its backing Keychain delete fail
 ## 2026-11-17 — Reconcile pending App Store copy on live approval
 
 A successful live App Store entitlement refresh replaces the pending confirmation message. An account's server-only entitlement independently provides existing access and cannot confirm the pending App Store transaction. Same-account customer-info updates during another billing operation trigger a follow-up refresh. Billing and Profile display only future access-through dates, with the existing eligibility policy preserved.
+
+## 2026-11-17 — Return the startup deadline before a stuck SDK refresh
+
+A structured task group waits for canceled children, so an SDK refresh that ignores cancellation could keep the launch screen loading after Execute's deadline. Race the two results independently, close the result stream after the first result, and cancel both workers at the boundary. The caller can show Retry immediately and a late restoration result cannot activate a screen. Underlying SDK storage effects remain separate.

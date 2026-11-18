@@ -631,9 +631,11 @@ private final class DelayedBillingDeletion: AccountServicing {
 @MainActor
 final class BillingAuthenticationRaceTests: XCTestCase {
     private func makeState(auth: DelayedBillingAuth, cache: UserScopedCacheStore = UserScopedCacheStore(),
-                           account: AccountServicing = MockAccountService()) -> AppState {
+                           account: AccountServicing = MockAccountService(),
+                           restoreTimeout: UInt64 = 10_000_000_000) -> AppState {
         AppState(authService: auth, accountService: account, cache: cache, router: AppRouter(),
-                 subscriptionService: MockSubscriptionService(), configurationError: nil)
+                 subscriptionService: MockSubscriptionService(), configurationError: nil,
+                 sessionRestoreTimeoutNanoseconds: restoreTimeout)
     }
 
     func testRestoreDoesNotExposeAnAccountIfItsSDKSessionDisappearsBeforeActivation() async {
@@ -674,6 +676,31 @@ final class BillingAuthenticationRaceTests: XCTestCase {
 
         XCTAssertEqual(state.launchState, .signedOut)
         XCTAssertFalse(state.allowsDraftWrites(for: billingUserA.id))
+    }
+
+    func testStartupTimeoutDoesNotWaitForANonCooperativeRestore() async throws {
+        let auth = DelayedBillingAuth()
+        let gate = BillingGate()
+        auth.restoreGate = gate
+        let state = makeState(auth: auth, restoreTimeout: 10_000_000)
+        let finished = expectation(description: "Startup exposes a retry before the SDK returns")
+
+        let startup = Task {
+            await state.start()
+            finished.fulfill()
+        }
+        await gate.waitUntilEntered()
+        defer { gate.release() }
+        await fulfillment(of: [finished], timeout: 1)
+        guard case .failed(let error) = state.launchState else {
+            return XCTFail("Startup must be recoverable while the SDK call is still suspended")
+        }
+        XCTAssertEqual(error.title, "Session restoration timed out")
+
+        try await state.verifyEmailOTP(email: billingUserB.email, token: "123456")
+        gate.release()
+        await startup.value
+        XCTAssertEqual(state.launchState, .signedIn(billingUserB))
     }
 
     func testLateStartupCannotReplaceNewAccount() async throws {

@@ -299,23 +299,34 @@ final class AppState: ObservableObject {
         let authService = authService
         let timeout = sessionRestoreTimeoutNanoseconds
 
-        return try await withThrowingTaskGroup(of: ExecuteUser?.self) { group in
-            group.addTask {
-                try await authService.restoreSession()
-            }
-            group.addTask {
-                try await Task<Never, Never>.sleep(nanoseconds: timeout)
-                throw AppError(
-                    title: "Session restoration timed out",
-                    message: "Execute could not finish restoring your session. Check your connection and try again."
-                )
-            }
-
-            defer { group.cancelAll() }
-            guard let result = try await group.next() else {
-                throw AppError(title: "Startup failed", message: "Session restoration ended unexpectedly.")
-            }
-            return result
+        // A task group waits for canceled children before returning. The SDK
+        // may still await its own refresh task after cancellation, so race
+        // the results independently and allow the deadline to return first.
+        let (results, continuation) = AsyncStream<Result<ExecuteUser?, any Error>>.makeStream(
+            bufferingPolicy: .bufferingOldest(1)
+        )
+        let restoration = Task {
+            do { continuation.yield(.success(try await authService.restoreSession())) }
+            catch { continuation.yield(.failure(error)) }
+            continuation.finish()
         }
+        let deadline = Task {
+            do { try await Task.sleep(nanoseconds: timeout) }
+            catch { return }
+            continuation.yield(.failure(AppError(
+                title: "Session restoration timed out",
+                message: "Execute could not finish restoring your session. Check your connection and try again."
+            )))
+            continuation.finish()
+        }
+        defer {
+            continuation.finish()
+            restoration.cancel()
+            deadline.cancel()
+        }
+
+        var iterator = results.makeAsyncIterator()
+        guard let result = await iterator.next() else { throw CancellationError() }
+        return try result.get()
     }
 }
