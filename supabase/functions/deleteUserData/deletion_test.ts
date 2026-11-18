@@ -32,6 +32,10 @@ class Query implements PromiseLike<Result> {
     this.filters.push([k, v]);
     return this;
   }
+  in(k: string, values: string[]) {
+    this.filters.push([k, values]);
+    return this;
+  }
   order() {
     return this;
   }
@@ -56,14 +60,21 @@ class Query implements PromiseLike<Result> {
       deleting: this.deleting,
       filters: [...this.filters],
     });
-    if (this.f.queryFailure === this.table) {
+    if (
+      this.f.queryFailure === this.table ||
+      (this.deleting && this.f.deleteFailure === this.table)
+    ) {
       return { error: { message: "private-fixture-detail" } };
     }
+    if (this.deleting) this.f.beforeDelete?.(this.table);
     const original = this.f.tables.get(this.table) || [];
     const matches = original.filter((r) =>
-      this.filters.every(([k, v]) =>
-        (k.startsWith("data->>") ? (r.data as Row)?.[k.slice(7)] : r[k]) === v
-      )
+      this.filters.every(([k, v]) => {
+        const field = k.startsWith("data->>")
+          ? (r.data as Row)?.[k.slice(7)] ?? null
+          : r[k];
+        return Array.isArray(v) ? v.includes(field) : field === v;
+      })
     );
     if (this.deleting) {
       this.f.events.push(`rows:${this.table}`);
@@ -95,6 +106,8 @@ class Fixture {
   removeFailure = false;
   authFailure = false;
   queryFailure = "";
+  deleteFailure = "";
+  beforeDelete?: (table: string) => void;
   repeatRecords = false;
   repeatFiles = false;
   missingBucket = false;
@@ -248,6 +261,122 @@ Deno.test("legacy exact email scopes preserve foreign owners, unrelated/null row
   }
   equal(f.events.at(-1), "auth");
 });
+Deno.test("ambiguous legacy fields stop ordinary and subscription cleanup before any writes", async () => {
+  for (const table of ["goals", "user_subscriptions"]) {
+    const f = new Fixture(), b = new BillingFixture();
+    const conflicting = {
+      ...sub("ambiguous", null),
+      owner_email: "foreign@example.invalid",
+    };
+    f.tables.set(table, [sub("owned"), conflicting]);
+    f.files.add(user.id + "/fixture.jpg");
+    await rejects(() => run(f, b), /attribution is ambiguous/);
+    deepEqual(f.tables.get(table), [sub("owned"), conflicting]);
+    equal(f.files.size, 1);
+    deepEqual(f.events, []);
+    deepEqual(b.events, []);
+  }
+});
+
+Deno.test("foreign subscription JSON owner conflicts with matching legacy email columns", async () => {
+  const f = new Fixture(), b = new BillingFixture();
+  const conflicting = sub("ambiguous_json", null, {
+    user_id: "foreign@example.invalid",
+  });
+  f.tables.set("user_subscriptions", [conflicting]);
+  await rejects(() => run(f, b), /attribution is ambiguous/);
+  deepEqual(f.tables.get("user_subscriptions"), [conflicting]);
+  deepEqual(f.events, []);
+  deepEqual(b.events, []);
+});
+
+Deno.test("one exact legacy field is enough when the other fields are unset, and UUID ownership is authoritative", async () => {
+  const f = new Fixture(), b = new BillingFixture();
+  f.tables.set("goals", [{
+    ...sub("one_legacy", null),
+    owner_email: null,
+    user_email: "",
+  }, {
+    ...sub("foreign_uuid", foreign),
+    owner_email: user.email,
+  }]);
+  f.tables.set("user_subscriptions", [{
+    ...sub("authoritative"),
+    owner_email: "historical@example.invalid",
+    created_by: "historical@example.invalid",
+  }, {
+    ...sub("json_legacy", null),
+    owner_email: null,
+    created_by: "",
+    user_email: null,
+  }]);
+  const result = await run(f, b);
+  equal(result.results.goals, "deleted 1");
+  equal(result.results.user_subscriptions, "deleted 2");
+  deepEqual(f.tables.get("goals")?.map(({ id }) => id), ["foreign_uuid"]);
+  deepEqual(f.tables.get("user_subscriptions"), []);
+  deepEqual(b.events, [
+    "verify:sub_authoritative",
+    "verify:sub_json_legacy",
+    "cancel:sub_authoritative",
+    "cancel:sub_json_legacy",
+  ]);
+});
+
+Deno.test("overlapping preflight scopes must observe the same legacy attribution", async () => {
+  const f = new Fixture();
+  f.tables.set("goals", [sub("changed", null)]);
+  const original = f.from;
+  f.from = (table) => {
+    if (
+      table === "goals" && f.queries.some((query) =>
+        query.table === table &&
+        query.filters.some(([column]) => column === "owner_email")
+      )
+    ) {
+      f.tables.set("goals", [{ ...sub("changed", null), owner_email: null }]);
+    }
+    return original(table);
+  };
+  await rejects(() => run(f), /enumeration is inconsistent/);
+  deepEqual(f.events, []);
+});
+
+Deno.test("conditional delete preserves reassigned legacy rows and changed subscription references", async () => {
+  for (const table of ["goals", "user_subscriptions"]) {
+    const f = new Fixture(), b = new BillingFixture();
+    const before = sub("racing", table === "goals" ? null : user.id);
+    const changed = table === "goals"
+      ? { ...before, owner_email: "new-owner@example.invalid" }
+      : sub("racing", user.id, { stripe_subscription_id: "sub_new" });
+    f.tables.set(table, [before]);
+    f.beforeDelete = (target) => {
+      if (target === table) f.tables.set(target, [changed]);
+    };
+    await rejects(() => run(f, b), /records changed/);
+    deepEqual(f.tables.get(table), [changed]);
+    equal(f.events.includes("auth"), false);
+    equal(b.events.includes("cancel:sub_new"), false);
+  }
+});
+
+Deno.test("a subscription created after inventory is preserved and blocks authentication removal", async () => {
+  const f = new Fixture(), b = new BillingFixture(), store = f.store();
+  const prepareRows = store.prepareRows;
+  store.prepareRows = async (tables, u) => {
+    const plan = await prepareRows(tables, u);
+    f.tables.set("user_subscriptions", [sub("late")]);
+    return plan;
+  };
+  await rejects(
+    () => deleteAccount(user, ["user_subscriptions"], store, b.billing()),
+    /records remain/,
+  );
+  deepEqual(f.tables.get("user_subscriptions"), [sub("late")]);
+  equal(f.events.includes("auth"), false);
+  deepEqual(b.events, []);
+});
+
 Deno.test("more than ten and multiple pages of subscriptions enumerated, deduped, foreign references excluded", async () => {
   const f = new Fixture(), b = new BillingFixture();
   f.tables.set(
@@ -421,22 +550,28 @@ Deno.test("table failure retains authentication, retry finishes without pretendi
   const f = new Fixture();
   f.tables.set("goals", [sub("a")]);
   f.tables.set("goal_progress_entries", [sub("b")]);
-  f.queryFailure = "goal_progress_entries";
+  f.deleteFailure = "goal_progress_entries";
   await rejects(() => run(f), /records could not/);
   equal(f.tables.get("goals")?.length, 0);
   equal(f.tables.get("goal_progress_entries")?.length, 1);
   equal(f.events.includes("auth"), false);
-  f.queryFailure = "";
+  f.deleteFailure = "";
   await run(f);
   equal(f.events.at(-1), "auth");
 });
 Deno.test("post-delete record appearance prevents authentication removal", async () => {
   const f = new Fixture(), store = f.store();
-  const deleteRows = store.deleteRows;
-  store.deleteRows = async (table, u) => {
-    const count = await deleteRows(table, u);
-    f.tables.set(table, [sub("concurrent")]);
-    return count;
+  const prepareRows = store.prepareRows;
+  store.prepareRows = async (tables, u) => {
+    const plan = await prepareRows(tables, u);
+    return {
+      subscriptionIds: plan.subscriptionIds,
+      async deleteRows(table) {
+        const count = await plan.deleteRows(table);
+        f.tables.set(table, [sub("concurrent")]);
+        return count;
+      },
+    };
   };
   await rejects(
     () => deleteAccount(user, ["goals"], store, new BillingFixture().billing()),

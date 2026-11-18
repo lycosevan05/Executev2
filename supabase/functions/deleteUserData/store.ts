@@ -3,6 +3,7 @@ import {
   type DeletionUser,
   pageSize,
   type UploadEntry,
+  validateUser,
 } from "./deletion.ts";
 
 type Result = { data?: unknown; error: unknown; count?: number | null };
@@ -16,6 +17,7 @@ interface ReadQuery extends PromiseLike<Result> {
 interface DeleteQuery extends PromiseLike<Result> {
   eq(key: string, value: string): DeleteQuery;
   is(key: string, value: null): DeleteQuery;
+  in(key: string, values: string[]): DeleteQuery;
 }
 export interface DeletionClient {
   from(table: string): {
@@ -37,81 +39,235 @@ export interface DeletionClient {
   };
   auth: { admin: { deleteUser(id: string): PromiseLike<{ error: unknown }> } };
 }
+const emailColumns = ["owner_email", "created_by", "user_email"];
+const legacyRowLimit = 10000;
+const subscriptionTable = "user_subscriptions";
+const stripeColumn = "data->>stripe_subscription_id";
+
 type Scope = { key: string; value: string; legacy: boolean };
-function scopes(user: DeletionUser, subscriptions = false): Scope[] {
-  const result: Scope[] = [{ key: "owner_id", value: user.id, legacy: false }];
-  if (user.email) {
-    for (
-      const key of [
-        "owner_email",
-        "created_by",
-        "user_email",
-        ...(subscriptions ? ["data->>user_id"] : []),
-      ]
-    ) {
-      result.push({ key, value: user.email, legacy: true });
-    }
-  }
-  return result;
+function identityColumns(table: string): string[] {
+  return table === subscriptionTable
+    ? [...emailColumns, "data->>user_id"]
+    : emailColumns;
 }
-function scoped<T extends ReadQuery | DeleteQuery>(query: T, scope: Scope): T {
+function legacyScopes(
+  table: string,
+  email: string | null | undefined,
+): Scope[] {
+  return email
+    ? identityColumns(table).map((key) => ({ key, value: email, legacy: true }))
+    : [];
+}
+function scoped(query: ReadQuery, scope: Scope): ReadQuery {
   // Separate .eq calls encode the exact email; never interpolate it into PostgREST .or syntax.
-  return (scope.legacy
+  return scope.legacy
     ? query.is("owner_id", null).eq(scope.key, scope.value)
-    : query.eq(scope.key, scope.value)) as T;
+    : query.eq(scope.key, scope.value);
 }
 function rows(result: Result): Record<string, unknown>[] {
   if (
     result.error || !Array.isArray(result.data) ||
-    result.data.some((r) => !r || typeof r !== "object")
+    result.data.some((r) => !r || typeof r !== "object" || Array.isArray(r))
   ) {
     throw new Error("Account record enumeration failed; cleanup stopped.");
   }
   return result.data as Record<string, unknown>[];
 }
+type RowFilter = [column: string, value: string | null];
+interface RowSnapshot {
+  id: string;
+  filters: RowFilter[];
+  subscriptionId: string | null;
+}
+
+function nullableText(value: unknown): string | null {
+  if (value === null || typeof value === "string") return value;
+  throw new Error("Account record attribution is malformed; cleanup stopped.");
+}
+
+function rowSnapshot(
+  row: Record<string, unknown>,
+  table: string,
+  scope: Scope,
+  user: DeletionUser,
+): RowSnapshot {
+  const owner = scope.legacy ? null : user.id;
+  if (typeof row.id !== "string" || !row.id || row.owner_id !== owner) {
+    throw new Error(
+      "Account record enumeration is inconsistent; cleanup stopped.",
+    );
+  }
+
+  const filters: RowFilter[] = [["owner_id", owner]];
+  let data: Record<string, unknown> | undefined;
+  if (table === subscriptionTable) {
+    if (!row.data || typeof row.data !== "object" || Array.isArray(row.data)) {
+      throw new Error("Invalid subscription reference; cleanup stopped.");
+    }
+    data = row.data as Record<string, unknown>;
+  }
+
+  if (scope.legacy) {
+    const identities: RowFilter[] = emailColumns.map((key) => [
+      key,
+      nullableText(row[key]),
+    ]);
+    if (data) {
+      identities.push(["data->>user_id", nullableText(data.user_id ?? null)]);
+    }
+    if (
+      !identities.some(([key, value]) =>
+        key === scope.key && value === scope.value
+      ) ||
+      identities.some(([, value]) =>
+        value !== null && value !== "" && value !== user.email
+      )
+    ) {
+      throw new Error(
+        "Legacy account record attribution is ambiguous; cleanup stopped.",
+      );
+    }
+    filters.push(...identities);
+  }
+
+  const subscriptionId = data?.stripe_subscription_id ?? null;
+  if (subscriptionId !== null && typeof subscriptionId !== "string") {
+    throw new Error("Invalid subscription reference; cleanup stopped.");
+  }
+  if (data) filters.push([stripeColumn, subscriptionId]);
+  return { id: row.id, filters, subscriptionId };
+}
+
+async function snapshotTable(
+  client: DeletionClient,
+  table: string,
+  user: DeletionUser,
+): Promise<RowSnapshot[]> {
+  const subscriptions = table === subscriptionTable;
+  const scopes = legacyScopes(table, user.email);
+  if (subscriptions) {
+    scopes.unshift({ key: "owner_id", value: user.id, legacy: false });
+  }
+  const columns = subscriptions
+    ? "id,owner_id,owner_email,created_by,user_email,data"
+    : "id,owner_id,owner_email,created_by,user_email";
+  const records = new Map<string, RowSnapshot>();
+  for (const scope of scopes) {
+    const seen = new Set<string>();
+    for (let offset = 0;; offset += pageSize) {
+      const page = rows(
+        await scoped(client.from(table).select(columns), scope)
+          .order("id", { ascending: true }).range(
+            offset,
+            offset + pageSize - 1,
+          ),
+      );
+      if (page.length > pageSize) {
+        throw new Error(
+          "Account record enumeration is inconsistent; cleanup stopped.",
+        );
+      }
+      for (const row of page) {
+        const snapshot = rowSnapshot(row, table, scope, user);
+        const previous = records.get(snapshot.id);
+        if (
+          seen.has(snapshot.id) ||
+          (previous &&
+            JSON.stringify(previous.filters) !==
+              JSON.stringify(snapshot.filters))
+        ) {
+          throw new Error(
+            "Account record enumeration is inconsistent; cleanup stopped.",
+          );
+        }
+        seen.add(snapshot.id);
+        records.set(snapshot.id, snapshot);
+        if (records.size > legacyRowLimit) {
+          throw new Error("Account record count exceeds safe cleanup limit.");
+        }
+      }
+      if (page.length < pageSize) break;
+    }
+  }
+  return [...records.values()];
+}
+
+async function deleteSnapshots(
+  client: DeletionClient,
+  table: string,
+  snapshots: readonly RowSnapshot[],
+): Promise<number> {
+  const groups = new Map<string, { filters: RowFilter[]; ids: string[] }>();
+  for (const snapshot of snapshots) {
+    const key = JSON.stringify(snapshot.filters);
+    const group = groups.get(key) ?? { filters: snapshot.filters, ids: [] };
+    group.ids.push(snapshot.id);
+    groups.set(key, group);
+  }
+  for (const { filters, ids } of groups.values()) {
+    for (let offset = 0; offset < ids.length; offset += pageSize) {
+      const batch = ids.slice(offset, offset + pageSize);
+      let query = client.from(table).delete({ count: "exact" }).in("id", batch);
+      for (const [column, value] of filters) {
+        query = value === null
+          ? query.is(column, null)
+          : query.eq(column, value);
+      }
+      const result = await query;
+      if (result.error || result.count !== batch.length) {
+        throw new Error(
+          "Account records changed or could not be fully deleted; retry account deletion.",
+        );
+      }
+    }
+  }
+  return snapshots.length;
+}
+
 export function createDeletionStore(
   client: DeletionClient,
   bucket: string,
 ): DeletionStore {
   return {
-    async subscriptionIds(user) {
-      const records = new Map<string, Record<string, unknown>>();
-      for (const scope of scopes(user, true)) {
-        const seen = new Set<string>();
-        for (let offset = 0;; offset += pageSize) {
-          const page = rows(
-            await scoped(client.from("user_subscriptions").select("*"), scope)
-              .order("id", { ascending: true }).range(
-                offset,
-                offset + pageSize - 1,
-              ),
-          );
-          for (const row of page) {
+    async prepareRows(tables, user) {
+      validateUser(user);
+      // Inventory subscription references even when the caller supplies a smaller
+      // table list. Production supplies the entire entity catalog.
+      const snapshots = new Map<string, RowSnapshot[]>();
+      for (const table of new Set([subscriptionTable, ...tables])) {
+        snapshots.set(table, await snapshotTable(client, table, user));
+      }
+      const subscriptionIds = (snapshots.get(subscriptionTable) ?? []).flatMap(
+        ({ subscriptionId }) => subscriptionId ? [subscriptionId] : [],
+      );
+      return {
+        subscriptionIds: [...new Set(subscriptionIds)],
+        async deleteRows(table) {
+          const eligible = snapshots.get(table);
+          if (!eligible || !tables.includes(table)) {
+            throw new Error(
+              "Account records must be inventoried before deletion.",
+            );
+          }
+          // All subscriptions need inventoried Stripe references. Ordinary UUID
+          // rows are authoritative and can be deleted without legacy discovery.
+          let count = 0;
+          if (table !== subscriptionTable) {
+            const result = await client.from(table).delete({ count: "exact" })
+              .eq("owner_id", user.id);
             if (
-              typeof row.id !== "string" || !row.id || seen.has(row.id) ||
-              (row.owner_id !== null && row.owner_id !== user.id)
-            ) throw new Error("Subscription enumeration is inconsistent.");
-            seen.add(row.id);
-            records.set(row.id, row);
+              result.error || !Number.isSafeInteger(result.count) ||
+              result.count! < 0
+            ) {
+              throw new Error(
+                "Account records could not be fully deleted; retry account deletion.",
+              );
+            }
+            count = result.count!;
           }
-          if (seen.size > 10000) {
-            throw new Error("Subscription count exceeds safe cleanup limit.");
-          }
-          if (page.length < pageSize) break;
-        }
-      }
-      const ids: string[] = [];
-      for (const row of records.values()) {
-        const data = row.data as Record<string, unknown> | null;
-        const id = data?.stripe_subscription_id;
-        if (id != null && id !== "") {
-          if (typeof id !== "string") {
-            throw new Error("Invalid subscription reference.");
-          }
-          ids.push(id);
-        }
-      }
-      return [...new Set(ids)];
+          return count + await deleteSnapshots(client, table, eligible);
+        },
+      };
     },
     async listUploads(prefix, offset) {
       const result = await client.storage.from(bucket).list(prefix, {
@@ -135,27 +291,12 @@ export function createDeletionStore(
         );
       }
     },
-    async deleteRows(table, user) {
-      let count = 0;
-      for (const scope of scopes(user, table === "user_subscriptions")) {
-        const result = await scoped(
-          client.from(table).delete({ count: "exact" }),
-          scope,
-        );
-        if (
-          result.error || !Number.isSafeInteger(result.count) ||
-          result.count! < 0
-        ) {
-          throw new Error(
-            "Account records could not be fully deleted; retry account deletion.",
-          );
-        }
-        count += result.count!;
-      }
-      return count;
-    },
     async assertRowsAbsent(table, user) {
-      for (const scope of scopes(user, table === "user_subscriptions")) {
+      const scopes = [
+        { key: "owner_id", value: user.id, legacy: false },
+        ...legacyScopes(table, user.email),
+      ];
+      for (const scope of scopes) {
         if (
           rows(await scoped(client.from(table).select("id"), scope).limit(1))
             .length

@@ -8,11 +8,17 @@ export interface UploadEntry {
   id?: string | null;
   metadata?: unknown;
 }
+export interface RecordDeletionPlan {
+  subscriptionIds: readonly string[];
+  deleteRows(table: string): Promise<number>;
+}
 export interface DeletionStore {
-  subscriptionIds(user: DeletionUser): Promise<string[]>;
+  prepareRows(
+    tables: readonly string[],
+    user: DeletionUser,
+  ): Promise<RecordDeletionPlan>;
   listUploads(prefix: string, offset: number): Promise<UploadEntry[]>;
   removeUploads(paths: string[]): Promise<void>;
-  deleteRows(table: string, user: DeletionUser): Promise<number>;
   assertRowsAbsent(table: string, user: DeletionUser): Promise<void>;
   deleteAuthentication(id: string): Promise<void>;
 }
@@ -79,7 +85,8 @@ export async function deleteAccount(
 ) {
   validateUser(user);
   // Complete read-only enumeration before the first irreversible/provider operation.
-  const ids = [...new Set(await store.subscriptionIds(user))];
+  const plan = await store.prepareRows(tables, user);
+  const ids = [...new Set(plan.subscriptionIds)];
   if (ids.some((id) => !/^sub_[A-Za-z0-9_]+$/.test(id))) {
     throw new Error("Invalid subscription reference; cleanup stopped.");
   }
@@ -97,7 +104,7 @@ export async function deleteAccount(
     storage: `deleted ${uploads.length}`,
   };
   for (const table of tables) {
-    results[table] = `deleted ${await store.deleteRows(table, user)}`;
+    results[table] = `deleted ${await plan.deleteRows(table)}`;
   }
   for (const table of tables) await store.assertRowsAbsent(table, user);
   // Retain authentication on any earlier partial failure so the account can retry.

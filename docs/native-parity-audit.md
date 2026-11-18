@@ -198,11 +198,15 @@ With explicit authorization, Google Account settings for the exact disposable QA
 
 The normal signed Release build restored the same disposable Google profile after process termination and online relaunch on the paired iPhone. The user reported that a cold relaunch in Airplane Mode with Wi-Fi off still reached Home, with a refresh error and widget placeholders. After reconnection, Computer Use verified cached widgets and the saved-dashboard banner. Retry cleared the banner.
 
-The app now exits the startup waiting state at its deadline when SDK restore ignores cancellation. The new regression failed before the fix and passed afterward. Home now ends initial widget loading as soon as it restores the current owner's saved dashboard, including while a network refresh is pending. The new transport fixture verified that the cached dashboard renders while the server read is suspended. The full unit suite passed 637 tests. The changed Release offline retest, live session expiry, in-flight isolation and provider-to-session invalidation still require acceptance. Counts remain 42 of 45 with all nine release gates open.
+The app now exits the startup waiting state at its deadline when SDK restore ignores cancellation. The new regression failed before the fix and passed afterward. Home now ends initial widget loading as soon as it restores the current owner's saved dashboard, including while a network refresh is pending. The new transport fixture verified that the cached dashboard renders while the server read is suspended. The full unit suite passed 637 tests.
 
-### E50 — Require complete account deletion receipts
+The updated signed Release from c018f12 installed and launched on the paired iPhone. On the repeat offline cold launch, the user reported that saved widgets appeared and reconnect recovered Home. Computer Use directly confirmed populated widgets and no refresh banner after reconnection. Live session expiry, in-flight isolation and provider-to-session invalidation still require acceptance. Counts remain 42 of 45 with all nine release gates open.
 
-The verified-rollout client now requires a valid deletion count for each of the 19 entity tables, along with the existing storage count and authentication acknowledgement. The native and backend table names match. The nine focused contract tests passed, including rejection for each omitted receipt and preservation of session, cache, navigation and drafts when only authentication and storage were acknowledged. The production readiness gate remains closed.
+### E50 — Verify deletion receipts and legacy ownership
+
+The verified-rollout client now requires a valid deletion count for each of the 19 entity tables, along with the existing storage count and authentication acknowledgement. The native and backend table names match. The nine focused contract tests passed, including rejection for each omitted receipt and preservation of session, cache, navigation and drafts when only authentication and storage were acknowledged. The full native suite passed 638 tests.
+
+The local backend candidate checks for conflicting legacy ownership before storage or billing mutations. Conditional database deletes keep rows whose inspected ownership or billing reference changes. All 32 Deno checks, the entry point type check and formatting checks passed. Live PostgREST verification, the concurrent-write gap after the last absence check, exact rollback dependency binding and authorized disposable-account lifecycle tests remain open. The production readiness gate remains closed.
 
 ## Authorization and preservation
 
