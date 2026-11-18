@@ -407,3 +407,94 @@ canceled. After cutover, a new authenticated creation returned HTTP 403 from
 RLS with no upload session or object. The E64 in-flight upload fixture also
 passed with the canonical writer and cutover SQL installed. The seven offline handler tests separately
 exercise uncertain storage and acknowledgment outcomes.
+
+## Signed native deletion fixture
+
+The signed iOS test uses a one-use TLS gateway to a fresh local stack.
+Keep every published Docker port on loopback. Adapt the
+[W04 stack setup](../native-auth/README.md#start-the-dedicated-stack) with
+project ID `execute-w09-e68-local`, gateway 55471, database 55472,
+shadow port 55470, Mailpit enabled on 55477, and a normal 3600-second Auth
+token lifetime without the W04 short timebox. Verify the bindings before
+creating synthetic identities. The simulator connects to
+`https://127.0.0.1:55474`. The fixture's internal Edge runtime listens on
+55473. Use a fresh unlinked directory and install the six baseline migrations
+and the eight optional SQL guards in the same order as
+`test_staged_schema_reversal.py`. This fixture never contacts hosted Supabase.
+
+From the repository root, set `fixture` to the private stack directory. Keep
+`supabase status` output and all generated fixture state mode 0600.
+
+```sh
+umask 077
+case "$(stat -f '%Lp' "$fixture")" in 700) ;; *) exit 1;; esac
+supabase status --workdir "$fixture" -o json > "$fixture/status.json"
+python3 - "$fixture" <<'PY'
+import json, sys
+from pathlib import Path
+
+fixture = Path(sys.argv[1])
+status = json.loads((fixture / "status.json").read_text())
+assert status["API_URL"] == "http://127.0.0.1:55471"
+(fixture / "runtime.json").write_text(json.dumps({
+    "anon": status["ANON_KEY"],
+    "service": status["SERVICE_ROLE_KEY"],
+}))
+(fixture / "anon-key").write_text(status["ANON_KEY"] + "\n")
+PY
+```
+
+Use a fresh test CA and a leaf certificate with an IP subject alternative
+name for `127.0.0.1`. Trust the CA only in the dedicated simulator. The
+gateway expects the leaf certificate and key as `tls.crt` and `tls.key` in
+the same private directory. Keep ATS enabled.
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+  -subj '/CN=Execute local simulator CA' \
+  -keyout "$fixture/ca.key" -out "$fixture/ca.crt" \
+  -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign'
+openssl req -newkey rsa:2048 -nodes -subj '/CN=127.0.0.1' \
+  -keyout "$fixture/tls.key" -out "$fixture/tls.csr"
+cat > "$fixture/leaf.ext" <<'CERT'
+basicConstraints=CA:FALSE
+subjectAltName=IP:127.0.0.1
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+CERT
+openssl x509 -req -in "$fixture/tls.csr" -CA "$fixture/ca.crt" \
+  -CAkey "$fixture/ca.key" -CAcreateserial -days 2 -sha256 \
+  -extfile "$fixture/leaf.ext" -out "$fixture/tls.crt"
+xcrun simctl keychain "$simulator" add-root-cert "$fixture/ca.crt"
+```
+
+Seed the target and witness once. Run the restricted Deno command in a separate
+terminal with the existing vetted dependency cache. The command uses the
+production guarded writer and staged deletion handler.
+
+```sh
+fixtures=supabase/tests/account-deletion
+python3 "$fixtures/seed-native-deletion.py" new "$fixture"
+deno run --cached-only --no-lock --node-modules-dir=none \
+  --allow-net=127.0.0.1:55471,127.0.0.1:55473 \
+  --allow-env=SUPABASE_URL,SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY,SERVICE_ROLE_KEY,EXECUTE_STAGED_DELETION_OWNER_UUID \
+  --env-file="$fixture/edge.env" "$fixtures/serve-native-deletion.ts"
+```
+
+Once Edge is healthy, seed both Storage objects through the guarded writer and
+start the TLS gateway. The analyzer reads exact synthetic Auth, row, and Storage
+state from the three local APIs through `/qa/evidence`. The app's sign-in UI
+requests the normal email OTP. The fixture issues a deterministic code through
+the local Auth admin API only for its two confirmed synthetic emails.
+
+```sh
+python3 "$fixtures/seed-native-deletion.py" objects "$fixture"
+python3 "$fixtures/native-deletion-tls.py" "$fixture"
+```
+
+Use the URL above and the public key from `anon-key` in the disposable signed
+app configuration. The exact allowed Auth UUID is the `target_id` returned by
+`/qa/ready`. Keep the gateway and Edge running while the test runs. Afterward,
+stop the fixture processes, stop the dedicated stack, and discard the
+simulator and private fixture credential files.
