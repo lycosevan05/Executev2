@@ -222,14 +222,15 @@ python3 supabase/tests/account-deletion/run_hosted_rehearsal.py "$phase" \
    staged request. The target's Auth user, row and object must disappear. The
    witness must survive, and a newly registered UUID using the same email must
    write normally. Run `readback-sql --include-guard-state` again.
-5. Clear the staged acceptance settings, run `check-off` again, and stop the
-   guarded writer. Verify stopped writers and terminal requests before schema
-   reversal. Keep the staged route deployed in its disabled state through
-   `check-restored`. After the independently verified schema reversal,
-   `check-restored` confirms preserved fixtures and a standard authenticated
-   upload. Run `readback-sql` without the guard flag to verify surviving data,
-   then run `cleanup` and independently read back absence. Remove the staged
-   endpoint only after these checks.
+5. Clear the staged acceptance settings, run `check-off` again, and withdraw
+   both functions. Verify their absence through the provider inventory and the
+   runner's `check-withdrawn` phase. The latter requires the platform's explicit
+   `NOT_FOUND` response for each exact endpoint. After confirming terminal
+   requests, apply the independently verified schema reversal. Use
+   `--staged-withdrawn` when running `check-restored` to confirm preserved
+   fixtures and a standard authenticated upload. Run `readback-sql` without the
+   guard flag to verify surviving data, then run `cleanup --staged-withdrawn`
+   and independently read back absence.
 
 The runner verifies Auth markers, UUIDs and paths before acting on its fixtures.
 A lost or unexpected API response stops the sequence. Inspect the recorded

@@ -156,9 +156,15 @@ class HostedFixture:
         if data != self.contents(actor, name):
             raise Stop("Storage bytes did not match the fixture.")
 
-    def check_off(self):
-        witness = self.state["actors"]["witness"]
-        self.request("POST", STAGED_ROUTE, (503,), token=self.sign_in(witness), payload={})
+    def check_off(self, withdrawn=False):
+        token = self.sign_in(self.state["actors"]["witness"])
+        if not withdrawn:
+            self.request("POST", STAGED_ROUTE, (503,), token=token, payload={})
+            return
+        for path in (STAGED_ROUTE, "/functions/v1/guardedStorageUpload"):
+            result = self.json("POST", path, 404, token=token, payload={})
+            if result.get("code") != "NOT_FOUND" or result.get("message") != "Requested function was not found":
+                raise Stop("The provider did not confirm withdrawal of the exact function.")
 
     def hold(self, save):
         target = self.state["actors"]["target"]
@@ -207,8 +213,8 @@ class HostedFixture:
             raise Stop("Auth did not assign a fresh UUID to the replacement.")
         self.seed(replacement)
 
-    def check_restored(self):
-        self.check_off()
+    def check_restored(self, withdrawn):
+        self.check_off(withdrawn)
         self.readback(self.state["actors"]["target"], missing=True)
         self.readback(self.state["actors"]["replacement"])
         witness = self.state["actors"]["witness"]
@@ -220,11 +226,11 @@ class HostedFixture:
                      headers={"Content-Type": "text/plain", "x-upsert": "false"})
         self.readback(witness, name="restored")
 
-    def cleanup(self):
+    def cleanup(self, withdrawn):
         # Keep any unresolved request or marker available for independent review.
         if self.state.get("held_dispatch"):
             raise Stop("A held dispatch needs independent reconciliation before cleanup.")
-        self.check_off()
+        self.check_off(withdrawn)
         actors = self.state["actors"]
         for role in ("target", "replacement", "witness"):
             if role not in actors:
@@ -302,14 +308,18 @@ def private_state(path, origin, prepare):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("prepare", "seed", "check-off", "hold", "rehearse",
-                                          "readback-sql", "check-restored", "cleanup"))
+                                          "readback-sql", "check-withdrawn", "check-restored", "cleanup"))
     parser.add_argument("--approved-origin", required=True)
     parser.add_argument("--state", required=True, type=Path)
     parser.add_argument("--writers-isolated", action="store_true",
                         help="Confirm the project has no issued capabilities or untracked writers.")
     parser.add_argument("--include-guard-state", action="store_true",
                         help="Include ledger and upload-closure readback while the guards are installed.")
+    parser.add_argument("--staged-withdrawn", action="store_true",
+                        help="Require provider NOT_FOUND for both withdrawn functions in post-rollback phases.")
     args = parser.parse_args()
+    if args.staged_withdrawn and args.phase not in ("check-restored", "cleanup"):
+        parser.error("--staged-withdrawn applies only to the post-rollback phases")
     origin = args.approved_origin
     if (not re.fullmatch(r"https://[a-z]{20}\.supabase\.co", origin)
             or origin in RESTRICTED_PROJECTS
@@ -342,10 +352,12 @@ def main():
     elif args.phase == "readback-sql":
         fixture.sql_readback(args.include_guard_state)
         return
+    elif args.phase == "check-withdrawn":
+        fixture.check_off(withdrawn=True)
     elif args.phase == "check-restored":
-        fixture.check_restored()
+        fixture.check_restored(args.staged_withdrawn)
     else:
-        fixture.cleanup()
+        fixture.cleanup(args.staged_withdrawn)
     print(f"Hosted fixture phase complete: {args.phase}.")
 
 
