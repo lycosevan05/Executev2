@@ -236,6 +236,69 @@ async function run(
 ) {
   return await deleteAccount(user, tables, f.store(), b.billing());
 }
+
+Deno.test("unavailable staged retirement stops before provider or storage operations", async () => {
+  const fixture = new Fixture();
+  const billing = new BillingFixture();
+  const store = createDeletionStore(
+    fixture,
+    "uploads",
+    async (_, snapshots) => {
+      deepEqual(snapshots, []);
+      return { error: new Error("fixture RPC unavailable") };
+    },
+  );
+  await rejects(
+    () => deleteAccount(user, ["user_subscriptions"], store, billing.billing()),
+    /Subscription retirement is unavailable/,
+  );
+  deepEqual(billing.events, []);
+  deepEqual(fixture.listings, []);
+  deepEqual(fixture.events, []);
+});
+
+Deno.test("staged retirement keeps absent and JSON-null links distinct and requires an exact count", async () => {
+  const fixture = new Fixture();
+  fixture.tables.set("user_subscriptions", [
+    sub("legacy", null, { stripe_subscription_ids: null }),
+    sub("owned"),
+  ]);
+  const store = createDeletionStore(
+    fixture,
+    "uploads",
+    async (owner, snapshots) => {
+      deepEqual(owner, user);
+      if (!snapshots.length) return { data: 0, error: null };
+      deepEqual(snapshots.toSorted((a, b) => a.id.localeCompare(b.id)), [
+        {
+          id: "legacy",
+          owner_id: null,
+          owner_email: user.email,
+          created_by: user.email,
+          user_email: user.email,
+          legacy_user_id: user.email,
+          stripe_id: "sub_legacy",
+          stripe_ids_json: "null",
+        },
+        {
+          id: "owned",
+          owner_id: user.id,
+          owner_email: null,
+          created_by: null,
+          user_email: null,
+          legacy_user_id: null,
+          stripe_id: "sub_owned",
+          stripe_ids_json: null,
+        },
+      ]);
+      return { data: 1, error: null };
+    },
+  );
+  const plan = await store.prepareRows(["user_subscriptions"], user);
+  await rejects(() => plan.deleteRows("user_subscriptions"), /fully retired/);
+  equal(fixture.queries.some((query) => query.deleting), false);
+});
+
 Deno.test("legacy exact email scopes preserve foreign owners, unrelated/null rows and progress", async () => {
   const f = new Fixture();
   for (const table of ["goals", "goal_progress_entries"]) {

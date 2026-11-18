@@ -148,6 +148,53 @@ RLS for supported access control. [Supabase Storage schema](https://supabase.com
   reconciliation path and cannot be safely assigned by looking up the email
   alone.
 
+## Retirement of known Stripe subscriptions
+
+The opt-in `retired-stripe-subscription-guard.sql` candidate keeps late
+projections from bringing back Stripe subscription IDs that account deletion
+already verified and removed. The service-only RPC checks the same account and
+row snapshot used by deletion. It removes matching rows and records a SHA-256
+fingerprint for each of their Stripe references in one transaction. The private
+ledger contains fingerprints only. A later projection containing one of those
+references fails without recreating or overwriting the subscription row. A new
+UUID using the same email can reconcile a different Stripe subscription ID.
+
+The short retirement transaction takes an exclusive lock on the subscription
+table. It waits for a writer already holding a row lock and then rechecks the
+snapshot. Plain reads can continue. A writer that arrives after retirement
+waits for the transaction to finish and then checks the committed fingerprints.
+Lock acquisition times out after five seconds. Stripe-reference writes require
+PostgreSQL's read-committed semantics so a fixed older snapshot cannot miss a
+fingerprint. Measure contention and check isolation with the staged provider
+paths before rollout.
+
+```sh
+python3 supabase/tests/account-deletion/test_retired_stripe_subscription_guard.py \
+  --postgres-bin /path/to/postgresql/bin
+```
+
+The test uses the six baseline migrations, synthetic users and the existing
+provider reconciliation RPC. It verifies exact snapshot checks, rollback of a
+mixed-owner batch, a new UUID with the original email, both transaction orders,
+and rejection through the legacy upsert path. Deno separately covers the
+adapter's exact snapshots and stopping before provider cancellation when the
+staged RPC is unavailable.
+
+For a separately approved staging run, apply the candidate before setting
+`EXECUTE_STAGED_STRIPE_RETIREMENT=1` on the candidate deletion function. Before
+cleanup, the adapter checks that an empty RPC call works. During cleanup the
+RPC must return exactly the expected row count. Keep the native deletion gate
+closed through staged verification. To undo the candidate, clear the opt-in
+setting first. Review removing the two `reject_retired_stripe_subscription_*`
+triggers and the public retirement RPC in one transaction. Keep the private
+fingerprints for rollback review because dropping enforcement permits previously
+retired references again. Review retention separately.
+
+The guard covers IDs present in the verified deletion snapshot. An unseen
+Stripe ID, a projection that carries no retired ID, or an email-only RevenueCat
+projection still needs durable provider attribution. The guard does not
+coordinate Storage writes or supply the exact deployed v6 rollback artifact.
+
 ## Staged acceptance
 
 1. Establish the exact v6 rollback artifact or provider-confirmed bytes. Review

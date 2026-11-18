@@ -32,6 +32,14 @@ Deno.serve(createDeletionHandler({
       createDeletionStore(
         service as unknown as DeletionClient,
         Deno.env.get("SUPABASE_UPLOAD_BUCKET") || "uploads",
+        Deno.env.get("EXECUTE_STAGED_STRIPE_RETIREMENT") === "1"
+          ? (account, rows) =>
+            service.rpc("retire_account_stripe_subscription_rows", {
+              p_owner_id: account.id,
+              p_email: account.email ?? null,
+              p_rows: rows,
+            })
+          : undefined,
       ),
       billing,
     );

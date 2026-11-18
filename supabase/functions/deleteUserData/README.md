@@ -198,11 +198,19 @@ deleting its data.
 The
 [isolated UUID ownership guard candidate](../../tests/account-deletion/README.md)
 coordinates authoritative entity writes and hard Auth removal at the database
-boundary. Its opt-in extensions bind qualifying authenticated legacy writes
-to the request's UUID and require an existing Auth owner for access to unbound
+boundary. Its opt-in extensions bind qualifying authenticated legacy writes to
+the request's UUID and require an existing Auth owner for access to unbound
 records. These candidates are separate from automatic migrations. Storage,
 legacy cleanup under account reuse, and delayed provider events still need
 staged coordination.
+
+The
+[opt-in Stripe retirement candidate](../../tests/account-deletion/README.md#retirement-of-known-stripe-subscriptions)
+atomically removes exact subscription snapshots and records the previously
+verified Stripe references. Later projections carrying one of those IDs fail,
+while a new UUID using the same email can buy a new Stripe subscription. The
+candidate still needs staged acceptance. It covers known Stripe references only,
+so a legacy email-only RevenueCat event still needs durable attribution.
 
 E58 verified the ownership migration through isolated PostgREST and the full
 local migration chain. Supabase Support accepted the request for the exact v6
@@ -238,7 +246,7 @@ deno check --no-config --node-modules-dir=none supabase/functions/deleteUserData
 deno fmt --check supabase/functions/deleteUserData
 ```
 
-35 unique methods cover 30 in-memory orchestration/adapter/provider cases, four
+37 unique methods cover 32 in-memory orchestration/adapter/provider cases, four
 HTTP boundary cases, and one actual Supabase SDK serialization case with
 injected fetch. The six added cases cover conflicting ordinary and subscription
 legacy identity, UUID authority, overlap instability, changed preconditions, and

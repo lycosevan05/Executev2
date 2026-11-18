@@ -82,6 +82,52 @@ interface RowSnapshot {
   subscriptionIds: string[];
 }
 
+type RetirementSnapshot =
+  & { id: string }
+  & Record<
+    | "owner_id"
+    | "owner_email"
+    | "created_by"
+    | "user_email"
+    | "legacy_user_id"
+    | "stripe_id"
+    | "stripe_ids_json",
+    string | null
+  >;
+type RetireSubscriptions = (
+  user: DeletionUser,
+  snapshots: RetirementSnapshot[],
+) => PromiseLike<Result>;
+
+async function retireSnapshots(
+  retire: RetireSubscriptions,
+  user: DeletionUser,
+  snapshots: readonly RowSnapshot[],
+): Promise<number> {
+  for (let offset = 0; offset < snapshots.length; offset += pageSize) {
+    const batch = snapshots.slice(offset, offset + pageSize).map((snapshot) => {
+      const filters = new Map(snapshot.filters);
+      return {
+        id: snapshot.id,
+        owner_id: filters.get("owner_id") ?? null,
+        owner_email: filters.get("owner_email") ?? null,
+        created_by: filters.get("created_by") ?? null,
+        user_email: filters.get("user_email") ?? null,
+        legacy_user_id: filters.get("data->>user_id") ?? null,
+        stripe_id: filters.get(stripeColumn) ?? null,
+        stripe_ids_json: filters.get(stripeLinksColumn) ?? null,
+      };
+    });
+    const result = await retire(user, batch);
+    if (result.error || result.data !== batch.length) {
+      throw new Error(
+        "Account subscriptions changed or could not be fully retired; retry account deletion.",
+      );
+    }
+  }
+  return snapshots.length;
+}
+
 function nullableText(value: unknown): string | null {
   if (value === null || typeof value === "string") return value;
   throw new Error("Account record attribution is malformed; cleanup stopped.");
@@ -243,10 +289,21 @@ async function deleteSnapshots(
 export function createDeletionStore(
   client: DeletionClient,
   bucket: string,
+  retireSubscriptions?: RetireSubscriptions,
 ): DeletionStore {
   return {
     async prepareRows(tables, user) {
       validateUser(user);
+      if (retireSubscriptions && tables.includes(subscriptionTable)) {
+        // Verify the staged RPC is installed before canceling subscriptions or
+        // removing uploads. An empty snapshot never changes durable state.
+        const result = await retireSubscriptions(user, []);
+        if (result.error || result.data !== 0) {
+          throw new Error(
+            "Subscription retirement is unavailable; cleanup stopped.",
+          );
+        }
+      }
       // Inventory subscription references even when the caller supplies a smaller
       // table list. Production supplies the entire entity catalog.
       const snapshots = new Map<string, RowSnapshot[]>();
@@ -264,6 +321,9 @@ export function createDeletionStore(
             throw new Error(
               "Account records must be inventoried before deletion.",
             );
+          }
+          if (table === subscriptionTable && retireSubscriptions) {
+            return await retireSnapshots(retireSubscriptions, user, eligible);
           }
           // All subscriptions need inventoried Stripe references. Ordinary UUID
           // rows are authoritative and can be deleted without legacy discovery.
