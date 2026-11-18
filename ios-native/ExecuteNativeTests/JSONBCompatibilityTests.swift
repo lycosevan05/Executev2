@@ -854,6 +854,21 @@ final class StartupStateTests: XCTestCase {
         guard case .missing = cached else { return XCTFail("Deleted account cache should be removed") }
     }
 
+    func testSuccessfulAppleDeletionShowsDismissibleManualRevocationGuidance() async throws {
+        let user = ExecuteUser(id: UUID(), email: "apple-delete@example.invalid", displayName: "Fixture")
+        let state = makeState(
+            authService: MockAuthService(restoredUser: user),
+            accountService: MockAccountService(outcome: .manualAppleRevocation)
+        )
+        await state.start()
+        XCTAssertFalse(state.appleRevocationInstructionsPending)
+        try await state.deleteAccount()
+        XCTAssertEqual(state.launchState, .signedOut)
+        XCTAssertTrue(state.appleRevocationInstructionsPending)
+        state.dismissAppleRevocationInstructions()
+        XCTAssertFalse(state.appleRevocationInstructionsPending)
+    }
+
     func testFailedAccountDeletionKeepsAuthenticatedSession() async {
         let user = ExecuteUser(id: UUID(), email: "member@example.com", displayName: "Member")
         let deletionError = AppError(title: "Deletion failed", message: "Try again")

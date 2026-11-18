@@ -145,16 +145,19 @@ struct StagedDeletionFunctionService: EdgeFunctionInvoking {
 final class MockAccountService: AccountServicing {
     var deletionAvailable: Bool { true }
     var deletionError: AppError?
+    private let outcome: AccountDeletionOutcome
     private(set) var deletionCount = 0
 
-    init(deletionError: AppError? = nil) {
+    init(deletionError: AppError? = nil, outcome: AccountDeletionOutcome = .complete) {
         self.deletionError = deletionError
+        self.outcome = outcome
     }
 
     @discardableResult
     func deleteAccount() async throws -> AccountDeletionOutcome {
         deletionCount += 1
         if let deletionError { throw deletionError }
+        return outcome
     }
 }
 
