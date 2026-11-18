@@ -7,12 +7,13 @@ final class SignedDeletionPersistenceTests: XCTestCase {
     private static let origin = "https://127.0.0.1:55474"
     private static let sessionKey = "sb-127-auth-token"
     private static let fixtureDate = "2026-11-18"
+    private enum Failure: Error { case invalidFixture, wrongActiveSession }
 
     func testCacheAndKeychainArePresentBeforeDeletion() throws {
         let (target, witness) = try fixture()
         let rawSession = try XCTUnwrap(AuthClient.Configuration.defaultLocalStorage.retrieve(key: Self.sessionKey))
         let session = try JSONDecoder().decode(Session.self, from: rawSession)
-        XCTAssertEqual(session.user.id, target)
+        guard session.user.id == target else { throw Failure.wrongActiveSession }
         for owner in [target, witness] {
             XCTAssertNotNil(UserDefaults.standard.data(forKey: "execute.cache.\(owner.uuidString).home.dashboard"))
             let intent = NutritionWeekWaterIntent(token: owner, owner: owner, date: Self.fixtureDate,
@@ -42,10 +43,10 @@ final class SignedDeletionPersistenceTests: XCTestCase {
         guard env["EXECUTE_E68_SIGNED_DELETION"] == "1" else {
             throw XCTSkip("Requires the isolated signed E68 deletion fixture")
         }
-        XCTAssertEqual(try AppConfiguration.load().supabaseURL.absoluteString, Self.origin)
+        guard try AppConfiguration.load().supabaseURL.absoluteString == Self.origin else { throw Failure.invalidFixture }
         let target = try XCTUnwrap(env["EXECUTE_STAGED_DELETION_OWNER_UUID"].flatMap(UUID.init(uuidString:)))
         let witness = try XCTUnwrap(env["EXECUTE_E68_WITNESS_UUID"].flatMap(UUID.init(uuidString:)))
-        XCTAssertNotEqual(target, witness)
+        guard target != witness else { throw Failure.invalidFixture }
         return (target, witness)
     }
 
