@@ -216,9 +216,19 @@ Write preflights now require the SDK to still have the signed-in owner's saved s
 
 ### E52 — Recover deletion deployment history and verify PostgreSQL predicates
 
-Three independently retained November 13 Management API snapshots agree on historical `deleteUserData` version 6 with JWT verification enabled and a matching provider compiled-bundle digest. The E41 ZIP is the source closure and has its own digest. Fresh deployed revision readback and the resolved dependency or compiled archive still require verification.
+Three independently retained November 13 Management API snapshots agree on historical `deleteUserData` version 6 with JWT verification enabled and a matching provider compiled-bundle digest. The authorized CLI metadata readback independently confirms version 6, legacy JWT verification and the same compiled-bundle digest for the current deployment. All three files from the fresh single-function CLI download are byte-identical to the E41 source ZIP. A usable compiled rollback bundle or resolved dependency lock remains outstanding.
 
 Synthetic PostgreSQL 17.5 checks confirmed exact email and UUID matching, distinct null and blank predicates, foreign-owner preservation and affected-row counts for changes to JSON subscription ownership or references. These checks complement the SDK serialization and Deno handler tests. Actual PostgREST transport, deployed RLS and the final concurrency gap remain open. The native rollout gate stays closed.
+
+### E53 — Verify billing and SDK refresh ownership
+
+Billing clears a confirmed purchase notice when a successful read reports loss of App Store access. It preserves pending confirmation and the existing backend entitlement policy, and uses the same resolved expiry calculation when showing purchase success. The subscription reader excludes an explicitly foreign owner before choosing the newest current or null-owner legacy row and verifies the returned owner and email. Fixtures exercised those cases without purchases on a live account.
+
+The real SDK fixture held one owner's refresh across a completed sign-in for another owner. The late response reached SDK storage. Execute responded by dismissing the mismatched session and clearing active billing, navigation and cache context. A separate fixture confirmed that same-owner rotation leaves the active app open. The suite passed 645 tests.
+
+### E54 — Fence cold restore against an unacknowledged SDK owner
+
+Execute now remembers the last acknowledged owner or signed-out state for the configured backend. A legitimate existing session adopts its owner after a verified restore, and a newer explicit sign-in cannot be displaced by an older restore. The marker stores an owner UUID or signed-out value. The refreshed SDK session remains subject to the app owner check after relaunch. Fixture coverage includes cold relaunch after an older owner's refresh, a newer sign-in during legacy restore, and a failed Keychain removal followed by private reauthentication in the fixture. The full native suite passed 648 tests. The pinned SDK can still write a stale credential or remove the newer session before the app sees the event. The app-level guard can require a fresh sign-in when that happens.
 
 ## Authorization and preservation
 

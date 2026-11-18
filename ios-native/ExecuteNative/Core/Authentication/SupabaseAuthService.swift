@@ -6,6 +6,21 @@ final class SupabaseAuthService: AuthServicing {
     private let client: SupabaseClient
     private let configuration: AppConfiguration
     private let operations = AuthOperationQueue()
+    private let ownerDefaults: UserDefaults
+    private let ownerKey: String
+    private var authEpoch = UUID()
+
+    private enum AcknowledgedOwner: Equatable {
+        case legacy
+        case signedOut
+        case owner(UUID)
+    }
+
+    private var acknowledgedOwner: AcknowledgedOwner {
+        guard let value = ownerDefaults.object(forKey: ownerKey) else { return .legacy }
+        guard let text = value as? String, let id = UUID(uuidString: text) else { return .signedOut }
+        return .owner(id)
+    }
     private struct SessionAcknowledgment {
         let userID: UUID
         let digest: String
@@ -14,9 +29,12 @@ final class SupabaseAuthService: AuthServicing {
     private var callbackOrder: [String] = []
     private var completedCallbacks: Set<String> = []
 
-    init(client: SupabaseClient, configuration: AppConfiguration) {
+    init(client: SupabaseClient, configuration: AppConfiguration, ownerDefaults: UserDefaults) {
         self.client = client
         self.configuration = configuration
+        self.ownerDefaults = ownerDefaults
+        let urlDigest = AuthCallbackInput.digest(configuration.supabaseURL.absoluteString)
+        self.ownerKey = "execute.auth.acknowledgedOwner.\(urlDigest)"
     }
 
     func restoreSession() async throws -> ExecuteUser? {
@@ -39,16 +57,48 @@ final class SupabaseAuthService: AuthServicing {
     }
 
     func hasLocalSession(for userID: UUID) -> Bool {
-        client.auth.currentSession?.user.id == userID
+        acknowledgedOwner == .owner(userID) && client.auth.currentSession?.user.id == userID
+    }
+
+    func markSessionLost(for userID: UUID) {
+        guard acknowledgedOwner == .owner(userID), !hasLocalSession(for: userID) else { return }
+        recordSignedOut()
     }
 
     private func restoredUser() async throws -> ExecuteUser? {
+        let expected = acknowledgedOwner
+        let epoch = authEpoch
+        guard expected != .signedOut, let candidateID = client.auth.currentSession?.user.id,
+              expected == .legacy || expected == .owner(candidateID) else { return nil }
+
         do {
             let session = try await client.auth.session
-            return Self.user(from: session.user)
+            try Task.checkCancellation()
+            // A refresh can finish after an explicit auth operation. Only the
+            // current attempt may adopt a legacy session into the owner marker.
+            guard epoch == authEpoch, expected == acknowledgedOwner,
+                  session.user.id == candidateID,
+                  let saved = client.auth.currentSession, saved.user.id == candidateID,
+                  !saved.isExpired else { return nil }
+            if expected == .legacy { rememberOwner(candidateID) }
+            return Self.user(from: saved.user)
         } catch AuthError.sessionMissing {
+            try Task.checkCancellation()
+            if epoch == authEpoch, expected == acknowledgedOwner, client.auth.currentSession == nil {
+                recordSignedOut()
+            }
             return nil
         }
+    }
+
+    private func rememberOwner(_ userID: UUID) {
+        authEpoch = UUID()
+        ownerDefaults.set(userID.uuidString, forKey: ownerKey)
+    }
+
+    private func recordSignedOut() {
+        authEpoch = UUID()
+        ownerDefaults.set("signed-out", forKey: ownerKey)
     }
 
     func sendEmailOTP(to email: String) async throws {
@@ -57,11 +107,13 @@ final class SupabaseAuthService: AuthServicing {
 
     func verifyEmailOTP(email: String, token: String) async throws -> ExecuteUser {
         try await operations.enqueue {
+            self.authEpoch = UUID()
             let response = try await self.client.auth.verifyOTP(email: email, token: token, type: .email)
             guard let session = response.session else {
                 throw AppError(title: "Sign-in incomplete", message: "The verification did not create a session. Request a new code and try again.")
             }
             let user = try await self.acknowledgedUser(matching: Self.acknowledgment(session))
+            self.rememberOwner(user.id)
             self.fencePendingCallbacks()
             return user
         }
@@ -82,6 +134,7 @@ final class SupabaseAuthService: AuthServicing {
         do {
             return try await operations.enqueue {
                 guard !self.completedCallbacks.contains(identity) else { return nil }
+                self.authEpoch = UUID()
                 if self.pendingCallbacks[identity] == nil {
                     let session = try await self.client.auth.exchangeCodeForSession(authCode: code)
                     self.pendingCallbacks[identity] = Self.acknowledgment(session)
@@ -95,6 +148,7 @@ final class SupabaseAuthService: AuthServicing {
                 // A returned Session is not proof that the SDK stored it. A retry verifies the
                 // same acknowledgment without exchanging the one-use code a second time.
                 let user = try await self.acknowledgedUser(matching: self.pendingCallbacks[identity]!)
+                self.rememberOwner(user.id)
                 self.pendingCallbacks[identity] = nil
                 self.completedCallbacks.insert(identity)
                 return user
@@ -130,6 +184,7 @@ final class SupabaseAuthService: AuthServicing {
     func signOut() async throws {
         try await operations.enqueue {
             self.fencePendingCallbacks()
+            self.recordSignedOut()
             try await self.client.auth.signOut()
             guard self.client.auth.currentSession == nil else {
                 throw AppError(title: "Sign-out could not be saved", message: "The saved session is still present on this device. Try signing out again.")

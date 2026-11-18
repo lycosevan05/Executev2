@@ -125,6 +125,7 @@ final class AppState: ObservableObject {
     }
 
     private func closeSession(for userID: UUID) async {
+        authService.markSessionLost(for: userID)
         sessionGeneration = UUID()
         subscriptionRefreshTask?.cancel()
         billing.deactivate()

@@ -72,6 +72,7 @@ protocol AuthServicing: AnyObject, Sendable {
     func restoreSession() async throws -> ExecuteUser?
     func monitorSessionLoss(onLoss: @escaping @MainActor () async -> Void) async
     func hasLocalSession(for userID: UUID) -> Bool
+    func markSessionLost(for userID: UUID)
     func sendEmailOTP(to email: String) async throws
     func verifyEmailOTP(email: String, token: String) async throws -> ExecuteUser
     func authorizationURL(for provider: OAuthProvider) async throws -> URL
@@ -82,6 +83,7 @@ protocol AuthServicing: AnyObject, Sendable {
 
 extension AuthServicing {
     func hasLocalSession(for userID: UUID) -> Bool { true }
+    func markSessionLost(for userID: UUID) {}
     func monitorSessionLoss(onLoss: @escaping @MainActor () async -> Void) async {}
     func callbackIdentity(_ url: URL) throws -> String? { nil }
 }

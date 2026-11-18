@@ -871,6 +871,15 @@ final class StartupStateTests: XCTestCase {
     }
 }
 
+private extension XCTestCase {
+    func isolatedAuthOwnerDefaults() -> UserDefaults {
+        let suite = "AuthOwnerFixture.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        return defaults
+    }
+}
+
 /// Local HTTP/storage fixtures exercise the real SDK's silent storage failure behavior.
 /// They are not provider authentication acceptance and never leave URLProtocol.
 @MainActor
@@ -879,7 +888,8 @@ final class AuthPersistenceTests: XCTestCase {
         fixture(storage: storage, host: userOnly ? "auth-user-only.invalid" : "auth-session.invalid").service
     }
 
-    private func fixture(storage: any AuthLocalStorage, host: String) -> (client: SupabaseClient, service: SupabaseAuthService) {
+    private func fixture(storage: any AuthLocalStorage, host: String,
+                         ownerDefaults: UserDefaults? = nil) -> (client: SupabaseClient, service: SupabaseAuthService) {
         let url = URL(string: "https://\(host)")!
         let transport = URLSessionConfiguration.ephemeral
         transport.protocolClasses = [AuthFixtureProtocol.self]
@@ -887,12 +897,15 @@ final class AuthPersistenceTests: XCTestCase {
             auth: .init(storage: storage, storageKey: "native-auth-fixture", autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
             global: .init(session: URLSession(configuration: transport))))
         let configuration = AppConfiguration(supabaseURL: url, supabaseAnonKey: "public-fixture-only", revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "fixture")
-        return (client, SupabaseAuthService(client: client, configuration: configuration))
+        return (client, SupabaseAuthService(client: client, configuration: configuration,
+                                            ownerDefaults: ownerDefaults ?? isolatedAuthOwnerDefaults()))
     }
 
     func testLateSDKRefreshClosesUIWhenStoredOwnerNoLongerMatches() async throws {
         let host = "late-refresh.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
-        let (client, service) = fixture(storage: AuthFixtureStorage(), host: host)
+        let storage = AuthFixtureStorage()
+        let ownerDefaults = isolatedAuthOwnerDefaults()
+        let (client, service) = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults)
         let original = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
         let suiteName = "LateSDKRefresh.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -947,6 +960,15 @@ final class AuthPersistenceTests: XCTestCase {
             return XCTFail("The previous UI owner's cache must be inactive")
         }
         XCTAssertNotNil(defaults.data(forKey: "execute.cache.\(current.id.uuidString).\(key.storageKey)"))
+
+        let (freshClient, freshService) = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults)
+        XCTAssertEqual(freshClient.auth.currentSession?.user.id, original.id)
+        let relaunched = AppState(authService: freshService, cache: cache, router: AppRouter(),
+                                  subscriptionService: MockSubscriptionService(state: paid), configurationError: nil)
+        await relaunched.start()
+        XCTAssertEqual(relaunched.launchState, .signedOut)
+        XCTAssertEqual(relaunched.premiumState, .free)
+        XCTAssertFalse(relaunched.allowsDraftWrites(for: original.id))
     }
 
     func testSameOwnerSDKRefreshKeepsCurrentAppSession() async throws {
@@ -968,6 +990,83 @@ final class AuthPersistenceTests: XCTestCase {
         await fulfillment(of: [unexpectedSignOut], timeout: 0.25)
         XCTAssertEqual(state.launchState, .signedIn(user))
         XCTAssertTrue(state.allowsDraftWrites(for: user.id))
+    }
+
+    func testExistingSDKSessionAdoptsOwnerMarkerForItsProjectOnly() async throws {
+        let storage = AuthFixtureStorage()
+        let ownerDefaults = isolatedAuthOwnerDefaults()
+        let host = "late-refresh.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let (client, service) = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults)
+        // An older app release populated SDK storage without an owner marker.
+        let issued = try await client.auth.verifyOTP(email: "fixture@example.invalid", token: "fixture-code", type: .email)
+        let userID = try XCTUnwrap(issued.session?.user.id)
+        XCTAssertFalse(service.hasLocalSession(for: userID))
+
+        let restored = try await service.restoreSession()
+        XCTAssertEqual(restored?.id, userID)
+        XCTAssertTrue(service.hasLocalSession(for: userID))
+        let sameProject = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults).service
+        XCTAssertTrue(sameProject.hasLocalSession(for: userID))
+        let differentHost = "late-refresh.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let differentProject = fixture(storage: storage, host: differentHost, ownerDefaults: ownerDefaults).service
+        XCTAssertFalse(differentProject.hasLocalSession(for: userID))
+    }
+
+    func testLegacyRestoreCannotOverwriteOwnerAcknowledgedDuringRefresh() async throws {
+        let storage = AuthFixtureStorage()
+        let ownerDefaults = isolatedAuthOwnerDefaults()
+        let host = "late-refresh.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let (client, service) = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults)
+        _ = try await client.auth.verifyOTP(email: "fixture@example.invalid", token: "fixture-code", type: .email)
+        var expired = try XCTUnwrap(client.auth.currentSession)
+        expired.expiresAt = 0
+        try storage.store(key: "native-auth-fixture", value: JSONEncoder().encode(expired))
+
+        let refreshStarted = expectation(description: "Legacy startup refresh is waiting for its response")
+        AuthFixtureProtocol.traffic.holdRefresh(host) { refreshStarted.fulfill() }
+        defer { AuthFixtureProtocol.traffic.releaseRefresh(host) }
+        let restore = Task { try await service.restoreSession() }
+        defer { restore.cancel() }
+        await fulfillment(of: [refreshStarted], timeout: 3)
+
+        _ = try await service.authorizationURL(for: .google)
+        let callback = try XCTUnwrap(URL(string: "fixture://login-callback?code=fixture-only-code"))
+        let switched = try await service.handleCallbackURL(callback)
+        XCTAssertEqual(switched?.id, AuthFixtureProtocol.callbackUserID)
+
+        AuthFixtureProtocol.traffic.releaseRefresh(host)
+        let stale = try await restore.value
+        XCTAssertNil(stale)
+        XCTAssertEqual(client.auth.currentSession?.user.id, expired.user.id)
+
+        let fresh = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults).service
+        let rejected = try await fresh.restoreSession()
+        XCTAssertNil(rejected)
+    }
+
+    func testFailedSDKSignOutStillBlocksColdRestore() async throws {
+        let storage = AuthFixtureStorage()
+        let ownerDefaults = isolatedAuthOwnerDefaults()
+        let host = "signed-out.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let (client, service) = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults)
+        let user = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        storage.configure(rejectRemovals: true)
+
+        do {
+            try await service.signOut()
+            XCTFail("Failed SDK removal must remain visible as a sign-out error")
+        } catch let error as AppError {
+            XCTAssertEqual(error.title, "Sign-out could not be saved")
+        }
+        XCTAssertEqual(client.auth.currentSession?.user.id, user.id)
+        XCTAssertFalse(service.hasLocalSession(for: user.id))
+        let fresh = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults).service
+        let rejected = try await fresh.restoreSession()
+        XCTAssertNil(rejected)
+
+        let reauthenticated = try await fresh.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        XCTAssertEqual(reauthenticated.id, user.id)
+        XCTAssertTrue(fresh.hasLocalSession(for: user.id))
     }
 
     func testRevokedRefreshSendsAnOpenSessionBackToSignIn() async throws {
@@ -1649,7 +1748,10 @@ final class DailyActivityChecklistTests: XCTestCase {
         let client = SupabaseClient(supabaseURL: url, supabaseKey: "public-fixture-only", options: .init(
             auth: .init(storage: storage, storageKey: "native-auth-fixture", autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
             global: .init(session: URLSession(configuration: config))))
-        return (SupabaseAuthService(client: client, configuration: AppConfiguration(supabaseURL: url, supabaseAnonKey: "public-fixture-only", revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "fixture")), host)
+        let configuration = AppConfiguration(supabaseURL: url, supabaseAnonKey: "public-fixture-only",
+                                             revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "fixture")
+        return (SupabaseAuthService(client: client, configuration: configuration,
+                                    ownerDefaults: isolatedAuthOwnerDefaults()), host)
     }
     func testCallbackOriginAndCanonicalIdentityRejectOtherRoutesAndCredentials() throws {
         for text in ["https://login-callback?code=fixture", "other://login-callback?code=fixture", "fixture://login-callback.evil?code=fixture", "fixture://login-callback/path?code=fixture", "fixture://user@login-callback?code=fixture", "fixture://login-callback:80?code=fixture"] {

@@ -104,7 +104,9 @@ final class AppEnvironment: ObservableObject {
 #if DEBUG
             environmentStartupLogger.debug("[Startup] Supabase initialized")
 #endif
-            let authService = SupabaseAuthService(client: client, configuration: configuration)
+            let authService = SupabaseAuthService(
+                client: client, configuration: configuration, ownerDefaults: .standard
+            )
             let functions = SupabaseEdgeFunctionService(client: client)
             let subscriptionService = RevenueCatSubscriptionService(configuration: configuration)
             let environment = AppEnvironment(
