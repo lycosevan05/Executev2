@@ -80,6 +80,27 @@ Before production rollout, acquire and validate new Apple grants server-side
 against the exact Apple issuer, client audience and linked subject, then store
 the revocable grant in a server-only encrypted store. Separately verify expiry,
 rotation, callback/account isolation, deletion cleanup and consent-revocation
-handling with a real disposable Apple identity. Staging fixtures exercise the
-request and retry contract using a mocked provider. Production acquisition and
-live Apple revocation acceptance remain open.
+handling with a real Apple identity. Staging fixtures exercise the request and
+retry contract using a mocked provider. Production grant acquisition remains
+open.
+
+## E70 isolated live result
+
+The separate QA primary App ID, Services ID and signing key used the E67
+deletion-rehearsal callback. The owner approved private sign-in with their
+ordinary Apple Account for this one QA authorization. Apple Account settings
+showed distinct Execute and Execute QA Revocation entries before deletion.
+The first server-side Supabase PKCE exchange returned an Apple refresh grant.
+The preflight validated its signature, exact Services ID and Auth identity.
+
+The hosted staged handler first returned HTTP 503 while disabled. Once armed
+for the exact QA UUID, it returned a successful deletion receipt with Apple
+revocation. A second provider request found the same previously valid grant
+rejected with `invalid_grant`. Apple Account settings showed the regular
+Execute entry after the QA entry disappeared. Independent SQL confirmed the
+synthetic goal and the isolated Auth user were gone.
+
+The temporary staged function and its four secrets were withdrawn. The
+isolated database guard catalog matched the original snapshot after reversal.
+The existing production OAuth client and callback serve the release path.
+The E70 verification applies to the QA OAuth client and hosted rehearsal.

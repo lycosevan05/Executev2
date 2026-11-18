@@ -567,9 +567,9 @@ identity, application rows, billing projection and guarded upload gone.
 The unrelated Auth identity, goal and guarded upload remained accessible.
 A late local write through the real billing projection RPC returned
 `23514`. The local projection was seeded for this case. The run exercised
-the live Stripe provider but did not rely on public webhook delivery.
+the live Stripe provider. E61 and E63 cover the separate public webhook path.
 
 Both E70 temporary keys expired after use or exposure, and local fixture
-credentials and containers were removed. No hosted deletion function or
-production writer was changed. Managed-host rollout and Sign in with Apple
-acceptance require their own evidence.
+credentials and containers were removed. This Stripe run used a local deletion function. The separate hosted Apple
+rehearsal is recorded in [the Apple revocation notes](../../functions/deleteUserData-staged/apple-revocation.md).
+Production writer rollout remains open.
