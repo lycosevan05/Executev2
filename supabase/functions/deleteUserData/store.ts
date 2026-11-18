@@ -1,3 +1,4 @@
+import { knownStripeSubscriptionIDs } from "../_shared/billingProjection.ts";
 import {
   type DeletionStore,
   type DeletionUser,
@@ -43,6 +44,7 @@ const emailColumns = ["owner_email", "created_by", "user_email"];
 const legacyRowLimit = 10000;
 const subscriptionTable = "user_subscriptions";
 const stripeColumn = "data->>stripe_subscription_id";
+const stripeLinksColumn = "data->stripe_subscription_ids";
 
 type Scope = { key: string; value: string; legacy: boolean };
 function identityColumns(table: string): string[] {
@@ -77,7 +79,7 @@ type RowFilter = [column: string, value: string | null];
 interface RowSnapshot {
   id: string;
   filters: RowFilter[];
-  subscriptionId: string | null;
+  subscriptionIds: string[];
 }
 
 function nullableText(value: unknown): string | null {
@@ -130,12 +132,26 @@ function rowSnapshot(
     filters.push(...identities);
   }
 
-  const subscriptionId = data?.stripe_subscription_id ?? null;
-  if (subscriptionId !== null && typeof subscriptionId !== "string") {
-    throw new Error("Invalid subscription reference; cleanup stopped.");
+  let subscriptionIds: string[] = [];
+  if (data) {
+    try {
+      subscriptionIds = knownStripeSubscriptionIDs(data);
+    } catch {
+      throw new Error("Invalid subscription reference; cleanup stopped.");
+    }
+
+    // Use a JSONB equality predicate for the raw list. An added link must
+    // invalidate the deletion snapshot, even when the selected ID is unchanged.
+    const rawList = data.stripe_subscription_ids;
+    filters.push(
+      [stripeColumn, nullableText(data.stripe_subscription_id ?? null)],
+      [
+        stripeLinksColumn,
+        rawList === undefined ? null : JSON.stringify(rawList),
+      ],
+    );
   }
-  if (data) filters.push([stripeColumn, subscriptionId]);
-  return { id: row.id, filters, subscriptionId };
+  return { id: row.id, filters, subscriptionIds };
 }
 
 async function snapshotTable(
@@ -238,7 +254,7 @@ export function createDeletionStore(
         snapshots.set(table, await snapshotTable(client, table, user));
       }
       const subscriptionIds = (snapshots.get(subscriptionTable) ?? []).flatMap(
-        ({ subscriptionId }) => subscriptionId ? [subscriptionId] : [],
+        ({ subscriptionIds }) => subscriptionIds,
       );
       return {
         subscriptionIds: [...new Set(subscriptionIds)],

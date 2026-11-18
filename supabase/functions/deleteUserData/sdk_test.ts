@@ -25,7 +25,7 @@ Deno.test("actual SDK preserves exact quoted email, null-owner AND guard, range,
     owner_email: null,
     created_by: null,
     user_email: null,
-    data: { user_id: user.email },
+    data: { user_id: user.email, stripe_subscription_ids: ["sub_a", "sub_b"] },
   };
   const client = createClient(
     "https://deletion-fixture.invalid",
@@ -80,7 +80,7 @@ Deno.test("actual SDK preserves exact quoted email, null-owner AND guard, range,
     "uploads",
   );
   const plan = await store.prepareRows(["goals", "user_subscriptions"], user);
-  deepEqual(plan.subscriptionIds, []);
+  deepEqual(plan.subscriptionIds, ["sub_a", "sub_b"]);
   equal(await plan.deleteRows("goals"), 1);
   equal(await plan.deleteRows("user_subscriptions"), 1);
   await store.assertRowsAbsent("goals", user);
@@ -126,6 +126,7 @@ Deno.test("actual SDK preserves exact quoted email, null-owner AND guard, range,
     user_email: "is.null",
     "data->>user_id": "eq." + user.email,
     "data->>stripe_subscription_id": "is.null",
+    "data->stripe_subscription_ids": 'eq.["sub_a","sub_b"]',
   });
   const listing = calls.find((c) => c.url.pathname.includes("/object/list/"))!;
   deepEqual(listing.body, {

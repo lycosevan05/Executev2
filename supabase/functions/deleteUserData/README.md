@@ -124,29 +124,31 @@ user email is interpolated into PostgREST `.or` syntax.
 
 Legacy candidates and all UUID- or legacy-owned subscription rows are
 inventoried in ordered pages of 100, bounded at 10,000 distinct candidates per
-table. Overlapping scopes must observe the same attribution and Stripe reference
-for a given row ID. Legacy and subscription DELETEs batch IDs with identical
-snapshot predicates and require the exact affected count. The predicates include
-the current owner UUID or null, the inspected legacy identity fields, and the
-Stripe reference for subscription rows. A snapshot that changes before its
-DELETE is preserved by the database predicates and a count mismatch stops
-cleanup before authentication removal. Ordinary UUID-owned rows use the direct
-authoritative UUID predicate. Subscription rows created after preflight remain
-for review and block authentication removal when observed in the final absence
-check. Provider references absent from all database rows cannot be discovered by
-this patch.
+table. Overlapping scopes must observe the same attribution and Stripe
+references for a given row ID. Legacy and subscription DELETEs batch IDs with
+identical snapshot predicates and require the exact affected count. The
+predicates include the current owner UUID or null, the inspected legacy identity
+fields, and the singular and plural Stripe link fields for subscription rows.
+The plural list is matched as JSONB, with separate predicates for a missing
+field and explicit JSON null. A snapshot that changes before its DELETE is
+preserved by the database predicates and a count mismatch stops cleanup before
+authentication removal. Ordinary UUID-owned rows use the direct authoritative
+UUID predicate. Subscription rows created after preflight remain for review and
+block authentication removal when observed in the final absence check. Provider
+references absent from all database rows cannot be discovered by this patch.
 
 `deletion.ts` finishes legacy, subscription, and recursive upload inventory
-before any mutation, then verifies every referenced Stripe subscription's
-metadata.user_id against the authenticated UUID or email before canceling any.
-`billing.ts` permits only a genuine resource_missing response or
-already-canceled status to skip cancellation; it no longer treats arbitrary text
-containing “canceled subscription” as success. Missing/mismatched legacy
-provider ownership metadata blocks cleanup for reconciliation. It does not guess
-ownership from a customer email or cancel App Store subscriptions. Stripe API
-version14.21.0/2024-04-10 is retained from the local pre-change function; the
-observed deployed function has no Stripe path, so adding cancellation requires
-separate billing/deployment authorization.
+before any mutation. It uses the billing projection's bounded link parser to
+combine legacy single links with all known linked Stripe subscriptions. It
+verifies every known subscription's metadata.user_id against the authenticated
+UUID or email before canceling any. `billing.ts` permits only a genuine
+resource_missing response or already-canceled status to skip cancellation; it no
+longer treats arbitrary text containing “canceled subscription” as success.
+Missing/mismatched legacy provider ownership metadata blocks cleanup for
+reconciliation. It does not guess ownership from a customer email or cancel App
+Store subscriptions. Stripe API version14.21.0/2024-04-10 is retained from the
+local pre-change function; the observed deployed function has no Stripe path, so
+adding cancellation requires separate billing/deployment authorization.
 
 Uploads are traversed under the exact UUID prefix, paginated by stable name
 order, with depth32 and total-entry10000 safety bounds,
@@ -227,20 +229,24 @@ deno check --no-config --node-modules-dir=none supabase/functions/deleteUserData
 deno fmt --check supabase/functions/deleteUserData
 ```
 
-33 unique methods cover 28 in-memory orchestration/adapter/provider cases, four
+35 unique methods cover 30 in-memory orchestration/adapter/provider cases, four
 HTTP boundary cases, and one actual Supabase SDK serialization case with
 injected fetch. The six added cases cover conflicting ordinary and subscription
 legacy identity, UUID authority, overlap instability, changed preconditions, and
-a late subscription. The late-upload regression verifies that a retry removes
-only the new owned file and reaches Auth exactly once. The SDK fixture verifies
-exact quoted email, conditional DELETE by batched ID and owner scope, null and
-blank predicates, JSON-path predicates, pagination/count, Storage payload and
-Auth route. Dependencies can be resolved from the public package cache during
-module loading. Runtime network, environment, file and process access are
-denied. These are local fixtures. Deployed PostgREST predicate behavior with the
-actual schema and response counts, realistic-account timing, the live provider
-and the native deletion lifecycle still require acceptance. Earlier 26-method
-results overlap this run.
+a late subscription. Later regressions cover a late upload, multiple known
+Stripe links and changed plural links. The late-upload retry removes only the
+new owned file and reaches Auth exactly once. The SDK fixture verifies exact
+quoted email, conditional DELETE by batched ID and owner scope, null and blank
+predicates, JSON-path predicates, pagination/count, Storage payload and Auth
+route. Dependencies can be resolved from the public package cache during module
+loading. Runtime network, environment, file and process access are denied. These
+are local fixtures. A separate loopback test used the actual deletion store and
+SDK with PostgreSQL 17.12 and PostgREST 14.18 against the full local migration
+chain. A missing list, explicit JSON null and an empty list matched their
+snapshots. A changed list retained its row, then a fresh snapshot deleted that
+row and preserved the foreign owner. Hosted PostgREST, realistic-account timing,
+live providers and the native deletion lifecycle still require acceptance.
+Earlier fixture counts overlap this run.
 
 ## Proposed rollout — review before execution
 

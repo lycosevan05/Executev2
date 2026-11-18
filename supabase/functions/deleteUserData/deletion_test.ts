@@ -72,6 +72,8 @@ class Query implements PromiseLike<Result> {
       this.filters.every(([k, v]) => {
         const field = k.startsWith("data->>")
           ? (r.data as Row)?.[k.slice(7)] ?? null
+          : k.startsWith("data->")
+          ? JSON.stringify((r.data as Row)?.[k.slice(6)]) ?? null
           : r[k];
         return Array.isArray(v) ? v.includes(field) : field === v;
       })
@@ -360,6 +362,66 @@ Deno.test("conditional delete preserves reassigned legacy rows and changed subsc
   }
 });
 
+Deno.test("all known Stripe links across subscription schemas are verified and included in cleanup", async () => {
+  const f = new Fixture(), b = new BillingFixture();
+  f.tables.set("user_subscriptions", [
+    sub("selected", user.id, {
+      stripe_subscription_ids: ["sub_selected", "sub_independent"],
+    }),
+    sub("list_only", null, {
+      stripe_subscription_id: null,
+      stripe_subscription_ids: ["sub_legacy", "sub_independent"],
+    }),
+    sub("single_only", user.id, { stripe_subscription_ids: null }),
+    sub("foreign", foreign, { stripe_subscription_ids: ["sub_foreign_two"] }),
+  ]);
+  b.canceled.add("sub_selected");
+
+  const result = await run(f, b);
+  const verified = b.events.filter((event) => event.startsWith("verify:"));
+  deepEqual(verified.sort(), [
+    "verify:sub_independent",
+    "verify:sub_legacy",
+    "verify:sub_selected",
+    "verify:sub_single_only",
+  ]);
+  deepEqual(b.events.slice(0, verified.length).sort(), verified);
+  deepEqual(b.events.slice(verified.length).sort(), [
+    "cancel:sub_independent",
+    "cancel:sub_legacy",
+    "cancel:sub_single_only",
+  ]);
+  equal(result.results.user_subscriptions, "deleted 3");
+  deepEqual(f.tables.get("user_subscriptions")?.map(({ id }) => id), [
+    "foreign",
+  ]);
+});
+
+Deno.test("an added Stripe link invalidates a subscription snapshot with the same selected ID", async () => {
+  const f = new Fixture(), b = new BillingFixture();
+  f.tables.set("user_subscriptions", [sub("selected")]);
+  const changed = sub("selected", user.id, {
+    stripe_subscription_ids: ["sub_selected", "sub_independent"],
+  });
+  f.beforeDelete = (table) => {
+    if (table === "user_subscriptions") f.tables.set(table, [changed]);
+  };
+
+  await rejects(() => run(f, b), /records changed/);
+  deepEqual(f.tables.get("user_subscriptions"), [changed]);
+  equal(f.events.includes("auth"), false);
+  deepEqual(b.events, ["verify:sub_selected", "cancel:sub_selected"]);
+
+  f.beforeDelete = undefined;
+  const result = await run(f, b);
+  equal(result.results.user_subscriptions, "deleted 1");
+  equal(
+    b.events.filter((event) => event === "cancel:sub_independent").length,
+    1,
+  );
+  equal(f.events.at(-1), "auth");
+});
+
 Deno.test("a subscription created after inventory is preserved and blocks authentication removal", async () => {
   const f = new Fixture(), b = new BillingFixture(), store = f.store();
   const prepareRows = store.prepareRows;
@@ -615,6 +677,11 @@ Deno.test("subscription malformed reference and enumeration errors stop before m
   const f = new Fixture();
   f.tables.set("user_subscriptions", [
     sub("a", user.id, { stripe_subscription_id: 12 }),
+  ]);
+  await rejects(() => run(f), /Invalid subscription/);
+  deepEqual(f.events, []);
+  f.tables.set("user_subscriptions", [
+    sub("a", user.id, { stripe_subscription_ids: ["sub_a", 42] }),
   ]);
   await rejects(() => run(f), /Invalid subscription/);
   deepEqual(f.events, []);
