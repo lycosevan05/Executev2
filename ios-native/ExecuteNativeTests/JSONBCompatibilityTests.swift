@@ -1014,6 +1014,25 @@ final class AuthPersistenceTests: XCTestCase {
         XCTAssertTrue(state.allowsDraftWrites(for: user.id))
     }
 
+    func testDraftWritesStopBeforeTheAppReceivesSessionLoss() async throws {
+        let storage = AuthFixtureStorage()
+        let (_, service) = fixture(storage: storage, host: "draft-owner.auth-fixture.invalid")
+        let user = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        let suiteName = "DraftSessionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let state = AppState(authService: service, cache: UserScopedCacheStore(suiteName: suiteName),
+                             router: AppRouter(), subscriptionService: MockSubscriptionService(),
+                             configurationError: nil)
+        await state.start()
+        XCTAssertTrue(state.allowsDraftWrites(for: user.id))
+
+        try storage.remove(key: "native-auth-fixture")
+
+        XCTAssertEqual(state.launchState, .signedIn(user))
+        XCTAssertFalse(state.allowsDraftWrites(for: user.id))
+    }
+
     func testSuccessfulRemoteVerificationCannotSignInWhenStorageRejectsSession() async {
         let storage = AuthFixtureStorage(rejectWrites: true)
         do {

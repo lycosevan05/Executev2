@@ -39,7 +39,9 @@ final class AppState: ObservableObject {
     var accountDeletionAvailable: Bool { accountService.deletionAvailable }
 
     func allowsDraftWrites(for userID: UUID) -> Bool {
-        signedInUserID == userID && !deletingUserIDs.contains(userID)
+        signedInUserID == userID
+            && !deletingUserIDs.contains(userID)
+            && authService.hasLocalSession(for: userID)
     }
 
     init(
