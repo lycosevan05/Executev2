@@ -364,7 +364,15 @@ import Supabase
     func testForeignReadRowsCannotEnterDashboardOrCache() async throws {
         try await exerciseRead(foreignRows: true)
     }
-    private func exerciseRead(switchIdentity: Bool = false, failing: Bool = false, foreignRows: Bool = false) async throws {
+    func testCachedDashboardRendersWhileStartupRefreshIsSuspended() async throws {
+        try await exerciseRead(cachedDashboard: true)
+    }
+    private func exerciseRead(
+        switchIdentity: Bool = false,
+        failing: Bool = false,
+        foreignRows: Bool = false,
+        cachedDashboard: Bool = false
+    ) async throws {
         let a = ExecuteUser(id: UUID(), email: "home-read-a@example.invalid", displayName: "A")
         let b = ExecuteUser(id: UUID(), email: "home-read-b@example.invalid", displayName: "B")
         let rowID = UUID(), rowOwner = foreignRows ? b : a
@@ -384,6 +392,15 @@ import Supabase
         let suite = "HomeReadBoundary.\(UUID())", defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let cache = UserScopedCacheStore(suiteName: suite); await cache.activate(userID: a.id)
+        let savedID = UUID()
+        if cachedDashboard {
+            var saved = HomeDashboardSnapshot.empty
+            saved.dailyLogID = savedID
+            saved.dailyLog = try JSONDecoder().decode(HomeDailyLog.self, from: Data("""
+                {"date":"\(HomeDate.todayString)","calories_consumed":140}
+                """.utf8))
+            try await cache.write(saved, for: CacheKey("home", "dashboard"), userID: a.id)
+        }
         // Real SDK transport plus the existing repository identity seam, not an SDK auth-session mutation.
         let repository = TrackFixtureRepository(user: a)
         let model = HomeViewModel(dataService: SupabaseDataService(client: client), cache: cache, realtimeService: nil,
@@ -392,6 +409,11 @@ import Supabase
         fixture.blockRead(table: "daily_logs") { suspended.fulfill() }
         let loading = Task { await model.start(for: a) }
         await fulfillment(of: [suspended], timeout: 3)
+        if cachedDashboard {
+            XCTAssertEqual(model.snapshot.dailyLogID, savedID)
+            XCTAssertEqual(model.snapshot.dailyLog?.caloriesConsumed, 140)
+            XCTAssertFalse(model.isInitialLoading)
+        }
         if switchIdentity { repository.user = b } // Model/AppState still retain A throughout.
         fixture.releaseRead(failing: failing)
         await loading.value

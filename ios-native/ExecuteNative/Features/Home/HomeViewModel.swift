@@ -515,7 +515,9 @@ final class HomeViewModel: ObservableObject {
         let cached = await cache.read(dashboardKey, as: HomeDashboardSnapshot.self, userID: owner)
         guard request == trackingGeneration, owner == user?.id else { return }
         switch cached {
-        case .fresh(let cached), .stale(let cached): snapshot = cached
+        case .fresh(let cached), .stale(let cached):
+            snapshot = cached
+            isInitialLoading = false
         case .missing: break
         }
     }
