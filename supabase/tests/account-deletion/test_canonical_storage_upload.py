@@ -22,6 +22,7 @@ HERE = Path(__file__).resolve().parent
 UPLOAD = "http://127.0.0.1:55423/guardedStorageUpload"
 AUTH_USERS = "/auth/v1/admin/users"
 RPC = "/rest/v1/rpc/"
+CLOSE = RPC + "close_and_list_guarded_account_upload_dispatches"
 PAYLOAD = b"Execute disposable canonical upload fixture"
 
 
@@ -58,7 +59,7 @@ def run(credentials):
         return json.loads(result) if method != "OPTIONS" else result
 
     def close(owner):
-        return json.loads(rest("POST", RPC + "close_and_list_account_upload_dispatches", {
+        return json.loads(rest("POST", CLOSE, {
             "p_owner_id": owner,
         }))
 
@@ -99,6 +100,13 @@ def run(credentials):
     rest("POST", RPC + "begin_exact_account_upload_dispatch",
          {**exact_args, "p_object_name": unrelated}, expected=(400,))
 
+    rest("POST", CLOSE, {"p_owner_id": owner}, token=owner_token, expected=(401, 403, 404))
+    sql('alter policy "uploads require canonical writer for insert" on storage.objects with check (true);')
+    bad_cutover = json.loads(rest("POST", CLOSE, {"p_owner_id": owner}, expected=(400, 409, 500)))
+    assert bad_cutover["code"] == "55000"
+    assert sql("select count(*) from execute_storage_deletion_guard.closed_upload_admission;") == "0"
+    sql("""alter policy "uploads require canonical writer for insert" on storage.objects
+           with check (bucket_id <> 'uploads');""")
     assert close(owner) == []
     upload(f"{owner}/closed.txt", owner_token, 409)
     rest("DELETE", BUCKET, {"prefixes": [target]}, token=owner_token)

@@ -348,7 +348,11 @@ pending.
 
 Install `storage-upload-exact-dispatch.sql` after the E64 admission and dispatch
 candidates. Move supported clients onto the route before applying
-`storage-upload-writer-cutover.sql` to the approved project. It blocks ordinary
+`storage-upload-writer-cutover.sql` to the approved project. The service-only
+`close_and_list_guarded_account_upload_dispatches` RPC verifies RLS and the
+exact insert/update cutover policies in the same transaction as closing
+admission and listing pending dispatches. A missing policy or a changed
+predicate prevents closure. The cutover blocks ordinary
 authenticated or anonymous Storage insert and update for `uploads`, and keeps
 public reads and same-prefix authenticated deletes compatible with existing
 policies. The guarded request uses the service credential. Its Storage
