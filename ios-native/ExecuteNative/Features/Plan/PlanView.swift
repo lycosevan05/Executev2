@@ -64,49 +64,63 @@ struct PlanDashboardView: View {
     @ObservedObject var model: PlanViewModel
     var isPremium = true
     @State private var selectedTab: PlanDashboardTab = .week
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: ExecuteHomeStyle.sectionGap) {
-                if let error = model.error {
-                    PlanInlineError(error: error) { Task { await model.refresh() } }
+            VStack(spacing: 0) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    header
                 }
 
-                if model.isInitialLoading && model.plan == nil {
-                    PlanLoadingState()
-                } else if model.setupPresented {
-                    PlanGenerationView(model: model, isPremium: isPremium)
-                } else if let plan = model.plan {
-                    if model.hasInitialPreview { PlanGenerationView(model: model, isPremium: isPremium) }
-                    PlanFocusCard(plan: plan, today: model.today, openWorkout: model.openWorkout)
-                    PlanQuestionsButton()
-                    PlanSegmentedPicker(selection: $selectedTab)
-                    Button("Set up another plan or resume draft") { Task { await model.beginSetup() } }
-                        .disabled(model.isSaving || model.isRefining).accessibilityIdentifier("plan.setup")
-
-                    switch selectedTab {
-                    case .week:
-                        PlanWeekSection(days: model.weeklyDays, openNutrition: model.openNutrition)
-                    case .blueprint:
-                        PlanBlueprintSection(narratives: model.narratives.isEmpty ? model.legacyNarratives : model.narratives)
-                    case .adjustments:
-                        if isPremium {
-                            PlanAdjustmentsSection(model: model)
-                        } else {
-                            PlanMessageCard(text: "Personalized plan changes are included with Execute Premium. Open Premium & Billing in your profile to manage your membership.")
-                        }
+                LazyVStack(spacing: ExecuteHomeStyle.sectionGap) {
+                    if let error = model.error {
+                        PlanInlineError(error: error) { Task { await model.refresh() } }
                     }
-                } else {
-                    PlanGenerationView(model: model, isPremium: isPremium)
+
+                    if model.isInitialLoading && model.plan == nil {
+                        PlanLoadingState()
+                    } else if model.setupPresented {
+                        PlanGenerationView(model: model, isPremium: isPremium)
+                    } else if let plan = model.plan {
+                        if model.hasInitialPreview { PlanGenerationView(model: model, isPremium: isPremium) }
+                        PlanFocusCard(plan: plan, today: model.today, openWorkout: model.openWorkout)
+                        PlanQuestionsButton()
+                        PlanSegmentedPicker(selection: $selectedTab)
+                        Button("Set up another plan or resume draft") { Task { await model.beginSetup() } }
+                            .disabled(model.isSaving || model.isRefining).accessibilityIdentifier("plan.setup")
+
+                        switch selectedTab {
+                        case .week:
+                            PlanWeekSection(days: model.weeklyDays, openNutrition: model.openNutrition)
+                        case .blueprint:
+                            PlanBlueprintSection(narratives: model.narratives.isEmpty ? model.legacyNarratives : model.narratives)
+                        case .adjustments:
+                            if isPremium {
+                                PlanAdjustmentsSection(model: model)
+                            } else {
+                                PlanMessageCard(text: "Personalized plan changes are included with Execute Premium. Open Premium & Billing in your profile to manage your membership.")
+                            }
+                        }
+                    } else {
+                        PlanGenerationView(model: model, isPremium: isPremium)
+                    }
                 }
+                .padding(.horizontal, ExecuteHomeStyle.screenInset)
+                .padding(.top, ExecuteSpacing.md)
+                .padding(.bottom, ExecuteHomeStyle.bottomContentInset)
             }
-            .padding(.horizontal, ExecuteHomeStyle.screenInset)
-            .padding(.top, ExecuteSpacing.md)
-            .padding(.bottom, ExecuteHomeStyle.bottomContentInset)
         }
         .scrollIndicators(.hidden)
         .background(ExecuteColor.parchment)
-        .safeAreaInset(edge: .top, spacing: 0) { header }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if dynamicTypeSize.isAccessibilitySize {
+                Color.clear.frame(height: 0)
+                    .background(ExecuteColor.parchment, ignoresSafeAreaEdges: .top)
+            } else {
+                header
+            }
+        }
         .refreshable { await model.refresh() }
         .overlay(alignment: .top) {
             if model.isRefreshing {
@@ -128,7 +142,11 @@ struct PlanDashboardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: ExecuteSpacing.sm) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ExecuteSpacing.sm))
+            : AnyLayout(HStackLayout(spacing: ExecuteSpacing.sm))
+
+        return layout {
             VStack(alignment: .leading, spacing: 2) {
                 Text("PLAN")
                     .font(ExecuteTypography.caption(9).weight(.semibold))
@@ -137,12 +155,15 @@ struct PlanDashboardView: View {
                 Text("Your Performance Plan")
                     .font(ExecuteTypography.title(20))
                     .foregroundStyle(ExecuteColor.charcoal)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
             }
-            Spacer()
+            if !dynamicTypeSize.isAccessibilitySize { Spacer() }
             PlanHeaderButton(symbol: "arrow.clockwise", label: "Refresh plan") {
                 Task { await model.refresh() }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, ExecuteHomeStyle.screenInset)
         .padding(.top, ExecuteSpacing.xs)
         .padding(.bottom, 10)
@@ -157,16 +178,25 @@ private struct PlanFocusCard: View {
     let plan: HomeAIPlan
     let today: HomeOverviewDay?
     let openWorkout: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ExecuteSpacing.xs))
+            : AnyLayout(HStackLayout(spacing: ExecuteSpacing.xs))
+
         VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
-            HStack(spacing: ExecuteSpacing.xs) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .bold))
-                Text("TODAY'S PERFORMANCE PLAN")
-                    .font(ExecuteTypography.caption(9).weight(.semibold))
-                    .tracking(0.55)
-                Spacer()
+            layout {
+                Label {
+                    Text("TODAY'S PERFORMANCE PLAN")
+                        .font(ExecuteTypography.caption(9).weight(.semibold))
+                        .tracking(0.55)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                 Text(today.map { HomeCalculations.isRestDay($0) ? "Recovery" : "Training" } ?? "Adaptive")
                     .font(ExecuteTypography.caption(9).weight(.semibold))
                     .padding(.horizontal, ExecuteSpacing.xs)
@@ -209,19 +239,27 @@ private struct PlanFocusCard: View {
 
 private struct PlanSegmentedPicker: View {
     @Binding var selection: PlanDashboardTab
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 3) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 3))
+            : AnyLayout(HStackLayout(spacing: 3))
+
+        layout {
             ForEach(PlanDashboardTab.allCases) { tab in
                 Button { withAnimation(ExecuteMotion.quick) { selection = tab } } label: {
                     Text(tab.title)
                         .font(ExecuteTypography.caption(10).weight(.semibold))
                         .foregroundStyle(selection == tab ? ExecuteColor.charcoal : ExecuteColor.olive)
-                        .frame(maxWidth: .infinity, minHeight: 36)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : 36)
                         .background(selection == tab ? ExecuteColor.chartreuse : .clear)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(ExecutePressStyle())
+                .accessibilityAddTraits(selection == tab ? .isSelected : [])
             }
         }
         .padding(3)
@@ -500,7 +538,7 @@ private struct PlanHeaderButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(ExecuteColor.chartreuseDark)
-                .frame(width: 42, height: 42)
+                .frame(width: 44, height: 44)
                 .background(ExecuteHomeStyle.accentWash)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(ExecuteHomeStyle.accentBorder, lineWidth: 0.75))

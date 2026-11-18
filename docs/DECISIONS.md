@@ -585,3 +585,7 @@ Read-only exact-owner subscription evidence found the preserved QA account's own
 ## 2026-11-17 — Verify date presentation separately from billing reconciliation
 
 Normal283d9bf Debug simulator build/signature/install passes; GUI launch restores preserved B and Profile uses corrected generic active-access copy. Final post-ALL-UI exports independently preserve A6 and B72 byte/deep-exact. No provider/backend subscription repair or W15/G06 closure. Physical/Release remain3919394 and are historical prerequisites for the new source. Natural issued-code expiry is isolated on existing E26 simulator with user-retained code and3600-second configuration; expiry outcome remains pending, not inferred from an invalid code or resend.
+
+## 2026-11-17 — Reconcile native screens with Supabase session loss
+
+The app now observes local session loss from the pinned Supabase SDK while the normal app root is active. It checks live SDK state before dismissing the authenticated UI and checks exact stored ownership again before publishing an activation. Confirmed loss clears the authenticated screen, billing identity, navigation and the active cache, while keeping persisted account data available to the same owner after reauthentication. A transient offline refresh that preserves the SDK session keeps the current screen. Explicit sign-out and deletion retain their existing handling. SDK storage cleanup failure and live provider revocation remain acceptance follow-ups.

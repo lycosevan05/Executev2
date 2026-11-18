@@ -544,6 +544,15 @@ private final class DelayedBillingAuth: AuthServicing {
     var callbackUser: ExecuteUser? = billingUserA
     var restoredUser: ExecuteUser? = billingUserA
     var authorizationGate: BillingGate?
+    var monitorGate: BillingGate?
+    var reportSessionLoss: (@MainActor () async -> Void)?
+    var localSessionAvailable = true
+
+    func hasLocalSession(for userID: UUID) -> Bool { localSessionAvailable }
+    func monitorSessionLoss(onLoss: @escaping @MainActor () async -> Void) async {
+        reportSessionLoss = onLoss
+        if let monitorGate { await monitorGate.suspend() }
+    }
 
     func restoreSession() async throws -> ExecuteUser? {
         let failure = restoreError
@@ -588,6 +597,46 @@ final class BillingAuthenticationRaceTests: XCTestCase {
                            account: AccountServicing = MockAccountService()) -> AppState {
         AppState(authService: auth, accountService: account, cache: cache, router: AppRouter(),
                  subscriptionService: MockSubscriptionService(), configurationError: nil)
+    }
+
+    func testRestoreDoesNotExposeAnAccountIfItsSDKSessionDisappearsBeforeActivation() async {
+        let auth = DelayedBillingAuth()
+        auth.localSessionAvailable = false
+        let cache = UserScopedCacheStore()
+        let state = makeState(auth: auth, cache: cache)
+
+        await state.start()
+
+        XCTAssertEqual(state.launchState, .signedOut)
+        XCTAssertFalse(state.allowsDraftWrites(for: billingUserA.id))
+    }
+
+    func testSessionLossDuringAFailingCallbackLeavesTheAppSignedOut() async {
+        let auth = DelayedBillingAuth()
+        let callbackGate = BillingGate()
+        let monitorGate = BillingGate()
+        auth.callbackGate = callbackGate
+        auth.callbackError = offline
+        auth.monitorGate = monitorGate
+        let state = makeState(auth: auth)
+        await state.start()
+
+        let monitor = Task { await state.monitorSessionLoss() }
+        await monitorGate.waitUntilEntered()
+        let callback = Task {
+            await state.handleOpenURL(URL(string: "com.executelabs.execute.native-dev://login-callback?code=test")!)
+        }
+        await callbackGate.waitUntilEntered()
+
+        auth.localSessionAvailable = false
+        await auth.reportSessionLoss?()
+        callbackGate.release()
+        monitorGate.release()
+        await callback.value
+        await monitor.value
+
+        XCTAssertEqual(state.launchState, .signedOut)
+        XCTAssertFalse(state.allowsDraftWrites(for: billingUserA.id))
     }
 
     func testLateStartupCannotReplaceNewAccount() async throws {

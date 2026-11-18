@@ -6,6 +6,7 @@ enum AppPreviewDestination: Equatable {
     case track
     case nutrition
     case profile
+    case plan
 }
 
 enum AppLaunchOptions {
@@ -21,6 +22,7 @@ enum AppLaunchOptions {
         if arguments.contains(nutritionPreviewArgument) { return .nutrition }
         if arguments.contains(trackPreviewArgument) { return .track }
         if arguments.contains(homePreviewArgument) { return .home }
+        if arguments.contains("-execute-plan-preview") { return .plan }
         return nil
 #else
         nil
@@ -62,6 +64,7 @@ private struct StartupRootView: View {
             }
         }
         .task { await appState.start() }
+        .task { await appState.monitorSessionLoss() }
     }
 }
 
@@ -83,6 +86,12 @@ private struct FeaturePreviewRootView: View {
                 TrackDashboardView(model: .preview())
             case .nutrition:
                 NutritionDashboardView(model: .preview(), presentation: .tab, isPremium: true)
+            case .plan:
+#if DEBUG
+                PlanDashboardView(model: .preview())
+#else
+                EmptyView()
+#endif
             case .profile:
                 ProfileDashboardView(
                     model: .preview(),
@@ -109,6 +118,7 @@ private struct FeaturePreviewRootView: View {
         case .home, .recovery: .home
         case .track: .track
         case .nutrition: .nutrition
+        case .plan: .plan
         case .profile: .home
         }
     }

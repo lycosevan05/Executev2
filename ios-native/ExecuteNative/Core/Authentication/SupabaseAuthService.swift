@@ -25,6 +25,22 @@ final class SupabaseAuthService: AuthServicing {
         try await restoredUser()
     }
 
+    func monitorSessionLoss(onLoss: @escaping @MainActor () async -> Void) async {
+        for await (event, session) in client.auth.authStateChanges {
+            guard !Task.isCancelled else { return }
+            // Recheck live storage because a new sign-in may have completed
+            // since the SDK emitted a loss event for the previous session.
+            if (event == .signedOut || event == .initialSession), session == nil,
+               client.auth.currentSession == nil {
+                await onLoss()
+            }
+        }
+    }
+
+    func hasLocalSession(for userID: UUID) -> Bool {
+        client.auth.currentSession?.user.id == userID
+    }
+
     private func restoredUser() async throws -> ExecuteUser? {
         do {
             let session = try await client.auth.session

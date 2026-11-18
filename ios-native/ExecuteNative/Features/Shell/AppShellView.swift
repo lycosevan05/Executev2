@@ -49,18 +49,12 @@ private struct AppShellContentView: View {
     private func tabStack(for tab: AppTab) -> some View {
         NavigationStack(path: router.pathBinding(for: tab)) {
             Group {
-                if tab == .home {
-                    HomeView()
-                } else if tab == .track {
-                    TrackView()
-                } else if tab == .nutrition {
-                    NutritionView()
-                } else if tab == .workouts {
-                    TrainView()
-                } else if tab == .plan {
-                    PlanView()
-                } else {
-                    TabPlaceholderView(tab: tab)
+                switch tab {
+                case .home: HomeView()
+                case .track: TrackView()
+                case .nutrition: NutritionView()
+                case .workouts: TrainView()
+                case .plan: PlanView()
                 }
             }
             .navigationDestination(for: AppRoute.self, destination: destination)
@@ -96,8 +90,8 @@ private struct AppShellContentView: View {
             LegalDocumentView(document: .privacy)
         case .terms:
             LegalDocumentView(document: .terms)
-        default:
-            RoutePlaceholderView(route: route)
+        case .workoutSession(let session):
+            WorkoutSessionView(route: session)
         }
     }
 }
@@ -123,6 +117,8 @@ struct ExecuteTabBar: View {
                             }
                         Text(tab.title)
                             .font(ExecuteTypography.caption(8))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
                     }
                     .foregroundStyle(
                         tab == .track ? ExecuteColor.charcoal :
@@ -133,6 +129,7 @@ struct ExecuteTabBar: View {
                 }
                 .buttonStyle(ExecutePressStyle())
                 .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
             }
         }
         .padding(.horizontal, ExecuteSpacing.xxs)
@@ -144,56 +141,5 @@ struct ExecuteTabBar: View {
                 .stroke(ExecuteColor.warmBorder.opacity(0.58), lineWidth: 0.75)
         }
         .shadow(color: ExecuteColor.charcoal.opacity(0.085), radius: 16, y: 5)
-    }
-}
-
-struct TabPlaceholderView: View {
-    let tab: AppTab
-    @EnvironmentObject private var environment: AppEnvironment
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: ExecuteSpacing.lg) {
-                ExecuteSectionHeader(title: tab.title)
-                ExecuteCard {
-                    ExecuteEmptyState(
-                        title: "\(tab.title) is ready for migration",
-                        message: "The shared native shell, routing, services, and design system are in place. This feature remains in the Capacitor reference app until its dedicated parity phase.",
-                        symbol: tab.symbolName
-                    )
-                }
-                HStack(spacing: ExecuteSpacing.sm) {
-                    ExecuteStatCard(title: "Navigation", value: "Typed", symbol: "point.3.connected.trianglepath.dotted")
-                    ExecuteStatCard(title: "Data", value: "Ready", symbol: "bolt.horizontal")
-                }
-                if tab == .track {
-                    ExecutePrimaryButton(title: "Open tracking history") {
-                        environment.router.navigate(to: .trackingHistory)
-                    }
-                }
-                if tab == .nutrition {
-                    ExecutePrimaryButton(title: "Log food") {
-                        environment.router.navigate(to: .logFood(date: Date()))
-                    }
-                }
-            }
-            .padding(ExecuteSpacing.md)
-        }
-        .navigationTitle(tab.title)
-        .navigationBarTitleDisplayMode(.large)
-        .executeScreen()
-    }
-}
-
-struct RoutePlaceholderView: View {
-    let route: AppRoute
-
-    var body: some View {
-        ExecuteEmptyState(
-            title: "Destination ready",
-            message: "\(String(describing: route)) is registered in native navigation and will be migrated in its feature phase.",
-            symbol: "arrow.triangle.branch"
-        )
-        .executeScreen()
     }
 }

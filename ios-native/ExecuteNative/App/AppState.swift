@@ -29,6 +29,7 @@ final class AppState: ObservableObject {
     private var didStart = false
     private var subscriptionRefreshTask: Task<Void, Never>?
     private var sessionGeneration = UUID()
+    private var activatingSession: UUID?
     private var authenticationGeneration = UUID()
     private var deletingUserIDs: Set<UUID> = []
     private var authenticationRequestsInFlight: Set<UUID> = []
@@ -104,6 +105,30 @@ final class AppState: ObservableObject {
         }
     }
 
+    func monitorSessionLoss() async {
+        await authService.monitorSessionLoss { [weak self] in
+            await self?.handleSessionLoss()
+        }
+    }
+
+    private func handleSessionLoss() async {
+        // Activation checks SDK storage again before exposing a signed-in screen.
+        // Let an explicit sign-out or deletion handle its own SDK notifications.
+        guard let userID = signedInUserID, activatingSession == nil,
+              !deletingUserIDs.contains(userID),
+              !authenticationRequestsInFlight.contains(sessionGeneration) else { return }
+        await closeSession(for: userID)
+    }
+
+    private func closeSession(for userID: UUID) async {
+        sessionGeneration = UUID()
+        subscriptionRefreshTask?.cancel()
+        billing.deactivate()
+        router.reset()
+        launchState = .signedOut
+        await cache.deactivate(userID: userID)
+    }
+
     func retryStartup() async {
         didStart = false
         launchState = .launching
@@ -148,6 +173,7 @@ final class AppState: ObservableObject {
         guard !callbacksInFlight.contains(identity), !completedCallbacks.contains(identity) else { return }
         callbacksInFlight.insert(identity)
         defer { callbacksInFlight.remove(identity) }
+        let startedSignedIn = signedInUserID != nil
         let attempt = beginAuthenticationAttempt()
         do {
             let callbackUser = try await authService.handleCallbackURL(url)
@@ -163,8 +189,8 @@ final class AppState: ObservableObject {
             }
         } catch {
             guard authenticationGeneration == attempt else { return }
-            // An unsuccessful callback must not replace an already valid account.
-            if case .signedIn = launchState { return }
+            // Only an attempted sign-in from a signed-out screen owns its error state.
+            guard !startedSignedIn, signedInUserID == nil else { return }
             launchState = .failed(AppError.from(error, title: "Sign-in could not be completed"))
         }
     }
@@ -230,9 +256,17 @@ final class AppState: ObservableObject {
         authenticationGeneration = UUID()
         sessionGeneration = UUID()
         let session = sessionGeneration
+        activatingSession = session
+        defer {
+            if activatingSession == session { activatingSession = nil }
+        }
         billing.activate(user)
         await cache.activate(userID: user.id)
         guard sessionGeneration == session else { return }
+        guard authService.hasLocalSession(for: user.id) else {
+            await closeSession(for: user.id)
+            return
+        }
 #if DEBUG
         startupLogger.debug("[Startup] User cache activated")
 #endif
