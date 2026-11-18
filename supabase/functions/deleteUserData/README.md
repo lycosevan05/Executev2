@@ -84,6 +84,24 @@ download matches all three E41 ZIP members byte for byte. A usable compiled
 archive with that digest or a resolved dependency lock remains outstanding for
 reproducible rollback.
 
+## Local entity ownership policy migration
+
+`20261117000000_guard_entity_ownership.sql` adds one restrictive policy to each
+of the 19 public entity tables. The restrictive policy intersects the existing
+permissions for SELECT, INSERT, UPDATE and DELETE, including both sides of an
+update. A populated owner UUID must match the caller. Rows without a UUID must
+have at least one exact matching legacy email field and no conflicting populated
+email fields. Subscription rows also check the legacy JSON user ID for
+disagreement. Blank legacy fields are treated as unset.
+
+The migration leaves legacy data, existing permissive policies, service-role
+behavior and storage policies in place. Removing the named restrictive policy
+from the same 19 tables reverses this schema change and restores the original
+ownership rules. That schema rollback is independent of the compiled Edge
+Function rollback artifact. The policy applies as a local migration candidate.
+Live legacy-data compatibility and concurrent writes during deletion still
+require acceptance.
+
 ## Exact change and ownership contract
 
 `index.ts` authenticates through the existing shared helper and accepts POST
