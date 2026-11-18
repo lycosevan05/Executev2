@@ -21,7 +21,8 @@ final class BillingStore: ObservableObject {
     private var generation = UUID()
     private var refreshGeneration = UUID()
     private var liveState: PremiumState?
-    private var purchaseConfirmationPending = false
+    private enum PurchaseNotice { case pending, active }
+    private var purchaseNotice: PurchaseNotice?
     private var customerInfoRefreshPending = false
 
     private static let premiumActiveMessage = "Your Premium access is active."
@@ -51,7 +52,7 @@ final class BillingStore: ObservableObject {
         user = nil
         subscription = nil
         liveState = nil
-        purchaseConfirmationPending = false
+        purchaseNotice = nil
         customerInfoRefreshPending = false
         packages = []
         selectedPackageID = nil
@@ -115,9 +116,16 @@ final class BillingStore: ObservableObject {
             let state = try await liveTask.value
             guard generation == session, refreshGeneration == request else { return }
             liveState = state
-            if purchaseConfirmationPending && PremiumState.resolve(server: nil, live: state).isPremium {
-                purchaseConfirmationPending = false
+            let hasLiveAccess = PremiumState.resolve(server: nil, live: state).isPremium
+            switch purchaseNotice {
+            case .pending where hasLiveAccess:
+                purchaseNotice = .active
                 message = Self.premiumActiveMessage
+            case .active where !hasLiveAccess:
+                purchaseNotice = nil
+                message = nil
+            default:
+                break
             }
         } catch {
             guard generation == session, refreshGeneration == request else { return }
@@ -177,7 +185,7 @@ final class BillingStore: ObservableObject {
         isBusy = true
         error = nil
         message = nil
-        purchaseConfirmationPending = false
+        purchaseNotice = nil
         do {
             try await service.configure(appUserID: user.email)
             guard generation == session else { return }
@@ -188,12 +196,15 @@ final class BillingStore: ObservableObject {
                 switch result {
                 case .purchased(let state):
                     liveState = state
-                    purchaseConfirmationPending = !state.isPremium
-                    message = state.isPremium ? Self.premiumActiveMessage : "Your purchase was received. Access is still being confirmed. Try refreshing or restoring purchases."
+                    let hasLiveAccess = PremiumState.resolve(server: nil, live: state).isPremium
+                    purchaseNotice = hasLiveAccess ? .active : .pending
+                    message = hasLiveAccess ? Self.premiumActiveMessage : "Your purchase was received. Access is still being confirmed. Try refreshing or restoring purchases."
                 case .cancelled:
                     message = "Purchase canceled. No changes were made."
                 case .pending:
-                    purchaseConfirmationPending = !PremiumState.resolve(server: nil, live: liveState).isPremium
+                    if !PremiumState.resolve(server: nil, live: liveState).isPremium {
+                        purchaseNotice = .pending
+                    }
                     message = "Your purchase is awaiting approval. Premium will update when the App Store confirms it."
                 }
             case .restore:

@@ -295,6 +295,38 @@ final class BillingStoreTests: XCTestCase {
         XCTAssertFalse(store.isBusy)
     }
 
+    func testLiveRevocationClearsConfirmedPurchaseNoticeAfterTransientFailure() async {
+        let client = TestRevenueCatClient()
+        let store = makeStore(client)
+        await store.load()
+        await store.purchaseSelectedPackage()
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertEqual(store.message, "Your Premium access is active.")
+
+        client.operationError = offline
+        await store.refresh()
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertEqual(store.message, "Your Premium access is active.")
+
+        client.operationError = nil
+        client.states[billingUserA.email] = .free
+        await store.refresh()
+        XCTAssertFalse(store.premiumState.isPremium)
+        XCTAssertNil(store.message)
+    }
+
+    func testExpiredPurchaseEntitlementDoesNotShowConfirmedAccess() async {
+        let client = TestRevenueCatClient()
+        let expired = PremiumState(isPremium: true, entitlementIdentifier: "paid", expirationDate: .distantPast)
+        client.result = .purchased(expired)
+        let store = makeStore(client)
+        await store.load()
+        await store.purchaseSelectedPackage()
+
+        XCTAssertFalse(store.premiumState.isPremium)
+        XCTAssertTrue(store.message?.contains("still being confirmed") == true)
+    }
+
     func testCancellationDoesNotUnlockOrShowAnError() async {
         let client = TestRevenueCatClient()
         client.result = .cancelled
