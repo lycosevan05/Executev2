@@ -1,6 +1,7 @@
 import { getUser } from "../_shared/records.ts";
 import { removeAccount } from "../deleteUserData/service.ts";
 import { createStagedDeletionHandler } from "./handler.ts";
+import { revokeStagedAppleAuthorization } from "./appleRevocation.ts";
 
 Deno.serve(createStagedDeletionHandler({
   readSettings() {
@@ -13,5 +14,13 @@ Deno.serve(createStagedDeletionHandler({
   },
   getUser,
   remove: (user) =>
-    removeAccount(user, { allowStripe: false, requireUploadDrain: true }),
+    removeAccount(user, {
+      allowStripe: false,
+      requireUploadDrain: true,
+      revokeAppleAuthorization: () =>
+        revokeStagedAppleAuthorization(
+          user,
+          () => Deno.env.get("EXECUTE_STAGED_APPLE_GRANT"),
+        ),
+    }),
 }));

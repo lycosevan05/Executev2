@@ -1,14 +1,22 @@
 import Stripe from "npm:stripe@14.21.0";
 import { createServiceClient, ENTITY_TABLES } from "../_shared/records.ts";
-import { deleteAccount, type DeletionUser } from "./deletion.ts";
+import {
+  type AppleRevocationOutcome,
+  deleteAccount,
+  type DeletionUser,
+} from "./deletion.ts";
 import { createDeletionStore, type DeletionClient } from "./store.ts";
 import { createDeletionBilling } from "./billing.ts";
 
 export async function removeAccount(
   user: DeletionUser,
-  options: { allowStripe: boolean; requireUploadDrain?: boolean } = {
-    allowStripe: true,
-  },
+  options: {
+    allowStripe: boolean;
+    requireUploadDrain?: boolean;
+    revokeAppleAuthorization?: () => Promise<
+      AppleRevocationOutcome | undefined
+    >;
+  } = { allowStripe: true },
 ) {
   const uploadsBucket = Deno.env.get("SUPABASE_UPLOAD_BUCKET") || "uploads";
   if (options.requireUploadDrain && uploadsBucket !== "uploads") {
@@ -57,5 +65,6 @@ export async function removeAccount(
         }
       }
       : undefined,
+    options.revokeAppleAuthorization,
   );
 }
