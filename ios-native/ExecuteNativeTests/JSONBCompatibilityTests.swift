@@ -786,6 +786,22 @@ final class StartupStateTests: XCTestCase {
         XCTAssertEqual(state.launchState, .failed(authError))
     }
 
+    func testSignOutStopsDraftWritesWhileSessionRemovalIsPending() async {
+        let user = ExecuteUser(id: UUID(), email: "member@example.invalid", displayName: "Member")
+        let auth = MockAuthService(restoredUser: user)
+        let state = makeState(authService: auth)
+        await state.start()
+        XCTAssertTrue(state.allowsDraftWrites(for: user.id))
+
+        auth.beforeSignOut = {
+            XCTAssertEqual(auth.restoredUser?.id, user.id)
+            XCTAssertFalse(state.allowsDraftWrites(for: user.id))
+        }
+        await state.signOut()
+        auth.beforeSignOut = nil
+        XCTAssertEqual(state.launchState, .signedOut)
+    }
+
     func testSessionTimeoutDoesNotRemainLaunching() async {
         let authService = MockAuthService(restoreDelayNanoseconds: 1_000_000_000)
         let state = makeState(authService: authService, timeoutNanoseconds: 1_000_000)
@@ -1173,6 +1189,39 @@ final class AuthPersistenceTests: XCTestCase {
         XCTAssertTrue(state.allowsDraftWrites(for: user.id))
     }
 
+    func testTerminalSessionExpiryAtLaunchRequiresFreshSignIn() async throws {
+        let storage = AuthFixtureStorage()
+        let ownerDefaults = isolatedAuthOwnerDefaults()
+        let host = "terminal-expiry.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let (client, service) = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults)
+        let user = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        let key = "native-auth-fixture"
+        var expired = try XCTUnwrap(client.auth.currentSession)
+        expired.expiresAt = 0
+        try storage.store(key: key, value: JSONEncoder().encode(expired))
+        let state = AppState(authService: service, cache: UserScopedCacheStore(), router: AppRouter(),
+                             subscriptionService: MockSubscriptionService(), configurationError: nil)
+
+        await state.start()
+
+        XCTAssertEqual(state.launchState, .signedOut)
+        XCTAssertNil(client.auth.currentSession)
+        XCTAssertNil(try storage.retrieve(key: key))
+        XCTAssertFalse(state.allowsDraftWrites(for: user.id))
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(host), 1)
+
+        let (_, relaunchedService) = fixture(storage: storage, host: host, ownerDefaults: ownerDefaults)
+        let relaunched = AppState(authService: relaunchedService, cache: UserScopedCacheStore(), router: AppRouter(),
+                                  subscriptionService: MockSubscriptionService(), configurationError: nil)
+        await relaunched.start()
+        XCTAssertEqual(relaunched.launchState, .signedOut)
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(host), 1)
+
+        try await relaunched.verifyEmailOTP(email: "fixture@example.invalid", token: "fresh-fixture-code")
+        XCTAssertEqual(relaunched.launchState, .signedIn(user))
+        XCTAssertTrue(relaunched.allowsDraftWrites(for: user.id))
+    }
+
     func testOfflineRefreshDoesNotDiscardAnOpenSession() async throws {
         let (client, service) = fixture(storage: AuthFixtureStorage(), host: "offline.auth-fixture.invalid")
         let user = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
@@ -1300,8 +1349,9 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
         let originalOwnerRefresh = url.host?.hasPrefix("late-refresh.") == true && grant == "refresh_token"
         let callbackNumber = isCallback && !originalOwnerRefresh ? Self.traffic.record(url.host!) : 0
         let verifyNumber = url.path == "/auth/v1/verify" ? Self.traffic.record(url.host! + ".verify") : 0
-        let revoked = isCallback && url.host?.hasPrefix("revoked.") == true
-        let failed = isCallback && (revoked || callbackNumber > 1 || url.host!.hasPrefix("provider-error."))
+        let revoked = grant == "refresh_token" && url.host?.hasPrefix("revoked.") == true
+        let terminalExpiry = grant == "refresh_token" && url.host?.hasPrefix("terminal-expiry.") == true
+        let failed = isCallback && (revoked || terminalExpiry || callbackNumber > 1 || url.host!.hasPrefix("provider-error."))
         let id = isCallback && !originalOwnerRefresh && !url.host!.hasPrefix("same-owner.") ? Self.callbackUserID : Self.userID
         let user: [String: Any] = ["id": id.uuidString, "aud": "authenticated", "role": "authenticated",
             "email": "fixture@example.invalid", "app_metadata": [:], "user_metadata": [:],
@@ -1311,6 +1361,7 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
             "refresh_token": isCallback ? "fixture-oauth-refresh-not-real" : "fixture-refresh-\(verifyNumber)-not-real",
             "token_type": "bearer", "expires_in": 3600, "expires_at": Int(Date().timeIntervalSince1970) + 3600, "user": user]
         let body: [String: Any] = revoked ? ["code": "refresh_token_not_found", "message": "Fixture session revoked"]
+            : terminalExpiry ? ["code": "session_expired", "message": "Fixture session time-box expired"]
             : failed ? ["error": "invalid_grant", "error_description": "private-fixture-response-must-not-escape"]
             : url.path == "/auth/v1/logout" ? [:] : url.host == "auth-user-only.invalid" ? user : session
         do {

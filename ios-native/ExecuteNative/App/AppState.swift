@@ -40,6 +40,7 @@ final class AppState: ObservableObject {
 
     func allowsDraftWrites(for userID: UUID) -> Bool {
         signedInUserID == userID
+            && !authenticationRequestsInFlight.contains(sessionGeneration)
             && !deletingUserIDs.contains(userID)
             && authService.hasLocalSession(for: userID)
     }
