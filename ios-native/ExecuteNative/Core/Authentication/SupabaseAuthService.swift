@@ -151,6 +151,51 @@ final class SupabaseAuthService: AuthServicing {
     }
 }
 
+/// The SDK treats a failed Keychain delete as a signed-out session. Suppress
+/// the old value across app launches until a new Keychain write succeeds.
+final class SupabaseAuthStorage: AuthLocalStorage, @unchecked Sendable {
+    private let backing: any AuthLocalStorage
+    private let defaults: UserDefaults
+    private let lock = NSLock()
+
+    init(backing: any AuthLocalStorage = AuthClient.Configuration.defaultLocalStorage,
+         defaults: UserDefaults = .standard) {
+        self.backing = backing
+        self.defaults = defaults
+    }
+
+    func store(key: String, value: Data) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try backing.store(key: key, value: value)
+        defaults.removeObject(forKey: suppressionKey(key))
+    }
+
+    func retrieve(key: String) throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !defaults.bool(forKey: suppressionKey(key)) else { return nil }
+        return try backing.retrieve(key: key)
+    }
+
+    func remove(key: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            try backing.remove(key: key)
+        } catch {
+            // Store only a non-secret suppression flag. The credential
+            // itself never leaves Keychain, even when removal fails.
+            defaults.set(true, forKey: suppressionKey(key))
+            throw error
+        }
+    }
+
+    private func suppressionKey(_ key: String) -> String {
+        "execute.auth.storage.removalFailed.\(key)"
+    }
+}
+
 /// Supabase persists authentication responses internally. Serialize those calls
 /// so a late SDK response cannot overwrite a newer account's stored session.
 /// AppState separately ignores UI results invalidated by a newer auth attempt.

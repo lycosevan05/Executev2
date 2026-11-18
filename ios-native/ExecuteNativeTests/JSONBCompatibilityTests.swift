@@ -879,7 +879,7 @@ final class AuthPersistenceTests: XCTestCase {
         fixture(storage: storage, host: userOnly ? "auth-user-only.invalid" : "auth-session.invalid").service
     }
 
-    private func fixture(storage: AuthFixtureStorage, host: String) -> (client: SupabaseClient, service: SupabaseAuthService) {
+    private func fixture(storage: any AuthLocalStorage, host: String) -> (client: SupabaseClient, service: SupabaseAuthService) {
         let url = URL(string: "https://\(host)")!
         let transport = URLSessionConfiguration.ephemeral
         transport.protocolClasses = [AuthFixtureProtocol.self]
@@ -923,6 +923,47 @@ final class AuthPersistenceTests: XCTestCase {
         XCTAssertFalse(state.allowsDraftWrites(for: user.id))
         XCTAssertNotNil(defaults.data(forKey: "execute.cache.\(user.id.uuidString).test.default"))
         XCTAssertEqual(AuthFixtureProtocol.traffic.count("revoked.auth-fixture.invalid"), 1)
+    }
+
+    func testRevokedSessionStaysHiddenAfterKeychainRemovalFailsAndCanBeReplaced() async throws {
+        let backing = AuthFixtureStorage()
+        let suiteName = "FailedAuthRemoval.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let host = "revoked.storage-test.auth-fixture.invalid"
+        let firstStorage = SupabaseAuthStorage(backing: backing, defaults: defaults)
+        let (firstClient, firstService) = fixture(storage: firstStorage, host: host)
+        let original = try await firstService.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        backing.configure(rejectRemovals: true)
+
+        do {
+            _ = try await firstClient.auth.refreshSession()
+            XCTFail("The revoked credential must fail refresh")
+        } catch AuthError.sessionMissing {
+            XCTAssertNil(firstClient.auth.currentSession)
+        }
+        XCTAssertNotNil(try backing.retrieve(key: "native-auth-fixture"))
+
+        let nextStorage = SupabaseAuthStorage(backing: backing, defaults: defaults)
+        let (_, relaunched) = fixture(storage: nextStorage, host: host)
+        let invalidated = try await relaunched.restoreSession()
+        XCTAssertNil(invalidated)
+
+        backing.configure(rejectWrites: true)
+        do {
+            _ = try await relaunched.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+            XCTFail("An unsuccessful Keychain write cannot expose the old credential")
+        } catch let error as AppError {
+            XCTAssertEqual(error.title, "Sign-in could not be saved")
+        }
+        let stillInvalidated = try await relaunched.restoreSession()
+        XCTAssertNil(stillInvalidated)
+
+        backing.configure(rejectWrites: false)
+        let replacement = try await relaunched.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        XCTAssertEqual(replacement, original)
+        let restored = try await relaunched.restoreSession()
+        XCTAssertEqual(restored, replacement)
     }
 
     func testOfflineRefreshDoesNotDiscardAnOpenSession() async throws {
@@ -1030,7 +1071,7 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
         }
         let callbackNumber = isCallback ? Self.traffic.record(url.host!) : 0
         let verifyNumber = url.path == "/auth/v1/verify" ? Self.traffic.record(url.host! + ".verify") : 0
-        let revoked = isCallback && url.host == "revoked.auth-fixture.invalid"
+        let revoked = isCallback && url.host?.hasPrefix("revoked.") == true
         let failed = isCallback && (revoked || callbackNumber > 1 || url.host!.hasPrefix("provider-error."))
         let id = isCallback && !url.host!.hasPrefix("same-owner.") ? Self.callbackUserID : Self.userID
         let user: [String: Any] = ["id": id.uuidString, "aud": "authenticated", "role": "authenticated",
