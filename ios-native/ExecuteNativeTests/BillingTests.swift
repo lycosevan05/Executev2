@@ -236,7 +236,7 @@ final class HostedIsolatedStripeBillingTests: XCTestCase {
         }
     }
 
-    private static func isPublicClientKey(_ key: String) -> Bool {
+    fileprivate static func isPublicClientKey(_ key: String) -> Bool {
         if key.hasPrefix("sb_publishable_") { return key.count > "sb_publishable_".count }
         let parts = key.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3 else { return false }
@@ -248,6 +248,130 @@ final class HostedIsolatedStripeBillingTests: XCTestCase {
         return object["role"] as? String == "anon" && object["ref"] as? String == "zpnvnsdtbtdyhvipctpa"
     }
 }
+
+#if DEBUG
+/// Run each stage in a fresh test host on a dedicated simulator with no saved QA session.
+@MainActor
+final class HostedIsolatedMixedBillingTests: XCTestCase {
+    private enum Stage: String {
+        case absent, stripeTrial, both, revenueCatOnly, ended
+
+        var revenueCatActive: Bool { self == .both || self == .revenueCatOnly }
+        var premium: Bool { self != .absent && self != .ended }
+
+        func matches(_ row: BillingSubscription?, email: String, stripeID: String?) -> Bool {
+            if self == .absent { return row == nil }
+            let status = self == .revenueCatOnly ? "active" : (premium ? "trialing" : "canceled")
+            return row?.userID == email && row?.status == status &&
+                row?.plan == (premium ? "premium" : "free") && row?.stripeSubscriptionID == stripeID
+        }
+    }
+
+    func testAuthenticatedMixedProviderPremium() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["EXECUTE_HOSTED_MIXED_BILLING"] == "1" else {
+            throw XCTSkip("Requires the isolated hosted mixed-provider billing fixture")
+        }
+        let purchase = environment["EXECUTE_HOSTED_MIXED_PURCHASE"] == "1"
+        let stripeID = environment["EXECUTE_HOSTED_BILLING_STRIPE_ID"]
+        guard !Purchases.isConfigured,
+              let endpoint = environment["EXECUTE_HOSTED_BILLING_URL"],
+              endpoint == "https://zpnvnsdtbtdyhvipctpa.supabase.co", let url = URL(string: endpoint),
+              let key = environment["EXECUTE_HOSTED_BILLING_PUBLIC_KEY"], HostedIsolatedStripeBillingTests.isPublicClientKey(key),
+              let testKey = environment["EXECUTE_HOSTED_MIXED_TEST_STORE_KEY"],
+              testKey.hasPrefix("test_"), testKey.count > "test_".count,
+              let email = environment["EXECUTE_HOSTED_BILLING_EMAIL"], EmailOTPInput.email(email) == email,
+              let password = environment["EXECUTE_HOSTED_BILLING_PASSWORD"], !password.isEmpty,
+              let identifier = environment["EXECUTE_HOSTED_BILLING_USER_ID"], let owner = UUID(uuidString: identifier),
+              let value = environment["EXECUTE_HOSTED_MIXED_STAGE"], let stage = Stage(rawValue: value),
+              stage == .absent || stripeID?.hasPrefix("sub_") == true,
+              !purchase || stage == .stripeTrial else {
+            return XCTFail("Requires a fresh host, exact isolated fixture inputs and Stripe trial stage for purchase")
+        }
+
+        let transport = URLSessionConfiguration.ephemeral
+        transport.timeoutIntervalForRequest = 10
+        transport.timeoutIntervalForResource = 15
+        let session = URLSession(configuration: transport)
+        defer { session.invalidateAndCancel() }
+        let client = SupabaseClient(supabaseURL: url, supabaseKey: key, options: .init(
+            auth: .init(storage: HostedBillingFixtureStorage(), storageKey: "hosted-mixed-fixture",
+                        autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: session)))
+        let ownerSuite = "Execute.HostedMixedOwner.\(UUID())"
+        let cacheSuite = "Execute.HostedMixedCache.\(UUID())"
+        let ownerDefaults = try XCTUnwrap(UserDefaults(suiteName: ownerSuite))
+        defer {
+            ownerDefaults.removePersistentDomain(forName: ownerSuite)
+            UserDefaults.standard.removePersistentDomain(forName: cacheSuite)
+        }
+
+        do {
+            let signedIn = try await client.auth.signIn(email: email, password: password)
+            guard signedIn.user.id == owner, signedIn.user.email == email, !Purchases.isConfigured else {
+                return XCTFail("Sign-in did not return the fixture owner in a fresh test host")
+            }
+            var config = AppConfiguration(supabaseURL: url, supabaseAnonKey: key,
+                revenueCatAPIKey: testKey, uploadBucket: "uploads", callbackScheme: "execute-mixed-fixture")
+            config.revenueCatOfferingID = "execute_billing_integration"
+            config.revenueCatMonthlyProductID = "execute_billing_integration_monthly"
+            Purchases.logLevel = .error
+            Purchases.configure(withAPIKey: testKey, appUserID: email)
+            let offerings = try await Purchases.shared.offerings()
+            guard let offering = offerings.offering(identifier: config.revenueCatOfferingID),
+                  let monthly = offering.monthly, monthly.identifier == "$rc_monthly",
+                  monthly.storeProduct.productIdentifier == config.revenueCatMonthlyProductID,
+                  monthly.storeProduct.subscriptionPeriod?.value == 1,
+                  monthly.storeProduct.subscriptionPeriod?.unit == .month,
+                  Purchases.shared.appUserID == email else {
+                return XCTFail("The isolated offering and exact Test Store monthly mapping are required")
+            }
+            let info = try await Purchases.shared.customerInfo(fetchPolicy: .fetchCurrent)
+            let entitlement = info.entitlements.active[config.revenueCatEntitlementID]
+            let hasMonthlyGrant = entitlement?.isSandbox == true && entitlement?.store == .testStore &&
+                entitlement?.productIdentifier == config.revenueCatMonthlyProductID
+            guard stage.revenueCatActive ? hasMonthlyGrant : entitlement == nil else {
+                return XCTFail("The live Test Store entitlement did not match this stage")
+            }
+            let auth = SupabaseAuthService(client: client, configuration: config, ownerDefaults: ownerDefaults)
+            let reader = SupabaseSubscriptionReader(client: client)
+            let app = AppState(authService: auth, cache: UserScopedCacheStore(suiteName: cacheSuite), router: AppRouter(),
+                subscriptionService: RevenueCatSubscriptionService(configuration: config), subscriptionReader: reader,
+                configurationError: nil)
+            await app.start()
+            guard case .signedIn(let user) = app.launchState, user.id == owner, user.email == email else {
+                return XCTFail("The app did not restore the designated authenticated fixture session")
+            }
+            let row = try await reader.subscription(for: user)
+            await app.handleScenePhase(.active)
+            let deadline = ContinuousClock.now + .seconds(18)
+            while app.billing.isRefreshing && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            guard !app.billing.isRefreshing, app.billing.refreshError == nil,
+                  stage.matches(row, email: email, stripeID: stripeID),
+                  stage.matches(app.billing.subscription, email: email, stripeID: stripeID),
+                  app.premiumState.isPremium == stage.premium else {
+                return XCTFail("The authenticated row and refreshed native access did not match this stage")
+            }
+
+            if purchase {
+                guard Purchases.shared.appUserID == email else {
+                    return XCTFail("The Test Store account changed before purchase")
+                }
+                // The operator confirms one purchase on the RevenueCat Test Store sheet.
+                let result = try await Purchases.shared.purchase(package: monthly)
+                let grant = result.customerInfo.entitlements.active[config.revenueCatEntitlementID]
+                XCTAssertTrue(!result.userCancelled && grant?.isSandbox == true && grant?.store == .testStore &&
+                    grant?.productIdentifier == config.revenueCatMonthlyProductID,
+                    "The authorized monthly Test Store purchase did not produce the sandbox entitlement")
+            }
+        } catch {
+            XCTFail("The isolated mixed billing fixture could not complete the selected stage")
+        }
+    }
+}
+#endif
 
 private final class HostedBillingFixtureStorage: AuthLocalStorage, @unchecked Sendable {
     private let lock = NSLock()

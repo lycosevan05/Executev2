@@ -20,11 +20,11 @@ of completed physical tests. A fixture pass does not establish a sandbox pass.
 
 ## Isolated Stripe and RevenueCat acceptance
 
-E60 verified the Stripe destination and previously successful deliveries. The
-first new check establishes how one fresh Stripe subscription changes the
-matching backend row and authenticated app access. It uses only the Star
-Learning Stripe sandbox (`acct_1TAfBREiWRJocTMe`), Execute Billing Integration
-Supabase (`zpnvnsdtbtdyhvipctpa`) and the isolated RevenueCat project (`5414e2b1`).
+E60 verified the Stripe destination and previously successful deliveries. E61
+passed the Stripe-only trial and cancellation against the matching backend row
+and authenticated native state. Use only the Star Learning Stripe sandbox
+(`acct_1TAfBREiWRJocTMe`), Execute Billing Integration Supabase
+(`zpnvnsdtbtdyhvipctpa`) and the isolated RevenueCat project (`5414e2b1`).
 
 ### Read-only preflight
 
@@ -41,18 +41,12 @@ Supabase (`zpnvnsdtbtdyhvipctpa`) and the isolated RevenueCat project (`5414e2b1
    purchase, entitlement or subscription row. The Auth email, RevenueCat App
    User ID and Stripe **subscription** `metadata.user_id` must match exactly.
    Customer email alone has no effect on row ownership.
-3. Verify a normally signed Debug native-dev build points to the isolated
-   Supabase URL and uses only the isolated RevenueCat Test Store client
-   configuration. Check Profile, Premium & Billing and Nutrition while the
-   same fresh identity is free. For live Test Store purchase follow-up, both
-   configured products need to load under the selected current offering. The
-   client checks exact monthly and annual product IDs and durations.
-4. The isolated project was previously verified with a billing-only database
-   bootstrap. Confirm the signed app can actually sign in and show the required
-   routes before treating native acceptance as available. If that preflight
-   fails, stop before billing mutations unless the owner has explicitly
-   approved provider-to-row testing on a separate synthetic identity. Keep
-   those results scoped to the provider and database.
+3. For a normal signed-app run, verify a signed Debug build points to the
+   isolated project and can sign in and reach Profile, Premium & Billing and
+   Nutrition. The billing-only Supabase bootstrap and the isolated monthly-only
+   offering support the XCTest below. Full app screens also need compatible
+   feature tables and a current offering with both native plans. The ordinary
+   billing screen checks both product identifiers and their durations.
 
 ### First provider run
 
@@ -88,44 +82,120 @@ select s.id, s.updated_date,
        s.data->>'status' as effective_status,
        s.data->>'store' as effective_store,
        s.data->>'stripe_subscription_id' as stripe_subscription_id,
+       s.data->>'stripe_price_id' as stripe_price_id,
+       s.data->>'stripe_plan' as stripe_plan,
        s.data->>'stripe_status' as stripe_status,
+       s.data->>'stripe_current_period_end' as stripe_period_end,
        s.data->>'stripe_last_event_type' as stripe_event_type,
        s.data->>'stripe_last_event_id' as stripe_event_id,
+       s.data->>'revenuecat_product_id' as revenuecat_product_id,
+       s.data->>'revenuecat_environment' as revenuecat_environment,
+       s.data->>'revenuecat_plan' as revenuecat_plan,
        s.data->>'revenuecat_status' as revenuecat_status,
        s.data->>'revenuecat_last_event_type' as revenuecat_event_type,
-       s.data->>'revenuecat_last_event_id' as revenuecat_event_id
+       s.data->>'revenuecat_last_event_id' as revenuecat_event_id,
+       s.data->>'current_period_end' as effective_period_end
 from public.user_subscriptions s, identity
 where s.data->>'user_id' = identity.email;
 ```
 
 ### Mixed-provider follow-up
 
-Choose two fresh disposable identities and scope another approval to those
-identities. Use the exact same identity across Stripe, RevenueCat and native
-Auth on each run. Establish an actual RevenueCat Test Store purchase with
-active `Execute Performance Premium` and a delivery to the isolated endpoint.
-Keep Apple Sandbox cases separate.
+Run the Stripe-ends-first path on one fresh disposable identity. This exercises
+both real webhook handlers and both provider grants on the same row. Reserve
+about 30 minutes after the purchase. Test Store's accelerated monthly schedule
+is about 25 minutes to expiry. Use observed provider state and delivery as the
+gate. [RevenueCat Test Store](https://www.revenuecat.com/docs/test-and-launch/sandbox/test-store)
 
-- **Stripe ends first.** Establish both grants on identity A. Stripe has
-  priority while both grants are current. After immediately canceling only the
-  A Stripe fixture, the Stripe event must produce one matching
-  `premium/active` row through RevenueCat. The app must stay Premium.
-- **RevenueCat ends first.** Establish both grants on identity B. Let Test
-  Store expire while B's Stripe grant still has time remaining. Wait for
-  actual provider expiry and its successful `EXPIRATION` delivery. The same
-  B row must stay Premium through Stripe until its trial is also canceled.
-  Both providers ended means one `free/canceled` row and free app access.
+**Before starting**
 
-The local combined-handler fixture exercises both loss orders, same-row
-continuity, and correlation of both final event IDs. Run it independently with
+1. Scope approval to creating one new confirmed password Auth identity, one
+   new Execute-prefixed no-payment-method test Stripe customer and one trial
+   on the existing monthly fixture price, purchasing the single Test Store
+   monthly package on that same identity, and immediately canceling only that
+   trial. Include canceling it early if the run stalls. Use a synthetic email
+   unchanged in Auth, Stripe subscription metadata and RevenueCat App User ID.
+2. Repeat the endpoint preflight. In the Stripe sandbox confirm
+   `price_1UZjtiEiWRJocTMeRkmJCpTg` is active, `livemode=false` and is the CAD 1
+   monthly price of `Execute Billing Integration 20261108`. In RevenueCat verify
+   offering `execute_billing_integration` contains `$rc_monthly` mapped to
+   `execute_billing_integration_monthly`, a one-month Test Store product
+   attached to `Execute Performance Premium` with no free trial. Verify Sandbox
+   Testing Access allows the disposable identity and the Sandbox-only destination accepts
+   `INITIAL_PURCHASE`, `RENEWAL`, `CANCELLATION` and `EXPIRATION`. Pause if the
+   setup differs or any other webhook destination could expose the test events
+   to a shared or production app. [RevenueCat Sandbox Testing Access](https://www.revenuecat.com/docs/projects/sandbox-access)
+3. Use a dedicated clean iOS simulator, a Debug `ExecuteNative` test host with
+   StoreKit Configuration **None**, and select only
+   `ExecuteNativeTests/HostedIsolatedMixedBillingTests/testAuthenticatedMixedProviderPremium`.
+   Build for testing from `ios-native/ExecuteNative.xcodeproj`. Launch a fresh
+   host process for each stage with parallel testing disabled. The XCTest uses
+   the pinned RevenueCat SDK and the exact monthly package by offering ID. It
+   restores an isolated Supabase password session in memory and reads the live
+   RevenueCat entitlement, the real native Supabase reader and AppState access.
+   The purchase sheet is part of the XCTest. Normal app navigation and plan
+   screen acceptance need their own run.
+
+Set these private inputs in `ExecuteNativeTests.EnvironmentVariables` of a
+temporary `.xctestrun` copy beside the build products, with permissions `0600`.
+Keep the inputs out of ordinary native-dev settings. Omit
+`EXECUTE_HOSTED_BILLING`, the Stripe-only opt-in. With the test simulator
+visible for the purchase step, use the same command for each stage.
+
+```sh
+xcodebuild test-without-building -xctestrun "$billing_xctestrun" \
+  -destination "platform=iOS Simulator,id=$billing_simulator_id" \
+  -parallel-testing-enabled NO \
+  -only-testing:ExecuteNativeTests/HostedIsolatedMixedBillingTests/testAuthenticatedMixedProviderPremium
+```
+
+| Variable | Value |
+| --- | --- |
+| `EXECUTE_HOSTED_MIXED_BILLING` | `1` |
+| `EXECUTE_HOSTED_BILLING_URL` | `https://zpnvnsdtbtdyhvipctpa.supabase.co` |
+| `EXECUTE_HOSTED_BILLING_PUBLIC_KEY` | Isolated Supabase publishable/anon key |
+| `EXECUTE_HOSTED_MIXED_TEST_STORE_KEY` | The isolated RevenueCat project's `test_` SDK key verified in its dashboard |
+| `EXECUTE_HOSTED_BILLING_EMAIL`, `EXECUTE_HOSTED_BILLING_PASSWORD`, `EXECUTE_HOSTED_BILLING_USER_ID` | Disposable Auth login and exact owner UUID |
+| `EXECUTE_HOSTED_BILLING_STRIPE_ID` | Omit for `absent`, then supply the exact new sandbox `sub_` ID |
+| `EXECUTE_HOSTED_MIXED_STAGE` | `absent`, `stripeTrial`, `both`, `revenueCatOnly` or `ended` |
+| `EXECUTE_HOSTED_MIXED_PURCHASE` | Omit for every readback. Set `1` only at `stripeTrial` to open the approved monthly Test Store purchase sheet. |
+
+**Transaction and evidence sequence**
+
+| Stage | Provider action or evidence | Subscription row and native access |
+| --- | --- | --- |
+| `absent` | Verify no Stripe subscription, no RevenueCat receipt/entitlement and no earlier row. | Zero rows for the exact identity. The fresh authenticated XCTest is Free. |
+| `stripeTrial` | Create the approved three-day Stripe trial without a payment method, with automatic cancel on missing method. Put the exact identity in subscription `metadata.user_id`. Observe the new `trialing` subscription and successful isolated `customer.subscription.created` delivery. Verify no payment. | One `premium/trialing` row, effective `stripe`, with the exact subscription and Stripe event IDs. RevenueCat is inactive. The native XCTest is Premium. |
+| `both` | Run the XCTest once at `stripeTrial` with purchase enabled. On **Test Store Purchase**, confirm the exact monthly product ID and select **Test valid purchase**. Capture the `SANDBOX`/`TEST_STORE` `INITIAL_PURCHASE` delivery, active monthly entitlement and Stripe still trialing. | Same row ID, both provider plans Premium, `stripe_status=trialing`, `revenuecat_status=active`, monthly product and `revenuecat_environment=SANDBOX`. Effective state is still `premium/trialing`, store `stripe`. The native XCTest is Premium. |
+| `revenueCatOnly` | While RevenueCat shows the active monthly entitlement, immediately cancel only the new Stripe trial with `invoice_now=false` and `prorate=false`. Check the actual `canceled` subscription and successful `customer.subscription.deleted` delivery. | Same row ID, Stripe free/canceled, RevenueCat premium/active. Effective state is `premium/active` with the RevenueCat provider snapshot's Test Store value. The native XCTest is Premium. |
+| `ended` | Let Test Store renew and expire naturally. Capture an inactive RevenueCat entitlement, successful `EXPIRATION` delivery and Stripe still canceled. | Same row ID, both provider plans Free and both statuses canceled. Effective state is `free/canceled`, store `stripe`. Refresh the native XCTest in a fresh process and confirm Free. |
+
+Record UTC timestamps, the exact Stripe subscription and correlated event IDs,
+RevenueCat transaction and correlated event IDs, webhook responses, and row
+count and ID in private evidence. A renewal can race a read and legitimately
+become the latest RevenueCat event. Collect the initial purchase delivery and
+reconcile any newer row event ID to a successful delivery for the same monthly
+transaction lineage. The authenticated reader selects one row. Use the SQL
+query above to independently verify uniqueness, historical row continuity and
+both projections. If a webhook says it delivered but a provider or row state
+disagrees, capture the discrepancy before any retry. Keep the Auth identity
+available until the final readback. End with both provider grants inactive,
+remove the temporary `.xctestrun`, and retain the isolated historical records.
+If the purchase was interrupted or the result is unclear, read RevenueCat's
+transaction history before considering another sheet. Do not clear histories
+or force the backend state.
+
+The combined offline fixture already exercises both provider-loss orders and
+both final event IDs. Run it with
 `deno test --no-config --deny-net supabase/functions/stripeWebhook/reconcile_test.ts`.
-An actual RevenueCat Test Store transaction can establish sandbox projection and
-app grant behavior. Apple pending purchase, interruption, refund, refund
-reversal and grace remain separate acceptance scopes. Record which surfaces
-were exercised and omit personal email, tokens and secrets from progress notes.
+A second live sequence, if approved, can let RevenueCat expire while a fresh
+Stripe trial is still active, confirm `premium/trialing` through Stripe, then
+cancel that trial and confirm `free/canceled`. Apple pending purchase,
+interruption, refund, refund reversal and grace have their own acceptance cases.
+Use account labels in shared progress notes.
 [Stripe subscription trials](https://docs.stripe.com/billing/subscriptions/trials)
 · [Stripe cancellation](https://docs.stripe.com/billing/subscriptions/cancel)
-· [RevenueCat Test Store](https://www.revenuecat.com/docs/test-and-launch/sandbox/test-store)
+· [RevenueCat webhook event fields](https://www.revenuecat.com/docs/integrations/webhooks/event-types-and-fields)
 
 ## Account matrix
 
