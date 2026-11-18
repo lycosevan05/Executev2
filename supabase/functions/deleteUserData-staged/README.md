@@ -105,5 +105,20 @@ Restoration of canceled subscriptions or deleted bytes, rows and Auth accounts
 requires a separate recovery decision.
 
 The tests in this directory exercise the local HTTP admission and shutoff
-contract. Hosted deployment, provider replay, destructive lifecycle, native
-route change and combined database reversal remain pending.
+contract. The structural reversal rehearsal uses a fresh PostgreSQL fixture
+with the six baseline migrations and the five E63 optional guards:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 supabase/tests/account-deletion/test_staged_schema_reversal.py \
+  --postgres-bin /path/to/postgresql/bin
+```
+
+It passed on PostgreSQL 17.12. The clean fixture recovered the exact baseline
+schema export and preserved the existing unrelated row. Authenticated entity
+writes and the billing reconciliation RPC worked before, during and after
+installation. A retained upload closure or Stripe retirement fingerprint each
+blocked reversal and preserved the staged schema.
+
+The rehearsal uses synthetic Auth and Storage schemas, with no Storage byte
+operations or provider calls. Hosted deployment, provider replay, destructive
+lifecycle, native route change and full hosted rollback remain pending.
