@@ -208,6 +208,18 @@ The verified-rollout client now requires a valid deletion count for each of the 
 
 The local backend candidate checks for conflicting legacy ownership before storage or billing mutations. Conditional database deletes keep rows whose inspected ownership or billing reference changes. All 32 Deno checks, the entry point type check and formatting checks passed. Live PostgREST verification, the concurrent-write gap after the last absence check, exact rollback dependency binding and authorized disposable-account lifecycle tests remain open. The production readiness gate remains closed.
 
+### E51 — Check session lifetime and protect the active owner
+
+The dedicated Apple QA simulator restored its saved Profile after a full process relaunch. The Execute Authentication dashboard shows a 3,600-second access-token lifetime, zero session time-box and inactivity limits, and disabled single-session enforcement. The authorized Google QA read selected only timestamps and found two active rows for the disposable owner, neither previously refreshed. Execute was terminated only on the iPhone 17e Google simulator to let its older access token age without foreground refresh. No provider consent or database settings changed.
+
+Write preflights now require the SDK to still have the signed-in owner's saved session. The new real-SDK fixture removes local storage before the loss event can update the UI and verifies draft writes stop immediately. The offline fixture still permits writes for a saved same-owner session. All 639 unit tests passed.
+
+### E52 — Recover deletion deployment history and verify PostgreSQL predicates
+
+Three independently retained November 13 Management API snapshots agree on historical `deleteUserData` version 6 with JWT verification enabled and a matching provider compiled-bundle digest. The E41 ZIP is the source closure and has its own digest. Fresh deployed revision readback and the resolved dependency or compiled archive still require verification.
+
+Synthetic PostgreSQL 17.5 checks confirmed exact email and UUID matching, distinct null and blank predicates, foreign-owner preservation and affected-row counts for changes to JSON subscription ownership or references. These checks complement the SDK serialization and Deno handler tests. Actual PostgREST transport, deployed RLS and the final concurrency gap remain open. The native rollout gate stays closed.
+
 ## Authorization and preservation
 
 Use standalone ios-native and the isolated checkout. Original Developer README/legal/PDF/ZIP changes remain untouched; baseline binary-diff hash4ba519d51f7d630a0695b9191e11287f350162810f7d0fb9aca5e3e297dc66eb reverified. Normal designated disposable-QA synthetic actions, SELECT-only independent DB, local fixes/tests/commits and normal signing/install are authorized. Credentials/auth storage stay private; UI through CUA; manual physical preference retained. No new backend/schema/function deployment, billing mutation, real-account deletion, credential automation, push, merge or distribution without separate authorization. Canonical Execute Document maintained by separate writer.
