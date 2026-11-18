@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.revenuecatWebhook]
 verify_jwt = false
+
+[functions.guardedStorageUpload]
+verify_jwt = true

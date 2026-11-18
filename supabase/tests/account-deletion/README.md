@@ -331,3 +331,51 @@ References:
 [Supabase Auth user management](https://supabase.com/docs/guides/auth/managing-user-data)
 and
 [PostgreSQL foreign-key constraints](https://www.postgresql.org/docs/17/ddl-constraints.html).
+
+### Canonical upload route and writer cutover
+
+The `guardedStorageUpload` Edge Function accepts an authenticated POST with
+raw bytes, the `uploads` bucket, and a single `<Auth UUID>/<filename>` path.
+The response supplies the canonical lowercase UUID path. Supported file types
+and the 50 MiB ceiling match the bucket migration. The route registers the
+exact destination through the service-only `begin_exact_account_upload_dispatch`
+RPC before issuing a single non-overwriting Storage request. A matching Storage
+receipt or a verified duplicate completes that dispatch. A transport loss,
+unexpected Storage response, or uncertain database acknowledgment requires
+operator reconciliation. A subsequent upload cannot acknowledge an earlier
+dispatch. When the file is absent from a listing, its dispatch can still be
+pending.
+
+Install `storage-upload-exact-dispatch.sql` after the E64 admission and dispatch
+candidates. Move supported clients onto the route before applying
+`storage-upload-writer-cutover.sql` to the approved project. It blocks ordinary
+authenticated or anonymous Storage insert and update for `uploads`, and keeps
+public reads and same-prefix authenticated deletes compatible with existing
+policies. The guarded request uses the service credential. Its Storage
+`owner_id` can be null, so the authenticated UUID prefix remains authoritative
+for object lookup and cleanup. [Supabase Storage ownership](https://supabase.com/docs/guides/storage/security/ownership)
+
+Before enabling staged deletion, inventory all deployed clients, provider-side
+writers, signed-upload capabilities and resumable sessions for this bucket.
+Keep deletion admission disabled while pre-cutover writes are still unresolved.
+Verify that no outside service or S3 credential can send untracked writes and
+that previously issued capabilities and sessions are expired or retired.
+Rehearse the exact project gateway and hosted Storage versions before relying
+on the policy cutover. A client rollback that restores a direct writer requires
+turning staged deletion off and resolving any outstanding dispatches before
+reopening direct writes.
+
+From a fresh verified W04 loopback stack, the following fixture installs the
+four optional Storage candidates and exercises the production handler through
+a loopback Deno HTTP listener with real Auth, PostgREST and Storage.
+
+```sh
+deno check --no-lock --node-modules-dir=none supabase/functions/guardedStorageUpload/index.ts
+python3 supabase/tests/account-deletion/test_canonical_storage_upload.py --stack-dir "$fixture"
+```
+
+The E65 fixture passed normal upload, exact-path and unauthorized checks,
+duplicate preservation, direct insert/update denial, public and owner reads,
+prefix-based owner deletion, admission closure, an unrelated account, and a
+same-email replacement UUID. The seven offline handler tests separately
+exercise uncertain storage and acknowledgment outcomes.
