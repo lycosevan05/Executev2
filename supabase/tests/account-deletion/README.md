@@ -494,7 +494,25 @@ python3 "$fixtures/native-deletion-tls.py" "$fixture"
 ```
 
 Use the URL above and the public key from `anon-key` in the disposable signed
-app configuration. The exact allowed Auth UUID is the `target_id` returned by
-`/qa/ready`. Keep the gateway and Edge running while the test runs. Afterward,
-stop the fixture processes, stop the dedicated stack, and discard the
-simulator and private fixture credential files.
+app configuration. Compile the simulator build with
+`EXECUTE_STAGED_DELETION_ACCEPTANCE`. This Swift condition is for the dedicated
+fixture build. Use `EXECUTE_STAGED_DELETION_ORIGIN=https://127.0.0.1:55474`
+and the exact `target_id` as `EXECUTE_STAGED_DELETION_OWNER_UUID`. The app
+still requires the matching live local session before enabling staged
+deletion. Leave the ordinary app's deletion barrier in place.
+
+Set `EXECUTE_E68_SIGNED_DELETION=1` in the private test-runner environment.
+The app-hosted tests also need the exact target and witness UUIDs from
+`/qa/ready` in `EXECUTE_STAGED_DELETION_OWNER_UUID` and
+`EXECUTE_E68_WITNESS_UUID`. Run these phases on the same disposable simulator
+and preserve the app container between phases.
+
+1. Run `SignedDeletionUITests/testPrepareExactOwnerAndCancel`.
+2. Run `SignedDeletionPersistenceTests/testCacheAndKeychainArePresentBeforeDeletion`.
+3. Run `SignedDeletionUITests/testDeleteExactOwnerAndRelaunchSignedOut`.
+4. Run `SignedDeletionPersistenceTests/testCacheAndKeychainArePurgedAfterDeletion`.
+
+Keep the gateway and Edge running while the tests run. Read the exact
+fixture owners through the local APIs and independently query the isolated
+database. Afterward, stop the fixture processes and the dedicated stack,
+then discard the simulator and private fixture credential files.
