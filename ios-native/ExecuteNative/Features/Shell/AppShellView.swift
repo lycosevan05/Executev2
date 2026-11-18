@@ -4,7 +4,40 @@ struct AppShellView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
     var body: some View {
-        AppShellContentView(router: environment.router)
+        if let consent = environment.aiSharingConsent {
+            AppShellContentView(router: environment.router)
+                .modifier(AISharingPrompt(consent: consent, appState: environment.appState))
+        } else {
+            AppShellContentView(router: environment.router)
+        }
+    }
+}
+
+private struct AISharingPrompt: ViewModifier {
+    @ObservedObject var consent: AISharingConsent
+    @ObservedObject var appState: AppState
+
+    private var owner: UUID? {
+        guard case .signedIn(let user) = appState.launchState else { return nil }
+        return user.id
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Allow AI Data Sharing?", isPresented: Binding(
+                get: { consent.promptOwner != nil && consent.promptOwner == owner },
+                set: { _ in }
+            ), presenting: consent.promptOwner) { ownerID in
+                Button("Allow Sharing") { consent.resolvePrompt(for: ownerID, allow: true) }
+                Button("Don't Allow", role: .cancel) { consent.resolvePrompt(for: ownerID, allow: false) }
+            } message: { _ in
+                Text(AISharingConsent.disclosure)
+            }
+            .onChange(of: owner) {
+                if let promptOwner = consent.promptOwner, promptOwner != owner {
+                    consent.dismissPrompt()
+                }
+            }
     }
 }
 

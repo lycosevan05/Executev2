@@ -60,7 +60,7 @@ final class PlanQuestionsModel: ObservableObject {
             let context = try await CoachingContextLoader.load(repository: repository, identity: identity, now: now(), calendar: calendar, current: { self.current(request, user) })
             guard current(request, user) else { throw CancellationError() }; try repository.validate(identity)
             let prompt = try PlanQuestions.request(question: question, history: messages, snapshot: context)
-            let raw = try await ai.textResponse(prompt)
+            let raw = try await ai.textResponse(prompt.owned(by: user.id))
             guard current(request, user) else { throw CancellationError() }; try repository.validate(identity)
             guard context.date == RecoverySelection.date(now(), timeZone: calendar.timeZone) else { throw PlanQuestions.invalid("A new day started. Send again to use today's context.") }
             let answer = try PlanQuestions.answer(raw)

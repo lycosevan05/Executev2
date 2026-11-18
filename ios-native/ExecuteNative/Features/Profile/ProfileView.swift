@@ -14,6 +14,7 @@ private struct ProfileScreen: View {
     @ObservedObject private var appState: AppState
     @StateObject private var model: ProfileViewModel
     private let limitationsRepository: RecoveryRepository
+    private let aiSharingConsent: AISharingConsent?
     let initialSection: String?
 
     init(environment: AppEnvironment, initialSection: String?) {
@@ -26,10 +27,11 @@ private struct ProfileScreen: View {
         ))
         self.initialSection = initialSection
         self.limitationsRepository = environment.makeRecoveryRepository()
+        self.aiSharingConsent = environment.aiSharingConsent
     }
 
     var body: some View {
-        ProfileDashboardView(model: model, premiumState: appState.premiumState, initialSection: initialSection, limitationsRepository: limitationsRepository, limitationsUser: signedInUser)
+        ProfileDashboardView(model: model, premiumState: appState.premiumState, initialSection: initialSection, limitationsRepository: limitationsRepository, limitationsUser: signedInUser, aiSharingConsent: aiSharingConsent)
             .task(id: signedInUser?.id) {
                 if let signedInUser { await model.start(for: signedInUser) } else { model.stop() }
             }
@@ -47,6 +49,7 @@ struct ProfileDashboardView: View {
     let initialSection: String?
     var limitationsRepository: RecoveryRepository? = nil
     var limitationsUser: ExecuteUser? = nil
+    var aiSharingConsent: AISharingConsent? = nil
 
     @Environment(\.openURL) private var openURL
     @State private var isLimitationsPresented = false
@@ -107,6 +110,10 @@ struct ProfileDashboardView: View {
 
                 ProfileSection(title: "About") {
                     VStack(spacing: 0) {
+                        if let aiSharingConsent, let owner = limitationsUser?.id {
+                            AISharingSettingsRow(consent: aiSharingConsent, owner: owner)
+                            ExecuteDivider().padding(.leading, 52)
+                        }
                         ProfileActionRow(
                             symbol: "hand.raised",
                             title: "Privacy Policy",
@@ -657,5 +664,23 @@ private struct DeleteAccountSheet: View {
         Task {
             if await model.deleteAccount() { dismiss() }
         }
+    }
+}
+
+private struct AISharingSettingsRow: View {
+    @ObservedObject var consent: AISharingConsent
+    let owner: UUID
+
+    var body: some View {
+        let allowed = consent.isAllowed(for: owner)
+        ProfileActionRow(
+            symbol: "sparkles",
+            title: allowed ? "Turn Off AI Data Sharing" : "AI Data Sharing",
+            subtitle: allowed ? "Sharing with OpenAI is on" : "Sharing with OpenAI is off",
+            action: {
+                if allowed { consent.revoke(for: owner) } else { consent.showPrompt(for: owner) }
+            }
+        )
+        .accessibilityIdentifier("profile.ai-data-sharing")
     }
 }

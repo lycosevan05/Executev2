@@ -69,7 +69,7 @@ final class InsightsViewModel: ObservableObject {
             try check(request, identity)
             snapshot = fresh
             let prompt = try InsightsAI.request(fresh)
-            let raw = try await ai.structuredResponse(prompt, as: JSONValue.self)
+            let raw = try await ai.structuredResponse(prompt.owned(by: user.id), as: JSONValue.self)
             try check(request, identity)
             guard fresh.date == RecoverySelection.date(now(), timeZone: calendar.timeZone) else { throw AppError(title: "A new day started", message: "Refresh before generating insights for today.") }
             let response = try InsightsAI.validate(raw)

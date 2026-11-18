@@ -264,7 +264,7 @@ enum FoodPhoto {
                   let url = URL(string: "data:image/jpeg;base64," + jpeg.base64EncodedString()) else { throw FoodBarcode.unavailable() }
             let result = try await ai.structuredResponse(LLMRequest(
                 prompt: "Analyze the selected food photo. Identify only visible foods and estimate portions and macros. Return separate foods, numeric calories/protein/carbs/fats, and totals. Return foods=[] when no food is visible. Do not identify people or infer hidden ingredients. The user will review and correct the estimates before saving.",
-                fileURLs: [url], maxOutputTokens: 1600, responseJSONSchema: NutritionAISchema.response, schemaName: "nutrition_photo_estimate"), as: NutritionAIEstimate.self)
+                fileURLs: [url], maxOutputTokens: 1600, responseJSONSchema: NutritionAISchema.response, schemaName: "nutrition_photo_estimate").owned(by: user.id), as: NutritionAIEstimate.self)
             guard providerCurrent(request, user: user, identity: identity), canUsePhoto() else { return }
             let value = try FoodPhoto.review(result)
             review = value

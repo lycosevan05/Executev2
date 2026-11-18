@@ -149,7 +149,7 @@ enum RecipeAI {
             guard premium() else { throw Self.invalid("AI Fill requires an active Premium membership. Refresh your membership in Premium & Billing.") }
             guard let ai else { throw Self.invalid("AI Fill is unavailable. Enter the recipe manually or try again later.") }
             let input = try RecipeAI.request(name: name, type: type)
-            let value = try await ai.structuredResponse(input, as: JSONValue.self)
+            let value = try await ai.structuredResponse(input.owned(by: user.id), as: JSONValue.self)
             guard current(request, user.id), premium() else { return nil }
             return try RecipeAI.draft(value, name: name, type: type)
         } catch { if current(request, user.id) { self.error = AppError.from(error, title: "AI Fill could not finish") }; return nil }

@@ -2633,6 +2633,123 @@ final class SplitOverviewDisplayTests: XCTestCase {
     }
 }
 
+
+@MainActor
+final class NativeAISharingConsentTests: XCTestCase {
+    private struct Answer: Decodable, Sendable {
+        let answer: String
+    }
+
+    private actor Traffic {
+        var count = 0
+        func record() { count += 1 }
+    }
+
+    private func simulatedSession(owner: UUID) -> Session {
+        let user = User(id: owner, appMetadata: [:], userMetadata: [:], aud: "authenticated",
+                        createdAt: .distantPast, updatedAt: .distantPast)
+        return Session(accessToken: "synthetic-ai-bearer", tokenType: "bearer",
+                       expiresIn: 3600, expiresAt: 1_900_000_000, refreshToken: "synthetic-refresh", user: user)
+    }
+
+    private func service(
+        consent: AISharingConsent,
+        traffic: Traffic,
+        session: @escaping () async throws -> Session
+    ) -> SupabaseAIService {
+        let functions = FunctionsClient(url: URL(string: "https://consent-fixture.invalid/functions/v1")!, fetch: { request in
+            await traffic.record()
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer synthetic-ai-bearer")
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["prompt"] as? String, "Synthetic only")
+            XCTAssertNotNil(json["file_urls"])
+            XCTAssertNotNil(json["input_file"])
+            XCTAssertEqual(Set(json.keys), ["prompt", "file_urls", "input_file"])
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (Data(#"{"answer":"ready"}"#.utf8), response)
+        })
+        return SupabaseAIService(functions: ConsentedAIRequestInvoker(functions: functions, consent: consent, getSession: session))
+    }
+
+    private var request: LLMRequest {
+        LLMRequest(prompt: "Synthetic only", fileURLs: [URL(string: "data:image/jpeg;base64,AA==")!],
+                   maxOutputTokens: nil, responseJSONSchema: nil, schemaName: nil,
+                   inputFile: LLMInputFile(filename: "fixture.pdf", fileData: "data:application/pdf;base64,AA=="))
+    }
+
+    func testDeclineAndRevokeBlockTransportAndPurgeRemovesConsent() async throws {
+        let suiteName = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let owner = UUID()
+        let traffic = Traffic()
+        let consent = AISharingConsent(defaults: defaults) { $0 == owner }
+        let ai = service(consent: consent, traffic: traffic) { self.simulatedSession(owner: owner) }
+        let bound = request.owned(by: owner)
+
+        for _ in 0..<2 {
+            do { let _: Answer = try await ai.structuredResponse(bound, as: Answer.self); XCTFail("Consent must be required") }
+            catch { XCTAssertEqual(error as? AppError, AISharingConsent.required) }
+            if consent.promptOwner == owner { consent.resolvePrompt(for: owner, allow: false) }
+        }
+        XCTAssertNil(consent.promptOwner)
+        let beforeConsent = await traffic.count
+        XCTAssertEqual(beforeConsent, 0)
+
+        consent.showPrompt(for: owner)
+        consent.resolvePrompt(for: owner, allow: true)
+        XCTAssertTrue(AISharingConsent(defaults: defaults) { $0 == owner }.isAllowed(for: owner))
+        let answer = try await ai.structuredResponse(bound, as: Answer.self)
+        XCTAssertEqual(answer.answer, "ready")
+
+        consent.revoke(for: owner)
+        do { let _: Answer = try await ai.structuredResponse(bound, as: Answer.self); XCTFail("Revoked consent must block AI") }
+        catch { XCTAssertEqual(error as? AppError, AISharingConsent.required) }
+        let afterRevoke = await traffic.count
+        XCTAssertEqual(afterRevoke, 1)
+
+        consent.showPrompt(for: owner)
+        consent.resolvePrompt(for: owner, allow: true)
+        await UserScopedCacheStore(suiteName: suiteName).purge(userID: owner)
+        XCTAssertFalse(consent.isAllowed(for: owner))
+    }
+
+    func testWrongOrChangedOwnerAndRevokedConsentDuringSessionFetchBlockTransport() async throws {
+        let suiteName = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let owner = UUID()
+        let otherOwner = UUID()
+        var activeOwner = owner
+        let traffic = Traffic()
+        let consent = AISharingConsent(defaults: defaults) { $0 == activeOwner }
+        consent.showPrompt(for: owner)
+        consent.resolvePrompt(for: owner, allow: true)
+        let wrongSession = service(consent: consent, traffic: traffic) { self.simulatedSession(owner: otherOwner) }
+        let changedUser = service(consent: consent, traffic: traffic) {
+            activeOwner = otherOwner
+            return self.simulatedSession(owner: owner)
+        }
+        let revoked = service(consent: consent, traffic: traffic) {
+            consent.revoke(for: owner)
+            return self.simulatedSession(owner: owner)
+        }
+        for (ai, candidate) in [(wrongSession, request), (wrongSession, request.owned(by: otherOwner)),
+                                (wrongSession, request.owned(by: owner)), (changedUser, request.owned(by: owner)),
+                                (revoked, request.owned(by: owner))] {
+            activeOwner = owner
+            do { let _: Answer = try await ai.structuredResponse(candidate, as: Answer.self); XCTFail("The checked account must still have consent") }
+            catch is CancellationError { }
+            catch { XCTFail("Unexpected failure: \(error)") }
+        }
+        activeOwner = otherOwner
+        XCTAssertFalse(consent.isAllowed(for: otherOwner))
+        let sends = await traffic.count
+        XCTAssertEqual(sends, 0)
+    }
+}
+
 private final class AIServiceFixtureProtocol: URLProtocol, @unchecked Sendable {
     static let traffic = CallbackFixtureTraffic()
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".ai-fixture.invalid") == true }

@@ -411,7 +411,7 @@ final class RecoveryViewModel: ObservableObject {
             let limitations = limitationSnapshot
             let prompt = try RecoveryContext.prompt(snapshot: snapshot, records: records, date: date, checkIn: inputs, timeZone: timeZone)
             let response: RecoveryGuidance = try await ai.structuredResponse(LLMRequest(prompt: prompt, fileURLs: [],
-                maxOutputTokens: 2400, responseJSONSchema: RecoveryGuidance.schema, schemaName: "recovery_guidance"), as: RecoveryGuidance.self)
+                maxOutputTokens: 2400, responseJSONSchema: RecoveryGuidance.schema, schemaName: "recovery_guidance").owned(by: identity.user.id), as: RecoveryGuidance.self)
             guard current(request, identity), guidanceGeneration == aiRequest, inputs == draft else { return }
             guard response.isComplete else { throw AppError(title: "Guidance could not be read", message: "The response was incomplete. Your check-in is saved; retry guidance.") }
             let generated = try JSONValue.recoveryEncoded(response)

@@ -615,7 +615,7 @@ final class WorkoutRecoveryGuidanceModel: ObservableObject {
             session = fresh
             let prompt = try WorkoutRecoveryPrompt.request(session: fresh, records: context)
             try validate()
-            let result = try await ai.textResponse(prompt)
+            let result = try await ai.textResponse(prompt.owned(by: user.id))
             try validate()
             let clean = result.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty, clean.split(whereSeparator: { $0.isWhitespace }).count <= 80 else {

@@ -20,6 +20,7 @@ final class AppEnvironment: ObservableObject {
     let realtimeService: SupabaseRealtimeService?
     let storageService: SupabaseStorageService?
     let aiService: AIResponding?
+    let aiSharingConsent: AISharingConsent?
     private var recoveryRepositoryFactory: (() -> RecoveryRepository)?
     func makeRecoveryRepository() -> RecoveryRepository {
         recoveryRepositoryFactory?() ?? UnavailableRecoveryRepository()
@@ -38,7 +39,8 @@ final class AppEnvironment: ObservableObject {
         dataService: SupabaseDataService? = nil,
         realtimeService: SupabaseRealtimeService? = nil,
         storageService: SupabaseStorageService? = nil,
-        aiService: AIResponding? = nil
+        aiService: AIResponding? = nil,
+        aiSharingConsent: AISharingConsent? = nil
     ) {
         self.configuration = configuration
         self.configurationError = configurationError
@@ -51,6 +53,7 @@ final class AppEnvironment: ObservableObject {
         self.realtimeService = realtimeService
         self.storageService = storageService
         self.aiService = aiService
+        self.aiSharingConsent = aiSharingConsent
         self.appState = AppState(
             authService: authService,
             accountService: accountService,
@@ -129,6 +132,11 @@ final class AppEnvironment: ObservableObject {
 #else
             accountService = SupabaseAccountService(functions: functions)
 #endif
+            weak var appState: AppState?
+            let consent = AISharingConsent { appState?.allowsDraftWrites(for: $0) == true }
+            let aiFunctions = ConsentedAIRequestInvoker(functions: uploadClient, consent: consent) {
+                try await client.auth.session
+            }
             let environment = AppEnvironment(
                 configuration: configuration,
                 configurationError: nil,
@@ -143,8 +151,10 @@ final class AppEnvironment: ObservableObject {
                 storageService: SupabaseStorageService(
                     client: client, uploadClient: uploadClient, defaultBucket: configuration.uploadBucket
                 ),
-                aiService: SupabaseAIService(functions: functions)
+                aiService: SupabaseAIService(functions: aiFunctions),
+                aiSharingConsent: consent
             )
+            appState = environment.appState
             environment.recoveryRepositoryFactory = { SupabaseRecoveryRepository(client: client) }
             return environment
         } catch {

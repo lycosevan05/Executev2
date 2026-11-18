@@ -460,7 +460,7 @@ final class NutritionViewModel: ObservableObject {
         )
 
         do {
-            let result = try await aiService.structuredResponse(request, as: NutritionAIEstimate.self)
+            let result = try await aiService.structuredResponse(request.owned(by: scope.user?.id), as: NutritionAIEstimate.self)
             guard analysisGeneration == requestID else { return }
             try validate(scope)
             guard !result.drafts(mealType: .snack).isEmpty else {
