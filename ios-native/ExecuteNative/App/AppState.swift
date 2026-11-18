@@ -18,6 +18,7 @@ enum AppLaunchState: Equatable {
 final class AppState: ObservableObject {
     @Published private(set) var launchState: AppLaunchState = .launching
     @Published private(set) var premiumState = PremiumState.free
+    @Published private(set) var appleRevocationInstructionsPending = false
 
     private let authService: AuthServicing
     private let accountService: AccountServicing
@@ -232,7 +233,7 @@ final class AppState: ObservableObject {
         if let userID { deletingUserIDs.insert(userID) }
         defer { if let userID { deletingUserIDs.remove(userID) } }
         subscriptionRefreshTask?.cancel()
-        try await accountService.deleteAccount()
+        let outcome = try await accountService.deleteAccount()
         if let userID { await cache.purge(userID: userID) }
         guard sessionGeneration == session else { return }
         billing.deactivate()
@@ -249,7 +250,12 @@ final class AppState: ObservableObject {
         guard sessionGeneration == session else { return }
         sessionGeneration = UUID()
         router.reset()
+        appleRevocationInstructionsPending = outcome == .manualAppleRevocation
         launchState = .signedOut
+    }
+
+    func dismissAppleRevocationInstructions() {
+        appleRevocationInstructionsPending = false
     }
 
     func handleScenePhase(_ phase: ScenePhase) async {
@@ -258,6 +264,7 @@ final class AppState: ObservableObject {
     }
 
     private func activate(_ user: ExecuteUser) async {
+        dismissAppleRevocationInstructions()
         if signedInUserID != user.id { router.reset() }
         authenticationGeneration = UUID()
         sessionGeneration = UUID()

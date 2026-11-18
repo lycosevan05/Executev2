@@ -44,6 +44,7 @@ struct RootView: View {
 
 private struct StartupRootView: View {
     @ObservedObject var appState: AppState
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         Group {
@@ -54,6 +55,17 @@ private struct StartupRootView: View {
                 ConfigurationRequiredView(error: error)
             case .signedOut:
                 AuthenticationView()
+                    .alert("Remove Sign in with Apple access", isPresented: Binding(
+                        get: { appState.appleRevocationInstructionsPending },
+                        set: { if !$0 { appState.dismissAppleRevocationInstructions() } }
+                    )) {
+                        Button("Apple instructions") {
+                            if let url = URL(string: "https://support.apple.com/en-us/102571") { openURL(url) }
+                        }
+                        Button("Done", role: .cancel) {}
+                    } message: {
+                        Text("Your Execute account was deleted. To remove Execute from Sign in with Apple, open Settings, select your Apple Account, then select Sign in with Apple and remove Execute.")
+                    }
             case .signedIn:
                 AppShellView()
             case .failed(let error):

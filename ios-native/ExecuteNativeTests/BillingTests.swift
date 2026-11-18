@@ -1093,7 +1093,10 @@ private final class DelayedBillingAuth: AuthServicing {
 @MainActor
 private final class DelayedBillingDeletion: AccountServicing {
     let gate = BillingGate()
-    func deleteAccount() async throws { await gate.suspend() }
+    func deleteAccount() async throws -> AccountDeletionOutcome {
+        await gate.suspend()
+        return .complete
+    }
 }
 
 @MainActor

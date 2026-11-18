@@ -10,6 +10,7 @@ export interface UploadEntry {
 }
 export interface RecordDeletionPlan {
   subscriptionIds: readonly string[];
+  closeBillingProjection?: () => Promise<void>;
   deleteRows(table: string): Promise<number>;
 }
 export interface DeletionStore {
@@ -26,6 +27,7 @@ export interface DeletionBilling {
   verifyOwner(id: string, user: DeletionUser): Promise<void>;
   cancel(id: string): Promise<void>;
 }
+export type AppleRevocationOutcome = "revoked" | "manual_required";
 export const pageSize = 100;
 const maxObjects = 10000;
 export function validateUser(user: DeletionUser) {
@@ -89,6 +91,7 @@ export async function deleteAccount(
   store: DeletionStore,
   billing: DeletionBilling,
   closeAndDrainUploads?: (ownerId: string) => Promise<void>,
+  revokeAppleAuthorization?: () => Promise<AppleRevocationOutcome | undefined>,
 ) {
   validateUser(user);
   // Complete read-only enumeration before the first irreversible/provider operation.
@@ -105,6 +108,8 @@ export async function deleteAccount(
     // than the read-only preflight. Inventory them after the upload drain.
     uploads = await collectUploads(store, user.id);
   }
+  await plan.closeBillingProjection?.();
+  const appleRevocation = await revokeAppleAuthorization?.();
   for (const id of ids) await billing.cancel(id);
   for (let offset = 0; offset < uploads.length; offset += pageSize) {
     await store.removeUploads(uploads.slice(offset, offset + pageSize));
@@ -123,5 +128,9 @@ export async function deleteAccount(
   // Retain authentication on any earlier partial failure so the account can retry.
   await store.deleteAuthentication(user.id);
   results.authentication = "deleted";
-  return { success: true, results };
+  return {
+    success: true,
+    results,
+    ...(appleRevocation && { apple_revocation: appleRevocation }),
+  };
 }

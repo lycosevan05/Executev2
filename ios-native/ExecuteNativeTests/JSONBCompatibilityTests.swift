@@ -1510,7 +1510,10 @@ private final class PatchRecordFixtureProtocol: URLProtocol, @unchecked Sendable
 @MainActor
 private final class DraftDeletionFixture: AccountServicing {
     var operation: (() async throws -> Void)?
-    func deleteAccount() async throws { try await operation?() }
+    func deleteAccount() async throws -> AccountDeletionOutcome {
+        try await operation?()
+        return .complete
+    }
 }
 
 extension StartupStateTests {
@@ -2037,6 +2040,25 @@ final class DailyActivityChecklistTests: XCTestCase {
         try await service.deleteAccount()
         XCTAssertEqual(fixture.calls, 1); XCTAssertEqual(fixture.requestName, "deleteUserData")
         XCTAssertEqual(fixture.requestBody, .object([:]))
+    }
+
+    func testAppleRevocationOutcomeRequiresCompleteDeletionReceipt() async throws {
+        let complete = DeletionFunctionFixture(.object([
+            "success": .bool(true), "results": .object(completeResults), "apple_revocation": .string("manual_required")
+        ]))
+        let service = SupabaseAccountService(functions: complete, readiness: .verifiedServerRollout)
+        let outcome = try await service.deleteAccount()
+        XCTAssertEqual(outcome, .manualAppleRevocation)
+
+        complete.payload = .object([
+            "success": .bool(true), "results": .object(completeResults), "apple_revocation": .string("revoked")
+        ])
+        let revoked = try await service.deleteAccount()
+        XCTAssertEqual(revoked, .complete)
+
+        complete.payload = .object(["success": .bool(true), "apple_revocation": .string("manual_required")])
+        do { try await service.deleteAccount(); XCTFail("Apple revocation is not a deletion receipt") }
+        catch let error as AppError { XCTAssertEqual(error.title, "Account deletion not confirmed") }
     }
 
     func testTransportFailureNeverBecomesSuccessfulDeletion() async {

@@ -9,6 +9,12 @@ private struct DeleteAccountResponse: Decodable, Sendable {
     let success: Bool
     let error: String?
     let results: [String: JSONValue]?
+    let appleRevocation: String?
+
+    enum CodingKeys: String, CodingKey {
+        case success, error, results
+        case appleRevocation = "apple_revocation"
+    }
 }
 
 enum AccountDeletionReadiness: Sendable {
@@ -19,10 +25,16 @@ enum AccountDeletionReadiness: Sendable {
 #endif
 }
 
+enum AccountDeletionOutcome: Equatable, Sendable {
+    case complete
+    case manualAppleRevocation
+}
+
 @MainActor
 protocol AccountServicing: AnyObject {
     var deletionAvailable: Bool { get }
-    func deleteAccount() async throws
+    @discardableResult
+    func deleteAccount() async throws -> AccountDeletionOutcome
 }
 
 extension AccountServicing {
@@ -49,7 +61,8 @@ final class SupabaseAccountService: AccountServicing {
         self.readiness = readiness
     }
 
-    func deleteAccount() async throws {
+    @discardableResult
+    func deleteAccount() async throws -> AccountDeletionOutcome {
         // The currently deployed legacy handler mutates records even for a capability probe.
         // Never invoke it until its full deletion rollout has been independently verified.
         guard deletionAvailable else {
@@ -90,6 +103,10 @@ final class SupabaseAccountService: AccountServicing {
             // A success boolean alone is not proof of complete account removal.
             // Do not echo raw backend/provider error payloads.
             throw Self.unconfirmedDeletion
+        }
+        switch response.appleRevocation {
+        case nil, "revoked": return .complete
+        default: return .manualAppleRevocation
         }
     }
 
@@ -134,7 +151,8 @@ final class MockAccountService: AccountServicing {
         self.deletionError = deletionError
     }
 
-    func deleteAccount() async throws {
+    @discardableResult
+    func deleteAccount() async throws -> AccountDeletionOutcome {
         deletionCount += 1
         if let deletionError { throw deletionError }
     }
@@ -148,7 +166,8 @@ final class UnavailableAccountService: AccountServicing {
         self.error = error
     }
 
-    func deleteAccount() async throws {
+    @discardableResult
+    func deleteAccount() async throws -> AccountDeletionOutcome {
         throw error
     }
 }
