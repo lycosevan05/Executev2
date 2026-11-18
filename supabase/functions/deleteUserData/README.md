@@ -67,17 +67,22 @@ alternate-surface/filesystem/API workaround was attempted. Deployment is still
 unapproved and not ready. Continue independent required native workflows while
 this gate is outstanding.
 
-## E41 source ZIP recovery
+## E41 source ZIP and E52 deployment verification
 
 An existing Supabase-origin `deleteUserData.zip` was found in the earlier
 workspace. All three members exactly match the independently captured E17 source
 hashes. The archive SHA-256 is
 `f3d53503a70affeac88a1ad30255a9a53937dcf13619ab6a2a0ec0e913aa87e7`. It contains
 the source closure, including a major-version-only Supabase JS import. It
-carries no resolved dependency lock or deployed revision. The dashboard list
-still exposes only relative update time, and the CLI metadata request requires
-an authenticated session. The source artifact is available for review. The
-revision and dependency binding gate remains open.
+carries no resolved dependency lock or deployed revision.
+
+The November 17 authorized CLI readback confirms that the current deployment is
+version 6 with legacy JWT verification enabled. Its provider bundle digest is
+`b3f05b26de612852a9a7778cf1f9453b71e243ac8e084f0725b7597f67d9d297`, which
+matches the November 13 Management API snapshots. A fresh single-function source
+download matches all three E41 ZIP members byte for byte. A usable compiled
+archive with that digest or a resolved dependency lock remains outstanding for
+reproducible rollback.
 
 ## Exact change and ownership contract
 
