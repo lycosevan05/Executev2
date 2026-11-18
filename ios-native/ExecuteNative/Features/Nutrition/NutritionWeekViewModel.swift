@@ -28,7 +28,9 @@ final class NutritionWeekViewModel: ObservableObject {
     }
     var isToday: Bool { date == today() }
     var canAdjustWater: Bool { isToday && waterLoaded && !working && pendingWater == nil }
-    private func key(_ user: ExecuteUser) -> String { "Execute.NutritionWater.\(user.id.uuidString).\(date)" }
+    private func key(_ user: ExecuteUser) -> String {
+        UserScopedCacheStore.nutritionWaterIntentPrefix(for: user.id) + date
+    }
     private func check(_ request: UUID, _ identity: RecoveryIdentity) throws {
         guard request == generation, user?.id == identity.user.id, active(identity.user.id) else { throw CancellationError() }
         try repository.validate(identity)

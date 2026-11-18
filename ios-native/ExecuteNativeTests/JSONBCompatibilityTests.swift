@@ -833,6 +833,12 @@ final class StartupStateTests: XCTestCase {
         let cache = UserScopedCacheStore(suiteName: suiteName)
         let state = makeState(authService: authService, accountService: accountService, cache: cache)
 
+        let targetIntent = "Execute.NutritionWater.\(user.id.uuidString).2026-11-18"
+        let witnessIntent = "Execute.NutritionWater.\(UUID().uuidString).2026-11-18"
+        let pending = Data("pending water update".utf8)
+        defaults.set(pending, forKey: targetIntent)
+        defaults.set(pending, forKey: witnessIntent)
+
         await state.start()
         try await cache.write("private", for: CacheKey("test", "private"))
         try await state.deleteAccount()
@@ -840,6 +846,8 @@ final class StartupStateTests: XCTestCase {
         XCTAssertEqual(accountService.deletionCount, 1)
         XCTAssertEqual(state.launchState, .signedOut)
         XCTAssertNil(authService.restoredUser)
+        XCTAssertNil(defaults.data(forKey: targetIntent))
+        XCTAssertEqual(defaults.data(forKey: witnessIntent), pending)
 
         await cache.activate(userID: user.id)
         let cached: CacheRead<String> = await cache.read(CacheKey("test", "private"), as: String.self)

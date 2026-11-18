@@ -79,10 +79,16 @@ actor UserScopedCacheStore {
         purge(userID: activeUserID)
     }
 
+    static func nutritionWaterIntentPrefix(for userID: UUID) -> String {
+        "Execute.NutritionWater.\(userID.uuidString)."
+    }
+
     // A completed deletion must never purge a newer account's active cache.
     func purge(userID: UUID) {
-        let prefix = "execute.cache.\(userID.uuidString)."
-        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+        let cachePrefix = "execute.cache.\(userID.uuidString)."
+        let waterPrefix = Self.nutritionWaterIntentPrefix(for: userID)
+        for key in defaults.dictionaryRepresentation().keys
+            where key.hasPrefix(cachePrefix) || key.hasPrefix(waterPrefix) {
             defaults.removeObject(forKey: key)
         }
         deactivate(userID: userID)
