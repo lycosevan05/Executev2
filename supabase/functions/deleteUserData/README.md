@@ -198,8 +198,10 @@ deleting its data.
 The
 [isolated UUID ownership guard candidate](../../tests/account-deletion/README.md)
 coordinates authoritative entity writes and hard Auth removal at the database
-boundary. It is separate from the automatic migration chain. Storage, legacy
-email records and delayed provider events still need staged coordination.
+boundary. Its opt-in extension binds qualifying authenticated legacy writes
+to the request's UUID before the FK check. Both are separate from automatic
+migrations. Storage, untouched legacy records and delayed provider events
+still need staged coordination.
 
 E58 verified the ownership migration through isolated PostgREST and the full
 local migration chain. Supabase Support accepted the request for the exact v6

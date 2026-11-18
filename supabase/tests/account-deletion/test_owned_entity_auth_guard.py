@@ -16,6 +16,11 @@ WRITER_FIRST = "11111111-1111-1111-1111-111111111111"
 DELETION_FIRST = "22222222-2222-2222-2222-222222222222"
 UNRELATED = "33333333-3333-3333-3333-333333333333"
 HISTORICAL_ORPHAN = "44444444-4444-4444-4444-444444444444"
+LEGACY_WRITER_FIRST = "55555555-5555-5555-5555-555555555555"
+LEGACY_DELETION_FIRST = "66666666-6666-6666-6666-666666666666"
+RETURNING_EMAIL_OWNER = "77777777-7777-7777-7777-777777777777"
+LEGACY_PATCH_ID = "88888888-8888-8888-8888-888888888888"
+LEGACY_WRITER_ROW = "99999999-9999-9999-9999-999999999999"
 
 
 class Fixture:
@@ -101,6 +106,27 @@ def remove_auth(owner_id):
     return f"delete from auth.users where id = '{owner_id}';"
 
 
+def authenticated_as(owner_id, email):
+    claims = json.dumps({"role": "authenticated", "sub": owner_id, "email": email})
+    return f"set role authenticated; set request.jwt.claims = '{claims}'; "
+
+
+def write_legacy_entity(owner_id, email):
+    return (
+        authenticated_as(owner_id, email)
+        + "insert into public.goals(owner_id, data) values (null, '{}');"
+    )
+
+
+def expect_ownership_rejection(db, statement):
+    try:
+        db.sql(statement)
+    except AssertionError as error:
+        assert "42501" in str(error), error
+    else:
+        raise AssertionError("Expected inconsistent legacy ownership to be rejected")
+
+
 def check_transaction_order(db, first, second):
     with db.session("w09_first") as first_client, db.session("w09_waiter") as waiter:
         try:
@@ -174,6 +200,97 @@ def test_guard(db):
     print("PASS unrelated authenticated UUID and legacy writes and existing billing projection still work")
 
 
+def test_authenticated_legacy_guard(db):
+    writer_email = "legacy-writer-first@example.invalid"
+    deletion_email = "legacy-deletion-first@example.invalid"
+    db.sql(
+        "insert into auth.users (id, email) values "
+        f"('{LEGACY_WRITER_FIRST}', '{writer_email}'), "
+        f"('{LEGACY_DELETION_FIRST}', '{deletion_email}');"
+    )
+    db.file(HERE / "authenticated-legacy-owner-guard.sql")
+    assert db.sql(
+        "select count(*) from pg_trigger where tgname = 'pin_authenticated_legacy_owner' "
+        "and not tgisinternal"
+    ) == "19"
+    assert db.sql(
+        "select count(*) from public.goals where owner_id is null "
+        "and owner_email = 'unrelated@example.invalid'"
+    ) == "1"
+    print("PASS all 19 write triggers installed without backfilling legacy rows")
+
+    db.sql(
+        f"insert into public.goals(id, owner_id, owner_email) values ('{LEGACY_WRITER_ROW}', null, '{writer_email}');"
+    )
+    legacy_update = authenticated_as(LEGACY_WRITER_FIRST, writer_email) + (
+        f"""update public.goals set data = '{{"updated":true}}' where id = '{LEGACY_WRITER_ROW}';"""
+    )
+    check_transaction_order(db, legacy_update, remove_auth(LEGACY_WRITER_FIRST))
+    assert db.sql(f"select count(*) from auth.users where id = '{LEGACY_WRITER_FIRST}'") == "1"
+    assert db.sql(
+        f"select count(*) from public.goals where owner_id = '{LEGACY_WRITER_FIRST}' "
+        f"and owner_email = '{writer_email}'"
+    ) == "1"
+    db.sql(f"delete from public.goals where owner_id = '{LEGACY_WRITER_FIRST}';")
+    db.sql(remove_auth(LEGACY_WRITER_FIRST))
+    assert db.sql(f"select count(*) from auth.users where id = '{LEGACY_WRITER_FIRST}'") == "0"
+    assert db.sql(f"select count(*) from public.goals where id = '{LEGACY_WRITER_ROW}'") == "0"
+    print("PASS a committed authenticated legacy update is now included in explicit cleanup")
+
+    check_transaction_order(
+        db, remove_auth(LEGACY_DELETION_FIRST), write_legacy_entity(LEGACY_DELETION_FIRST, deletion_email)
+    )
+    assert db.sql(f"select count(*) from public.goals where owner_email = '{deletion_email}'") == "0"
+    db.sql(
+        f"insert into auth.users (id, email) values ('{RETURNING_EMAIL_OWNER}', '{deletion_email}');"
+    )
+    db.sql(write_legacy_entity(RETURNING_EMAIL_OWNER, deletion_email))
+    assert db.sql(
+        f"select owner_id from public.goals where owner_email = '{deletion_email}'"
+    ) == RETURNING_EMAIL_OWNER
+    print("PASS Auth removal prevents an orphan and a returning email binds to its new UUID")
+
+    unrelated = authenticated_as(UNRELATED, "unrelated@example.invalid")
+    expect_ownership_rejection(
+        db, unrelated
+        + "insert into public.goals(owner_id, owner_email) values (null, 'different@example.invalid');"
+    )
+    expect_ownership_rejection(
+        db, unrelated + "insert into public.goals(owner_id, owner_email, created_by, user_email) "
+        + "values (null, null, null, null);"
+    )
+    expect_ownership_rejection(
+        db, unrelated + "insert into public.user_subscriptions(owner_id, data) "
+        + """values (null, '{"user_id":"different@example.invalid"}');"""
+    )
+    db.sql(
+        f"insert into public.goals(id, owner_id, owner_email, created_by) "
+        f"values ('{LEGACY_PATCH_ID}', null, 'unrelated@example.invalid', '');"
+    )
+    assert db.sql(
+        unrelated + f"select item->>'owner_id' from public.patch_record("
+        f"'goals', '{LEGACY_PATCH_ID}', '{{\"confirmed\":true}}') as item;"
+    ) == UNRELATED
+    assert db.sql(
+        f"select data->>'confirmed' from public.goals where id = '{LEGACY_PATCH_ID}'"
+    ) == "true"
+    assert db.sql(
+        f"select count(*) from public.goals where owner_id = '{UNRELATED}'"
+    ) == "2"
+    print("PASS existing legacy attribution checks and native patch semantics are preserved")
+
+    db.sql(
+        "set role service_role; select public.reconcile_revenuecat_subscriptions("
+        "'[{\"user_id\":\"unbound@example.invalid\",\"expected_updated_date\":null,"
+        "\"data\":{\"status\":\"active\"}}]'::jsonb);"
+    )
+    assert db.sql(
+        "select count(*) from public.user_subscriptions "
+        "where data->>'user_id' = 'unbound@example.invalid' and owner_id is null"
+    ) == "1"
+    print("PASS email-only provider reconciliation remains compatible and outside the guard")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--postgres-bin", required=True, type=Path)
@@ -181,3 +298,4 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="w09-guard-", dir="/tmp") as directory:
         with Fixture(Path(directory), options.postgres_bin.resolve()) as database:
             test_guard(database)
+            test_authenticated_legacy_guard(database)

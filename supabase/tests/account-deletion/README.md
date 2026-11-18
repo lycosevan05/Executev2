@@ -37,16 +37,43 @@ E59 chain. The candidate installed 19 constraints alongside the 19 existing
 restrictive ownership policies. The existing 35 Deno deletion fixtures also
 passed.
 
+## Extension for authenticated writes to legacy entities
+
+`authenticated-legacy-owner-guard.sql` is an opt-in extension to the UUID
+deletion guard. Installation rolls back if the expected immediate FK is
+missing on any of the 19 tables. On an authenticated insert or
+update that would leave `owner_id` null, the trigger verifies the complete
+E58 legacy email predicate, including the subscription JSON owner when present.
+It then makes the request's verified Auth UUID authoritative for that row.
+PostgreSQL checks the modified row against RLS after the trigger runs. The
+separate email check keeps a newly assigned UUID from bypassing the legacy
+ownership checks. [PostgreSQL policy and trigger ordering](https://www.postgresql.org/docs/17/sql-createpolicy.html)
+
+The FK handles both transaction orders once the UUID is set. If the write
+commits first, it blocks Auth removal until explicit cleanup retries. If Auth
+removal commits first, it rejects the write. A returning email can use a new
+Auth UUID because the fence is keyed to the account, and writes on existing
+UUID-owned rows continue through the existing policy. A legacy PATCH may
+return a newly authoritative `owner_id`. Existing null-owner rows are promoted
+only when an authenticated write qualifies, so review historical ownership
+and verify client compatibility before staging the extension.
+
+The same native PostgreSQL 17.12 runner passed five additional groups. It
+checked all 19 triggers, both lock orders, using the same email with a new UUID,
+unchanged historical rows, matching and conflicting legacy fields, the real
+`patch_record` RPC, and compatibility with an email-only provider projection.
+These use synthetic Auth and Storage schemas and the full six-migration chain.
+They do not verify either hosted API.
+
 ## Remaining boundaries
 
 - Auth hard-deletion prevents issuing refreshed tokens. An already-issued access
-  token can remain valid until expiry. E58's restrictive entity policy preserves
-  the matched legacy email branch for a null `owner_id`. It compares JWT claims
-  and row fields without checking the existence of an Auth row. The nullable
-  foreign key leaves that branch in place. Coordinate legacy writers with
-  cleanup and enforce live Auth ownership across applicable access paths before
-  declaring the account isolated. A liveness check alone would still leave the
-  final-check race for transactions that observed the active account earlier.
+  token can remain valid until expiry. E58's legacy email branch compares JWT
+  claims and row fields without checking Auth liveness. The extension covers
+  authenticated writes through UUID binding. Reads or deletes of untouched
+  null-owner rows still follow the E58 policy and need separate live Auth
+  ownership review. A liveness check alone cannot coordinate writes that
+  observed the active account before the final cleanup check.
 - Supabase documents Auth removal failing for Auth-owned Storage objects.
   Execute's cleanup contract is the configured bucket and its exact UUID prefix,
   which can also contain an object written with service credentials. Prove the
@@ -67,9 +94,12 @@ passed.
 1. Establish the exact v6 rollback artifact or provider-confirmed bytes. Review
    the isolated schema rollout and rollback. Apply the candidate only to a
    separately authorized isolated project after checking historical ownership
-   counts and every path that deletes Auth users. A schema rollback drops
-   `account_deletion_live_owner` on the same 19 reviewed tables in one
-   transaction. It does not reverse a provider cancellation or account deletion.
+   counts and every path that deletes Auth users. If installed, remove the
+   `pin_authenticated_legacy_owner` triggers and their trigger function before
+   dropping `account_deletion_live_owner` on the same 19 reviewed tables. Use
+   one transaction for the reviewed schema rollback. Keep assigned UUIDs and
+   review their attribution separately. The rollback cannot restore provider
+   subscriptions or deleted accounts.
 2. Design the durable deletion state around the old UUID. Acquire it before
    enumerating cleanup inputs, let existing transactions finish, and reject new
    writes under that owner while deletion is pending. Preserve narrowly scoped
