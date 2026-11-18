@@ -148,6 +148,116 @@ private final class SubscriptionReaderFixtureProtocol: URLProtocol, @unchecked S
     override func stopLoading() {}
 }
 
+/// Runs only when a private test plan opts in to a verified Stripe sandbox identity.
+@MainActor
+final class HostedIsolatedStripeBillingTests: XCTestCase {
+    private enum Stage: String {
+        case absent, trialing, canceled
+
+        var premium: Bool { self == .trialing }
+
+        func matches(_ row: BillingSubscription?, email: String, stripeID: String?) -> Bool {
+            if self == .absent { return row == nil }
+            return row?.userID == email && row?.status == rawValue &&
+                row?.plan == (premium ? "premium" : "free") &&
+                row?.stripeSubscriptionID == stripeID
+        }
+    }
+
+    func testAuthenticatedStripeRowControlsNativePremium() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["EXECUTE_HOSTED_BILLING"] == "1" else {
+            throw XCTSkip("Requires the isolated hosted Stripe billing fixture")
+        }
+        guard let endpoint = environment["EXECUTE_HOSTED_BILLING_URL"],
+              endpoint == "https://zpnvnsdtbtdyhvipctpa.supabase.co", let url = URL(string: endpoint),
+              let key = environment["EXECUTE_HOSTED_BILLING_PUBLIC_KEY"], Self.isPublicClientKey(key),
+              let email = environment["EXECUTE_HOSTED_BILLING_EMAIL"], EmailOTPInput.email(email) == email,
+              let password = environment["EXECUTE_HOSTED_BILLING_PASSWORD"], !password.isEmpty,
+              let identifier = environment["EXECUTE_HOSTED_BILLING_USER_ID"], let owner = UUID(uuidString: identifier),
+              let state = environment["EXECUTE_HOSTED_BILLING_STAGE"], let stage = Stage(rawValue: state) else {
+            return XCTFail("The exact isolated project, public key, fixture owner and expected stage are required")
+        }
+        let stripeID = environment["EXECUTE_HOSTED_BILLING_STRIPE_ID"]
+        guard stage == .absent || stripeID?.hasPrefix("sub_") == true else {
+            return XCTFail("The exact sandbox subscription identifier is required for this stage")
+        }
+
+        let transport = URLSessionConfiguration.ephemeral
+        transport.timeoutIntervalForRequest = 10
+        transport.timeoutIntervalForResource = 15
+        let session = URLSession(configuration: transport)
+        defer { session.invalidateAndCancel() }
+        let client = SupabaseClient(supabaseURL: url, supabaseKey: key, options: .init(
+            auth: .init(storage: HostedBillingFixtureStorage(), storageKey: "hosted-stripe-fixture",
+                        autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: session)))
+        let ownerSuite = "Execute.HostedStripeOwner.\(UUID())"
+        let cacheSuite = "Execute.HostedStripeCache.\(UUID())"
+        let ownerDefaults = try XCTUnwrap(UserDefaults(suiteName: ownerSuite))
+        defer {
+            ownerDefaults.removePersistentDomain(forName: ownerSuite)
+            UserDefaults.standard.removePersistentDomain(forName: cacheSuite)
+        }
+
+        do {
+            let signedIn = try await client.auth.signIn(email: email, password: password)
+            guard signedIn.user.id == owner, signedIn.user.email == email else {
+                return XCTFail("Sign-in did not return the designated fixture owner")
+            }
+            let config = AppConfiguration(supabaseURL: url, supabaseAnonKey: key,
+                revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "execute-stripe-fixture")
+            let auth = SupabaseAuthService(client: client, configuration: config, ownerDefaults: ownerDefaults)
+            let reader = SupabaseSubscriptionReader(client: client)
+            let cache = UserScopedCacheStore(suiteName: cacheSuite)
+            let app = AppState(authService: auth, cache: cache, router: AppRouter(),
+                subscriptionService: MockSubscriptionService(state: .free), subscriptionReader: reader,
+                configurationError: nil)
+            await app.start()
+            guard case .signedIn(let user) = app.launchState, user.id == owner, user.email == email else {
+                return XCTFail("The app did not restore the designated authenticated fixture session")
+            }
+            let row = try await reader.subscription(for: user)
+            XCTAssertTrue(stage.matches(row, email: email, stripeID: stripeID), "Reader did not return the expected Stripe stage")
+
+            await app.handleScenePhase(.active)
+            let deadline = ContinuousClock.now + .seconds(18)
+            while app.billing.isRefreshing && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertFalse(app.billing.isRefreshing, "The billing refresh did not finish")
+            XCTAssertTrue(app.billing.refreshError == nil, "The billing refresh reported an error")
+            XCTAssertTrue(stage.matches(app.billing.subscription, email: email, stripeID: stripeID),
+                          "Billing did not publish the expected Stripe stage")
+            XCTAssertEqual(app.premiumState.isPremium, stage.premium, "App access did not match the Stripe stage")
+        } catch {
+            // Do not attach provider error details, authentication inputs or response bodies.
+            XCTFail("The isolated sign-in or billing request failed")
+        }
+    }
+
+    private static func isPublicClientKey(_ key: String) -> Bool {
+        if key.hasPrefix("sb_publishable_") { return key.count > "sb_publishable_".count }
+        let parts = key.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return false }
+        var payload = parts[1].replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        payload += String(repeating: "=", count: (4 - payload.utf8.count % 4) % 4)
+        guard let data = Data(base64Encoded: payload),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        return object["role"] as? String == "anon" && object["ref"] as? String == "zpnvnsdtbtdyhvipctpa"
+    }
+}
+
+private final class HostedBillingFixtureStorage: AuthLocalStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var data: [String: Data] = [:]
+
+    func store(key: String, value: Data) throws { lock.withLock { data[key] = value } }
+    func retrieve(key: String) throws -> Data? { lock.withLock { data[key] } }
+    func remove(key: String) throws { _ = lock.withLock { data.removeValue(forKey: key) } }
+}
+
 @MainActor
 private final class BillingGate {
     private var continuation: CheckedContinuation<Void, Never>?
