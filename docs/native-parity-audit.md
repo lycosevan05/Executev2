@@ -273,6 +273,14 @@ Source `353f7fd` produced an optimized native-dev arm64 Release archive. Strict/
 
 Counts remain 42 of 45 workflows accepted and all nine release gates open.
 
+### E61 — Pass native isolated sessions and the Stripe-only billing lifecycle
+
+- **W04.** Both opt-in native XCTest cases passed on the dedicated iPhone 17 simulator. The pinned SDK and local GoTrue enforced the terminal session limit and restored the same owner through a fresh OTP. A delayed real PostgREST result from A was canceled after B signed in. B retained its own navigation, cache, goal and Free access. This uses a controlled expiry and a repository test seam. Natural expiry and the final signed-app matrix remain open.
+- **W15.** The approved card-free trial in the Star Learning Stripe sandbox and its immediate cancellation updated the same isolated subscription row. The stored event IDs matched the sandbox creation and deletion events, and Stripe showed no pending webhooks for either. A native Debug fixture restored the exact authenticated user and verified Free → Premium → Free through the real Supabase reader and AppState. RevenueCat was fixed to Free for these three assertions. The 51 offline reconciliation and signature tests also passed, including both mixed-provider loss orders through the actual webhook handlers. The isolated RevenueCat offering has one monthly Test Store package. Live mixed-provider and Apple exception acceptance remain open.
+- **W09.** Qualifying authenticated legacy writes bind the exact caller UUID after matching the existing ownership predicate. A separate restrictive policy requires a live Auth UUID for authenticated access to unbound legacy rows. The opt-in candidates passed 11 PostgreSQL groups with all six baseline migrations and retained service-role behavior. The 35 deletion fixtures passed. Storage ordering, same-email legacy cleanup, delayed provider attribution, the exact deployed v6 rollback artifact and staged lifecycle acceptance remain open. The candidates stay outside automatic migrations and native deletion remains disabled.
+
+Counts remain 42 of 45 workflows accepted and all nine release gates open.
+
 ## Authorization and preservation
 
 Use standalone ios-native and the isolated checkout. Original Developer README/legal/PDF/ZIP changes remain untouched; baseline binary-diff hash4ba519d51f7d630a0695b9191e11287f350162810f7d0fb9aca5e3e297dc66eb reverified. Normal designated disposable-QA synthetic actions, SELECT-only independent DB, local fixes/tests/commits and normal signing/install are authorized. Credentials/auth storage stay private; UI through CUA; manual physical preference retained. No new backend/schema/function deployment, billing mutation, real-account deletion, credential automation, push, merge or distribution without separate authorization. Canonical Execute Document maintained by separate writer.
