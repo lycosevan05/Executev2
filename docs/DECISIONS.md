@@ -589,3 +589,11 @@ Normal283d9bf Debug simulator build/signature/install passes; GUI launch restore
 ## 2026-11-17 — Reconcile native screens with Supabase session loss
 
 The app now observes local session loss from the pinned Supabase SDK while the normal app root is active. It checks live SDK state before dismissing the authenticated UI and checks exact stored ownership again before publishing an activation. Confirmed loss clears the authenticated screen, billing identity, navigation and the active cache, while keeping persisted account data available to the same owner after reauthentication. A transient offline refresh that preserves the SDK session keeps the current screen. Explicit sign-out and deletion retain their existing handling. SDK storage cleanup failure and live provider revocation remain acceptance follow-ups.
+
+## 2026-11-17 — Suppress credentials after failed Keychain removal
+
+The pinned Supabase SDK emits signedOut even if its backing Keychain delete fails. Wrap the SDK's unchanged local-storage backend and key names. Record a non-secret per-key suppression flag when removal fails. A subsequent successful Keychain write clears the flag and allows the new credential to restore. The local transport fixture exercises a terminal refresh, rejecting backing removal, a new SDK client, a rejected replacement write and successful same-account replacement. An offline refresh remains distinct from provider revocation.
+
+## 2026-11-17 — Reconcile pending App Store copy on live approval
+
+A successful live App Store entitlement refresh replaces the pending confirmation message. An account's server-only entitlement independently provides existing access and cannot confirm the pending App Store transaction. Same-account customer-info updates during another billing operation trigger a follow-up refresh. Billing and Profile display only future access-through dates, with the existing eligibility policy preserved.
