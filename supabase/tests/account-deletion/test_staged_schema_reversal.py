@@ -1,4 +1,4 @@
-"""Rehearse reversal of E63 and E64 optional deletion guards in a fresh local DB."""
+"""Rehearse reversal of the optional deletion guards in a fresh local DB."""
 
 import argparse
 import tempfile
@@ -27,6 +27,8 @@ GUARDS = (
     "retired-stripe-subscription-guard.sql",
     "storage-upload-admission-guard.sql",
     "storage-upload-dispatch-guard.sql",
+    "storage-upload-exact-dispatch.sql",
+    "storage-upload-writer-cutover.sql",
 )
 STRIPE_ID = "sub_fixture_rollback"
 UNRELATED_EMAIL = "unrelated@example.invalid"
@@ -63,8 +65,12 @@ drop function execute_deletion_private.reject_retired_stripe_subscription();
 drop function execute_deletion_private.stripe_subscription_fingerprints(jsonb);
 drop table execute_deletion_private.retired_stripe_subscription;
 drop schema execute_deletion_private;
+drop function public.close_and_list_guarded_account_upload_dispatches(uuid);
+drop policy "uploads require canonical writer for insert" on storage.objects;
+drop policy "uploads require canonical writer for update" on storage.objects;
 drop policy "account deletion uploads insert guard" on storage.objects;
 drop policy "account deletion uploads update guard" on storage.objects;
+drop function public.begin_exact_account_upload_dispatch(uuid, text);
 drop function public.begin_account_upload_dispatch(uuid, text);
 drop function public.finish_account_upload_dispatch(uuid, uuid);
 drop function public.close_and_list_account_upload_dispatches(uuid);
@@ -139,6 +145,10 @@ def rehearse(db):
     assert db.sql(
         "select count(*) from pg_constraint where conname = 'account_deletion_live_owner'"
     ) == "19"
+    assert db.sql(
+        "select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects' "
+        "and policyname like 'uploads require canonical writer for %' and permissive = 'RESTRICTIVE'"
+    ) == "2"
     probe_existing_authenticated_client(db)
     probe_existing_provider(db)
     db.sql(REVERSE)
@@ -149,21 +159,24 @@ def rehearse(db):
     print("PASS clean reversal restores the baseline schema and preserves existing client/provider behavior")
 
     install(db)
+    pending_path = f"{WRITER_FIRST}/in-flight.txt"
     dispatch_id = db.sql(
         f"set role service_role; select dispatch_id "
-        f"from public.begin_account_upload_dispatch('{WRITER_FIRST}', 'in-flight.txt');"
+        f"from public.begin_exact_account_upload_dispatch('{WRITER_FIRST}', '{pending_path}');"
     )
-    pending_path = f"{WRITER_FIRST}/{dispatch_id}-in-flight.txt"
     assert db.sql("select count(*) from execute_storage_deletion_guard.closed_upload_admission;") == "0"
     reject_pending_reversal(db)
     assert db.sql(
         "select object_name from execute_storage_deletion_guard.pending_upload_dispatch;"
     ) == pending_path
-    print("PASS a pending upload dispatch independently prevents structural reversal")
+    print("PASS a pending exact-path upload dispatch independently prevents structural reversal")
     # In this SQL-only fixture no bytes were sent, so the outcome is known.
     db.sql(f"set role service_role; select public.finish_account_upload_dispatch('{WRITER_FIRST}', '{dispatch_id}');")
 
-    db.sql(f"set role service_role; select public.close_account_upload_admission('{WRITER_FIRST}');")
+    assert db.sql(
+        "set role service_role; select count(*) "
+        f"from public.close_and_list_guarded_account_upload_dispatches('{WRITER_FIRST}');"
+    ) == "0"
     reject_pending_reversal(db)
     assert db.sql("select count(*) from execute_storage_deletion_guard.closed_upload_admission;") == "1"
     print("PASS an existing upload closure prevents structural reversal")
