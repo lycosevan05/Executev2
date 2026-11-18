@@ -111,10 +111,11 @@ gate. [RevenueCat Test Store](https://www.revenuecat.com/docs/test-and-launch/sa
 
 1. Scope approval to creating one new confirmed password Auth identity, one
    new Execute-prefixed no-payment-method test Stripe customer and one trial
-   on the existing monthly fixture price, purchasing the single Test Store
-   monthly package on that same identity, and immediately canceling only that
-   trial. Include canceling it early if the run stalls. Use a synthetic email
-   unchanged in Auth, Stripe subscription metadata and RevenueCat App User ID.
+   on the existing monthly fixture price, identifying one disposable RevenueCat
+   customer and purchasing the single Test Store monthly package on that same
+   identity, and immediately canceling only that Stripe trial. Include early
+   cancellation if the run stalls. Use a synthetic email unchanged in Auth,
+   Stripe subscription metadata and RevenueCat App User ID.
 2. Repeat the endpoint preflight. In the Stripe sandbox confirm
    `price_1UZjtiEiWRJocTMeRkmJCpTg` is active, `livemode=false` and is the CAD 1
    monthly price of `Execute Billing Integration 20261108`. In RevenueCat verify
