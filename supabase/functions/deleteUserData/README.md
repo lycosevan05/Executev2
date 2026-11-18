@@ -67,6 +67,18 @@ alternate-surface/filesystem/API workaround was attempted. Deployment is still
 unapproved and not ready. Continue independent required native workflows while
 this gate is outstanding.
 
+## E41 source ZIP recovery
+
+An existing Supabase-origin `deleteUserData.zip` was found in the earlier
+workspace. All three members exactly match the independently captured E17 source
+hashes. The archive SHA-256 is
+`f3d53503a70affeac88a1ad30255a9a53937dcf13619ab6a2a0ec0e913aa87e7`.
+It contains the source closure, including a major-version-only Supabase JS
+import. It carries no resolved dependency lock or deployed revision. The
+dashboard list still exposes only relative update time, and the CLI metadata
+request requires an authenticated session. The source artifact is available
+for review. The revision and dependency binding gate remains open.
+
 ## Exact change and ownership contract
 
 `index.ts` authenticates through the existing shared helper and accepts POST

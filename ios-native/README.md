@@ -25,6 +25,7 @@ Debug builds follow the normal authentication flow by default. For local UI work
 - `-execute-track-preview` opens the Track dashboard with fixture data.
 - `-execute-nutrition-preview` opens the Nutrition dashboard with fixture data.
 - `-execute-profile-preview` opens Profile and Settings with fixture data.
+- `-execute-plan-preview` opens the Plan dashboard with fixture data.
 - `-execute-billing-ui-tests` uses mock authentication and subscription services for Billing route/UI tests. Add `-execute-restore-entitled` to simulate a successful restore. Its displayed prices are fixtures, not verified App Store prices.
 
 These arguments are compiled out of Release behavior and must not be used as an authentication substitute.
