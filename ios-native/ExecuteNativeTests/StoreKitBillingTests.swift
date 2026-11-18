@@ -248,6 +248,53 @@ final class StoreKitBillingTests: XCTestCase {
 @MainActor
 final class HostedAppleSandboxRefundTests: XCTestCase {
     func testPresentRefundSheetForVerifiedSandboxPurchase() async throws {
+        let fixture = try await loadFixture()
+        let (productID, transactionID, originalID, customer, config) = fixture
+        let info = try await Purchases.shared.customerInfo(fetchPolicy: .fetchCurrent)
+        guard let entitlement = info.entitlements.active[config.revenueCatEntitlementID],
+              entitlement.productIdentifier == productID, entitlement.store == .appStore, entitlement.isSandbox,
+              let subscription = info.subscriptionsByProductIdentifier[productID],
+              subscription.store == .appStore, subscription.isSandbox,
+              subscription.storeTransactionId == String(transactionID) else {
+            throw RefundFixtureError.unexpectedRevenueCatPurchase
+        }
+        guard case .verified(let transaction)? = await Transaction.latest(for: productID),
+              transaction.productID == productID, transaction.id == transactionID, transaction.originalID == originalID,
+              transaction.environment == .sandbox, transaction.ownershipType == .purchased,
+              transaction.productType == .autoRenewable, !transaction.isUpgraded, transaction.revocationDate == nil,
+              let expiration = transaction.expirationDate, expiration > .now else {
+            throw RefundFixtureError.unexpectedAppleTransaction
+        }
+        guard Purchases.shared.appUserID == customer,
+              let scene = UIApplication.shared.connectedScenes
+                  .compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive }) else {
+            throw RefundFixtureError.unexpectedPresentationContext
+        }
+
+        // Apple presents its own sheet. An operator submits the approved request.
+        // Sheet acknowledgement is separate from provider revocation and webhook delivery.
+        let result = try await transaction.beginRefundRequest(in: scene)
+        XCTAssertEqual(result, .success, "The Sandbox refund request was not submitted")
+    }
+
+    func testReadRevocationOfVerifiedSandboxPurchase() async throws {
+        let (productID, transactionID, originalID, customer, config) = try await loadFixture()
+        for await result in Transaction.all {
+            guard case .verified(let transaction) = result,
+                  transaction.productID == productID, transaction.id == transactionID,
+                  transaction.originalID == originalID, transaction.environment == .sandbox,
+                  transaction.ownershipType == .purchased, transaction.productType == .autoRenewable else { continue }
+            guard Purchases.shared.appUserID == customer else { throw RefundFixtureError.unexpectedCustomer }
+            XCTAssertNotNil(transaction.revocationDate, "StoreKit's verified Sandbox transaction has no refund revocation date")
+            XCTAssertNotNil(transaction.revocationReason, "StoreKit's verified Sandbox transaction has no revocation reason")
+            let info = try await Purchases.shared.customerInfo(fetchPolicy: .fetchCurrent)
+            XCTAssertNil(info.entitlements.active[config.revenueCatEntitlementID], "RevenueCat still grants this fixture Premium")
+            return
+        }
+        throw RefundFixtureError.unexpectedAppleTransaction
+    }
+
+    private func loadFixture() async throws -> (String, UInt64, UInt64, String, AppConfiguration) {
         let env = ProcessInfo.processInfo.environment
         guard env["EXECUTE_HOSTED_APPLE_SANDBOX_REFUND"] == "1" else {
             throw XCTSkip("Requires an approved hosted Apple Sandbox refund fixture")
@@ -276,31 +323,7 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
         guard Purchases.isConfigured, !Purchases.shared.isAnonymous, Purchases.shared.appUserID == customer else {
             throw RefundFixtureError.unexpectedCustomer
         }
-        let info = try await Purchases.shared.customerInfo(fetchPolicy: .fetchCurrent)
-        guard let entitlement = info.entitlements.active[config.revenueCatEntitlementID],
-              entitlement.productIdentifier == productID, entitlement.store == .appStore, entitlement.isSandbox,
-              let subscription = info.subscriptionsByProductIdentifier[productID],
-              subscription.store == .appStore, subscription.isSandbox,
-              subscription.storeTransactionId == String(transactionID) else {
-            throw RefundFixtureError.unexpectedRevenueCatPurchase
-        }
-        guard case .verified(let transaction)? = await Transaction.latest(for: productID),
-              transaction.productID == productID, transaction.id == transactionID, transaction.originalID == originalID,
-              transaction.environment == .sandbox, transaction.ownershipType == .purchased,
-              transaction.productType == .autoRenewable, !transaction.isUpgraded, transaction.revocationDate == nil,
-              let expiration = transaction.expirationDate, expiration > .now else {
-            throw RefundFixtureError.unexpectedAppleTransaction
-        }
-        guard Purchases.shared.appUserID == customer,
-              let scene = UIApplication.shared.connectedScenes
-                  .compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive }) else {
-            throw RefundFixtureError.unexpectedPresentationContext
-        }
-
-        // Apple presents its own sheet. An operator submits the approved request.
-        // Sheet acknowledgement is separate from provider revocation and webhook delivery.
-        let result = try await transaction.beginRefundRequest(in: scene)
-        XCTAssertEqual(result, .success, "The Sandbox refund request was not submitted")
+        return (productID, transactionID, originalID, customer, config)
     }
 
     private enum RefundFixtureError: Error {
