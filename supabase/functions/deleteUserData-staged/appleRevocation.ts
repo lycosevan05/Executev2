@@ -2,6 +2,7 @@ import type {
   AppleRevocationOutcome,
   DeletionUser,
 } from "../deleteUserData/deletion.ts";
+import { validateUser } from "../deleteUserData/deletion.ts";
 
 interface AuthIdentity {
   provider: string;
@@ -25,7 +26,11 @@ interface StagedAppleGrant {
   refreshToken: string;
 }
 
-const revokeEndpoint = "https://appleid.apple.com/auth/revoke";
+const appleIssuer = "https://appleid.apple.com";
+const keysEndpoint = `${appleIssuer}/auth/keys`;
+const tokenEndpoint = `${appleIssuer}/auth/token`;
+const revokeEndpoint = `${appleIssuer}/auth/revoke`;
+const signatureAlgorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
 
 function loadGrant(raw: string): StagedAppleGrant {
   let grant: Partial<StagedAppleGrant> | null;
@@ -48,6 +53,95 @@ function loadGrant(raw: string): StagedAppleGrant {
     throw new Error("Apple deletion credentials are unavailable.");
   }
   return { ownerId, subject, clientId, clientSecret, refreshToken };
+}
+
+function decodeBase64Url(value: string): Uint8Array<ArrayBuffer> {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new Error("Invalid Apple token encoding.");
+  }
+  return Uint8Array.from(
+    atob(value.replace(/-/g, "+").replace(/_/g, "/")),
+    (byte) => byte.charCodeAt(0),
+  );
+}
+
+async function verifyGrantSubject(
+  grant: StagedAppleGrant,
+  request: (url: string, init: RequestInit) => Promise<Response>,
+): Promise<boolean> {
+  const token = await request(tokenEndpoint, {
+    method: "POST",
+    body: new URLSearchParams({
+      client_id: grant.clientId,
+      client_secret: grant.clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: grant.refreshToken,
+    }),
+    redirect: "error",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!token.ok) return false;
+
+  const { id_token: idToken } = await token.json();
+  if (typeof idToken !== "string") return false;
+  const [header, payload, signature, trailing] = idToken.split(".");
+  if (!header || !payload || !signature || trailing !== undefined) return false;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const { alg, kid } = JSON.parse(decoder.decode(decodeBase64Url(header)));
+  if (alg !== "RS256" || typeof kid !== "string" || !kid) return false;
+
+  const jwks = await request(keysEndpoint, {
+    method: "GET",
+    redirect: "error",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!jwks.ok) return false;
+  const { keys }: { keys: (JsonWebKey & { kid?: string })[] } = await jwks
+    .json();
+  const matches = keys.filter((key) =>
+    key.kid === kid && key.kty === "RSA" && key.use === "sig" &&
+    key.alg === "RS256"
+  );
+  if (matches.length !== 1) return false;
+  const signingKey = await crypto.subtle.importKey(
+    "jwk",
+    matches[0],
+    signatureAlgorithm,
+    false,
+    ["verify"],
+  );
+  const signed = await crypto.subtle.verify(
+    signatureAlgorithm,
+    signingKey,
+    decodeBase64Url(signature),
+    new TextEncoder().encode(`${header}.${payload}`),
+  );
+  if (!signed) return false;
+
+  const { iss, aud, sub, exp } = JSON.parse(
+    decoder.decode(decodeBase64Url(payload)),
+  );
+  return iss === appleIssuer && aud === grant.clientId &&
+    sub === grant.subject && Number.isSafeInteger(exp) &&
+    exp > Date.now() / 1_000;
+}
+
+/** Verify a candidate secret once, before staging it for revocation. */
+export async function verifyStagedAppleGrant(
+  trustedOwner: { ownerId: string; subject: string; clientId: string },
+  rawGrant: string,
+  request: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<void> {
+  validateUser({ id: trustedOwner.ownerId });
+  const grant = loadGrant(rawGrant);
+  if (
+    trustedOwner.ownerId !== grant.ownerId ||
+    trustedOwner.subject !== grant.subject ||
+    trustedOwner.clientId !== grant.clientId ||
+    !await verifyGrantSubject(grant, request).catch(() => false)
+  ) {
+    throw new Error("Apple deletion credentials could not be verified.");
+  }
 }
 
 /** Consume only trusted server provisioning for the exact staged identity. */
