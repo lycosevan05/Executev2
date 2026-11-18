@@ -228,11 +228,12 @@ The staged deletion route checks that this exact cutover is active in the same
 database transaction in which it closes admission and inventories dispatches.
 Hosted rollout and unknown-outcome reconciliation still need acceptance.
 
-To roll back this candidate in a staged environment, stop dispatching new
-writes and reconcile outstanding dispatches with their terminal results. Once
-the ledger is empty, remove the three dispatch RPCs and the pending table in one
-transaction. Preserve the earlier admission guard and account retry state
-until every pending deletion has a reviewed outcome.
+For rollback in a staged environment, stop staged deletion and pause new
+dispatches. Reconcile outstanding dispatches with authoritative terminal
+results before removing the writer cutover and exact-dispatch RPCs. Preserve
+closure and provider-retirement state while a pending deletion or delayed
+provider retry depends on it. The local structural reversal fixture refuses to
+reverse while any of those markers remain.
 
 A future authorized Edge rollout must close admission and then take a fresh
 inventory before removing objects. Keep the admission marker when cleanup

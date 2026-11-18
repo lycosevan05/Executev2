@@ -304,6 +304,13 @@ E62 closes W04, bringing functional acceptance to 43 of 45 workflows. W09 and W1
 
 43 of 45 workflows are functionally accepted. All nine release gates remain open.
 
+### E65 — Verify Apple refund reconciliation and route app uploads through the deletion guard
+
+- **W15.** RevenueCat recorded the E64 monthly Sandbox refund nine minutes after the request. The delivered event was a customer-support cancellation for the exact StoreKit transaction. Independent Supabase readback found one row, with that exact event and Free/canceled access. The signed read-only StoreKit history test compiled. Xcode could not run it while the paired QA iPhone was disconnected. Live grace remains a separate check. With owner approval, App Store Connect saved three days for all renewals in Sandbox only. Keep it enabled while the configuration propagates and restore it after the approved renewal test. The physical test still needs an available QA iPhone.
+- **W09.** The native Storage client and web and Capacitor food photo and barcode uploads all use the canonical writer. It registers the authenticated owner and exact object path before sending bytes and keeps indeterminate sends pending. Staged deletion checks database cutover policies in the same transaction as closing upload admission and reading the ledger. Real local Supabase verified storage writes and reads, independent and replacement owners, no overwrites, direct-write denial, denial of new signed and resumable uploads, and the prior in-flight lifecycle. All 48 Deno tests, 18 web source tests, and four focused native tests passed. PostgreSQL 17.12 restored the baseline with the new cutover objects and independently refused reversal when dispatch, closure or Stripe retirement state was present. Existing capabilities, external privileged writers, and hosted deployment and deletion rehearsal still need verification.
+
+43 of 45 workflows are functionally accepted. All nine release gates remain open.
+
 ## Authorization and preservation
 
 Use standalone ios-native and the isolated checkout. Original Developer README/legal/PDF/ZIP changes remain untouched; baseline binary-diff hash4ba519d51f7d630a0695b9191e11287f350162810f7d0fb9aca5e3e297dc66eb reverified. Normal designated disposable-QA synthetic actions, SELECT-only independent DB, local fixes/tests/commits and normal signing/install are authorized. Credentials/auth storage stay private; UI through CUA; manual physical preference retained. No new backend/schema/function deployment, billing mutation, real-account deletion, credential automation, push, merge or distribution without separate authorization. Canonical Execute Document maintained by separate writer.
