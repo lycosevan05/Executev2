@@ -271,7 +271,13 @@ readback privately. Get separate approval for any app-wide configuration change.
   for the designated tester. Check paid access during grace. Re-enable the
   setting for a recovery test or wait for grace and retry to end for an expiry
   test. Match the provider events, row and native access before resetting the
-  tester setting. [Apple's failing-renewal testing procedure](https://developer.apple.com/documentation/storekit/testing-failing-subscription-renewals-and-in-app-purchases)
+  tester setting. The signed, read-only
+  `HostedAppleSandboxRefundTests/testReadGraceOfVerifiedSandboxPurchase`
+  uses the same private transaction and customer fields as the refund fixture,
+  with `EXECUTE_HOSTED_APPLE_SANDBOX_GRACE=1` as the opt-in. It requires
+  Apple's verified grace state and a future expiration after the paid period,
+  and checks that the RevenueCat App Store Sandbox entitlement remains active.
+  [Apple's failing-renewal testing procedure](https://developer.apple.com/documentation/storekit/testing-failing-subscription-renewals-and-in-app-purchases)
 - **Refund.** Use the dedicated Debug XCTest on a signed native-dev host with
   the approved Execute account already restored. Capture the exact current
   transaction and original transaction IDs from the authorized purchase. Build

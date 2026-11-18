@@ -311,6 +311,13 @@ E62 closes W04, bringing functional acceptance to 43 of 45 workflows. W09 and W1
 
 43 of 45 workflows are functionally accepted. All nine release gates remain open.
 
+### E66 — Verify the refunded StoreKit receipt and the Sandbox retry path
+
+- **W15 refund.** The opt-in read-only XCTest passed on the physical QA iPhone. Apple's verified transaction history shows a revocation date and reason for the exact E64 refunded renewal. Fresh RevenueCat access was inactive before the new purchase. This complements the exact delivered refund event and matching Free Supabase row recorded in E65.
+- **W15 grace.** The approved no-charge monthly Sandbox purchase produced a new transaction on the tester's existing subscription lineage. The signed Release app and Supabase showed Premium before expiry. With three-day Sandbox-only grace saved in App Store Connect, the next renewal failed about 18 minutes after the setting was saved. The signed StoreKit check saw billing retry without a grace expiration. RevenueCat also recorded a billing issue without a grace expiration, and the exact Supabase row became Free. After the owner restored the tester's renewal setting, Apple renewed, RevenueCat cleared the issue, and the original signed Release app and Supabase returned to Premium. The temporary Sandbox-only app setting remains enabled within the approved propagation window. Actual grace retention still needs a renewal where Apple signs a future grace expiration.
+
+43 of 45 workflows are functionally accepted. W09 and W15 and all nine release gates remain open.
+
 ## Authorization and preservation
 
 Use standalone ios-native and the isolated checkout. Original Developer README/legal/PDF/ZIP changes remain untouched; baseline binary-diff hash4ba519d51f7d630a0695b9191e11287f350162810f7d0fb9aca5e3e297dc66eb reverified. Normal designated disposable-QA synthetic actions, SELECT-only independent DB, local fixes/tests/commits and normal signing/install are authorized. Credentials/auth storage stay private; UI through CUA; manual physical preference retained. No new backend/schema/function deployment, billing mutation, real-account deletion, credential automation, push, merge or distribution without separate authorization. Canonical Execute Document maintained by separate writer.
