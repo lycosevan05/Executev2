@@ -57,6 +57,8 @@ export default function PhotoLogModal({ onClose, onSave, selectedDate }) {
 
   // Compress large photos on-device before upload — most of the slowness comes
   // from uploading 5–10MB iPhone photos. We downscale to ~1280px JPEG @ 0.82q.
+  // Unchanged files retain their MIME type. The uploads bucket accepts JPEG,
+  // PNG, WebP, and GIF images, so a selection such as HEIC can still fail.
   async function compressImage(file) {
     if (!file || !file.type?.startsWith('image/')) return file;
     if (file.size < 600 * 1024) return file; // already small enough

@@ -47,9 +47,16 @@ describe('Core.UploadFile guarded storage', () => {
   });
 
   it('uses the persisted session for the owner and bearer token and sends the original file', async () => {
+    getSession.mockResolvedValueOnce({
+      data: { session: { access_token: accessToken, user: { id: ownerID } } },
+      error: null,
+    }).mockResolvedValueOnce({
+      data: { session: { access_token: 'refreshed-access-token', user: { id: ownerID } } },
+      error: null,
+    });
     const result = await UploadFile({ file });
 
-    expect(getSession).toHaveBeenCalledTimes(1);
+    expect(getSession).toHaveBeenCalledTimes(2);
     expect(fetchUpload).toHaveBeenCalledTimes(1);
     const [[url, request]] = fetchUpload.mock.calls;
     expect(url.origin).toBe(new URL(projectURL).origin);
@@ -99,6 +106,20 @@ describe('Core.UploadFile guarded storage', () => {
     fetchUpload.mockResolvedValue(Response.json({ path: `${ownerID}/wrong-path.jpg` }));
 
     await expect(UploadFile({ file })).rejects.toMatchObject({ status: 502 });
+    expect(storageFrom).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['sign-out', null],
+    ['account switch', { access_token: 'different-user-token', user: { id: 'different-owner' } }],
+  ])('discards an upload acknowledged after %s', async (_change, nextSession) => {
+    fetchUpload.mockImplementationOnce(async url => {
+      getSession.mockResolvedValue({ data: { session: nextSession }, error: null });
+      return Response.json({ path: url.searchParams.get('path') });
+    });
+
+    await expect(UploadFile({ file })).rejects.toMatchObject({ status: 401 });
+    expect(fetchUpload).toHaveBeenCalledTimes(1);
     expect(storageFrom).not.toHaveBeenCalled();
   });
 });

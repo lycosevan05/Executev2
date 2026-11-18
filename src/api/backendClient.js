@@ -485,12 +485,13 @@ export const backend = {
         if (!file) throw new Error('UploadFile requires a file.');
         const client = requireSupabase();
         const session = await currentSupabaseSession(client);
-        if (!session?.user?.id || !session.access_token) {
+        const ownerID = session?.user?.id;
+        if (!ownerID || !session.access_token) {
           throw toBackendError({ message: 'Authentication required', status: 401 }, 401);
         }
         const safeName = file.name?.replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload';
         const prefix = `${globalThis.crypto?.randomUUID?.() || Date.now()}-`;
-        const objectPath = path || `${session.user.id}/${prefix}${safeName.slice(0, 255 - prefix.length)}`;
+        const objectPath = path || `${ownerID}/${prefix}${safeName.slice(0, 255 - prefix.length)}`;
         const endpoint = new URL('/functions/v1/guardedStorageUpload', supabaseUrl);
         endpoint.search = new URLSearchParams({ bucket, path: objectPath }).toString();
 
@@ -514,6 +515,10 @@ export const backend = {
         }
         if (result?.path !== objectPath) {
           throw toBackendError({ message: 'Storage upload could not be confirmed.' }, 502);
+        }
+        const currentSession = await currentSupabaseSession(client);
+        if (currentSession?.user?.id !== ownerID || !currentSession.access_token) {
+          throw toBackendError({ message: 'Authentication required', status: 401 }, 401);
         }
 
         const publicUrl = client.storage.from(bucket).getPublicUrl(objectPath)?.data?.publicUrl;
