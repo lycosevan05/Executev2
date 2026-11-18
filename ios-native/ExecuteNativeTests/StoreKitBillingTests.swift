@@ -104,6 +104,94 @@ final class StoreKitBillingTests: XCTestCase {
         XCTAssertFalse(entitled)
     }
 
+    func testRefundRevokesThePurchasedEntitlement() async throws {
+        let session = try makeSession()
+        defer { session.resetToDefaultState(); session.clearTransactions() }
+        let productID = "execute_premium_month"
+        let products = try await Product.products(for: [productID])
+        let product = try XCTUnwrap(products.first)
+        guard case .success(.verified(let purchased)) = try await product.purchase() else {
+            return XCTFail("Expected a verified local purchase before testing a refund")
+        }
+        await purchased.finish()
+        let entitledBeforeRefund = await hasEntitlement(productID)
+        XCTAssertTrue(entitledBeforeRefund)
+
+        let identifier = try XCTUnwrap(UInt(exactly: purchased.id))
+        try session.refundTransaction(identifier: identifier)
+
+        for _ in 0..<50 {
+            if case .verified(let latest)? = await Transaction.latest(for: productID),
+               latest.id == purchased.id, latest.revocationDate != nil,
+               !(await hasEntitlement(productID)) {
+                await latest.finish()
+                return
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTFail("The refunded transaction must be revoked and absent from current entitlements")
+    }
+
+    func testBillingGracePreservesEntitlementAndIssueResolutionRenews() async throws {
+        let session = try makeSession()
+        defer { session.resetToDefaultState(); session.clearTransactions() }
+        session.shouldEnterBillingRetryOnRenewal = true
+        session.billingGracePeriodIsEnabled = true
+        let productID = "execute_premium_month"
+        let products = try await Product.products(for: [productID])
+        let product = try XCTUnwrap(products.first)
+        let subscription = try XCTUnwrap(product.subscription)
+        guard case .success(.verified(let purchased)) = try await product.purchase() else {
+            return XCTFail("Expected a verified local purchase before testing billing grace")
+        }
+        await purchased.finish()
+
+        try session.forceRenewalOfSubscription(productIdentifier: productID)
+
+        let graceStatus = try await renewalStatus(.inGracePeriod, for: productID, subscription: subscription)
+        let grace = try XCTUnwrap(graceStatus, "The simulated payment failure should enter billing grace")
+        guard case .verified(let renewalInfo) = grace.renewalInfo,
+              case .verified(let transactionInGrace) = grace.transaction else {
+            return XCTFail("Expected verified billing-grace transaction and renewal info")
+        }
+        XCTAssertNotNil(renewalInfo.gracePeriodExpirationDate)
+        let entitledDuringGrace = await hasEntitlement(productID)
+        XCTAssertTrue(entitledDuringGrace)
+
+        XCTAssertEqual(transactionInGrace.originalID, purchased.originalID)
+        let identifier = try XCTUnwrap(UInt(exactly: transactionInGrace.id))
+        session.shouldEnterBillingRetryOnRenewal = false
+        try session.resolveIssueForTransaction(identifier: identifier)
+
+        let subscribedStatus = try await renewalStatus(.subscribed, for: productID, subscription: subscription)
+        let renewed = try XCTUnwrap(subscribedStatus, "Resolving billing should renew the subscription")
+        guard case .verified(let transaction) = renewed.transaction else {
+            return XCTFail("Expected a verified renewal transaction")
+        }
+        XCTAssertEqual(transaction.originalID, purchased.originalID)
+        XCTAssertNotEqual(transaction.id, purchased.id)
+        try await expectEntitlement(productID)
+        await transaction.finish()
+    }
+
+    private func renewalStatus(
+        _ state: Product.SubscriptionInfo.RenewalState,
+        for productID: String,
+        subscription: Product.SubscriptionInfo
+    ) async throws -> Product.SubscriptionInfo.Status? {
+        for _ in 0..<50 {
+            let statuses = try await subscription.status
+            if let matching = statuses.first(where: { status in
+                guard status.state == state, case .verified(let transaction) = status.transaction else { return false }
+                return transaction.productID == productID
+            }) {
+                return matching
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
+    }
+
     private func makePendingPurchase(productID: String, session: SKTestSession) async throws -> SKTestTransaction {
         session.askToBuyEnabled = true
         let products = try await Product.products(for: [productID])

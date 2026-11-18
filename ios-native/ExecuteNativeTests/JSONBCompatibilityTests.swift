@@ -966,6 +966,34 @@ final class AuthPersistenceTests: XCTestCase {
         XCTAssertEqual(restored, replacement)
     }
 
+    func testExpiredSessionOfflineAtLaunchCanRetryAfterReconnect() async throws {
+        let storage = AuthFixtureStorage()
+        let host = "same-owner.offline-startup.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let (client, service) = fixture(storage: storage, host: host)
+        let user = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        let key = "native-auth-fixture"
+        var expired = try XCTUnwrap(client.auth.currentSession)
+        expired.expiresAt = 0
+        try storage.store(key: key, value: JSONEncoder().encode(expired))
+        XCTAssertEqual(client.auth.currentSession?.isExpired, true)
+        AuthFixtureProtocol.traffic.setOffline(true, for: host)
+        defer { AuthFixtureProtocol.traffic.setOffline(false, for: host) }
+        let state = AppState(authService: service, cache: UserScopedCacheStore(), router: AppRouter(),
+                             subscriptionService: MockSubscriptionService(), configurationError: nil)
+
+        await state.start()
+
+        guard case .failed = state.launchState else { return XCTFail("Expected recoverable startup while offline") }
+        XCTAssertFalse(state.allowsDraftWrites(for: user.id))
+        XCTAssertNotNil(try storage.retrieve(key: key))
+
+        AuthFixtureProtocol.traffic.setOffline(false, for: host)
+        await state.retryStartup()
+
+        XCTAssertEqual(state.launchState, .signedIn(user))
+        XCTAssertTrue(state.allowsDraftWrites(for: user.id))
+    }
+
     func testOfflineRefreshDoesNotDiscardAnOpenSession() async throws {
         let (client, service) = fixture(storage: AuthFixtureStorage(), host: "offline.auth-fixture.invalid")
         let user = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
@@ -1065,7 +1093,7 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
         let isCallback = url.path == "/auth/v1/token"
-        if isCallback && url.host == "offline.auth-fixture.invalid" {
+        if isCallback && (url.host == "offline.auth-fixture.invalid" || Self.traffic.isOffline(url.host!)) {
             client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
             return
         }
@@ -1098,6 +1126,18 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
 private final class CallbackFixtureTraffic: @unchecked Sendable {
     private let lock = NSLock()
     private var counts: [String: Int] = [:]
+    private var offlineHosts: Set<String> = []
+
+    func setOffline(_ offline: Bool, for host: String) {
+        lock.lock(); defer { lock.unlock() }
+        if offline { offlineHosts.insert(host) } else { offlineHosts.remove(host) }
+    }
+
+    func isOffline(_ host: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return offlineHosts.contains(host)
+    }
+
     func record(_ host: String) -> Int { lock.lock(); defer { lock.unlock() }; counts[host, default: 0] += 1; return counts[host]! }
     func count(_ host: String) -> Int { lock.lock(); defer { lock.unlock() }; return counts[host, default: 0] }
 }
