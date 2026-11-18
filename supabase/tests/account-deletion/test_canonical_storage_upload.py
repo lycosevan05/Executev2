@@ -2,6 +2,7 @@
 """Apply the optional upload cutover and exercise it on the disposable W04 stack."""
 
 import argparse
+from base64 import b64encode
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ import subprocess
 import sys
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, build_opener
 from uuid import UUID, uuid4
 
@@ -20,6 +21,7 @@ from test_storage_upload_admission_guard import (
 
 HERE = Path(__file__).resolve().parent
 UPLOAD = "http://127.0.0.1:55423/guardedStorageUpload"
+RESUMABLE = "/storage/v1/upload/resumable"
 AUTH_USERS = "/auth/v1/admin/users"
 RPC = "/rest/v1/rpc/"
 CLOSE = RPC + "close_and_list_guarded_account_upload_dispatches"
@@ -58,6 +60,39 @@ def run(credentials):
         assert status == expected, f"Unexpected canonical upload result {status} (wanted {expected})."
         return json.loads(result) if method != "OPTIONS" else result
 
+    def create_resumable(path, token, expected):
+        metadata = {"bucketName": "uploads", "objectName": path, "contentType": "text/plain"}
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "apikey": public,
+            "Tus-Resumable": "1.0.0",
+            "Upload-Length": str(len(PAYLOAD)),
+            "Upload-Metadata": ",".join(
+                f"{key} {b64encode(value.encode()).decode()}" for key, value in metadata.items()
+            ),
+        }
+        req = Request(LOCAL_API + RESUMABLE, method="POST", data=b"", headers=headers)
+        try:
+            with build_opener(RejectRedirects).open(req, timeout=10) as response:
+                status, location = response.status, response.headers.get("Location")
+        except HTTPError as error:
+            status, location = error.code, error.headers.get("Location")
+            assert b"row-level security" in error.read(), "Expected a Storage RLS denial."
+        assert status == expected, f"Unexpected resumable admission HTTP {status}."
+        if expected == 201:
+            assert location, "A created upload must return a TUS session location."
+            session = urlsplit(location)
+            fixture = urlsplit(LOCAL_API)
+            assert session.netloc in ("", fixture.netloc)
+            assert session.path.startswith(RESUMABLE + "/")
+            cancel = Request(LOCAL_API + session.path, method="DELETE", headers={
+                name: headers[name] for name in ("Authorization", "apikey", "Tus-Resumable")
+            })
+            with build_opener(RejectRedirects).open(cancel, timeout=10) as response:
+                assert response.status == 204
+        else:
+            assert not location, "A denied upload must not expose a TUS session."
+
     def close(owner):
         return json.loads(rest("POST", CLOSE, {
             "p_owner_id": owner,
@@ -71,6 +106,15 @@ def run(credentials):
     other, other_token = create_owner(f"e65-upload-{uuid4()}@example.com")
     target = f"{owner}/target.txt"
     unrelated = f"{other}/unrelated.txt"
+    baseline_resumable = f"{other}/before-cutover.txt"
+    blocked_resumable = f"{owner}/after-cutover.txt"
+
+    create_resumable(baseline_resumable, other_token, 201)
+    rest("GET", f"{BUCKET}/{baseline_resumable}", expected=(400, 404))
+    sql((HERE / "storage-upload-writer-cutover.sql").read_text())
+    create_resumable(blocked_resumable, owner_token, 403)
+    rest("GET", f"{BUCKET}/{blocked_resumable}", expected=(400, 404))
+    assert pending_count() == "0"
 
     upload(target, owner_token, 200, body=None, method="OPTIONS")
     upload(target, "not-a-user-token", 401)
@@ -140,7 +184,7 @@ def run(credentials):
         rest("DELETE", f"{AUTH_USERS}/{remaining}", expected=(200, 204))
     assert pending_count() == "0"
 
-    print("Canonical route, duplicate handling, direct-write denial, existing reads/deletes and UUID reuse passed.")
+    print("Canonical route, TUS admission, direct-write denial, reads/deletes and UUID reuse passed.")
 
 
 def main():
@@ -151,7 +195,7 @@ def main():
     args = parser.parse_args()
     credentials = local_credentials(args.cli, args.stack_dir.resolve())
     for filename in ("storage-upload-admission-guard.sql", "storage-upload-dispatch-guard.sql",
-                     "storage-upload-exact-dispatch.sql", "storage-upload-writer-cutover.sql"):
+                     "storage-upload-exact-dispatch.sql"):
         sql((HERE / filename).read_text())
 
     env = {key: value for key, value in os.environ.items() if key != "SERVICE_ROLE_KEY"}

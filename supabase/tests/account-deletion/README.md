@@ -400,6 +400,9 @@ The E65 fixture passed normal upload, exact-path and unauthorized checks,
 duplicate preservation, a terminal provider MIME rejection, direct insert and
 update denial, denial of new authenticated signed-upload URLs, public and
 owner reads, prefix-based owner deletion, admission closure, an unrelated
-account, and a same-email replacement UUID. The E64 in-flight upload fixture
-also passed with the canonical writer and cutover SQL installed. The seven offline handler tests separately
+account, and a same-email replacement UUID. On local Storage v1.54.1, an
+ordinary authenticated TUS creation returned HTTP 201 before cutover and was
+canceled. After cutover, a new authenticated creation returned HTTP 403 from
+RLS with no upload session or object. The E64 in-flight upload fixture also
+passed with the canonical writer and cutover SQL installed. The seven offline handler tests separately
 exercise uncertain storage and acknowledgment outcomes.
