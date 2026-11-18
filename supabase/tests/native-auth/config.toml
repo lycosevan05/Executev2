@@ -1,0 +1,42 @@
+# Copy into a newly created, unlinked local fixture directory only.
+project_id = "execute-w04-e59"
+
+[api]
+port = 55421
+
+[db]
+port = 55422
+shadow_port = 55420
+major_version = 17
+
+[db.seed]
+enabled = false
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[inbucket]
+enabled = false
+
+[storage]
+enabled = true
+
+[auth]
+site_url = "http://127.0.0.1:55421"
+jwt_expiry = 300
+enable_signup = false
+
+[auth.sessions]
+timebox = "15s"
+
+[auth.email]
+enable_signup = true
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false

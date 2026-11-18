@@ -2443,3 +2443,200 @@ private final class AIServiceFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     override func stopLoading() { }
 }
+
+/// Opt-in only. Uses disposable local GoTrue and PostgREST, plus the actual app service boundaries.
+@MainActor
+final class IsolatedNativeAuthTests: XCTestCase {
+    private let storageKey = "native-auth-fixture"
+
+    func testTerminalServerTimeboxClearsColdRestoreAndAllowsFreshSignIn() async throws {
+        let fixture = try LocalAuthFixture()
+        let user = try await fixture.createUser()
+        let storage = AuthFixtureStorage(), defaults = isolatedAuthOwnerDefaults()
+        let first = fixture.app(storage: storage, defaults: defaults)
+        try await first.state.verifyEmailOTP(email: user.email, token: fixture.code(for: user.email))
+        XCTAssertEqual(first.state.launchState, .signedIn(user))
+        let issued = try XCTUnwrap(first.client.auth.currentSession)
+
+        // The local server's 15-second time box is real. Keep its issued credentials intact
+        // and set only the test storage's expiry to drive the app's next refresh now.
+        try await Task.sleep(for: .seconds(17))
+        var expired = issued
+        expired.expiresAt = 0
+        try storage.store(key: storageKey, value: JSONEncoder().encode(expired))
+        let cold = fixture.app(storage: storage, defaults: defaults)
+        XCTAssertEqual(cold.client.auth.currentSession?.user.id, user.id)
+        await cold.state.start()
+        XCTAssertEqual(cold.state.launchState, .signedOut)
+        XCTAssertNil(try storage.retrieve(key: storageKey))
+        XCTAssertFalse(cold.state.allowsDraftWrites(for: user.id))
+
+        let next = fixture.app(storage: storage, defaults: defaults)
+        await next.state.start()
+        XCTAssertEqual(next.state.launchState, .signedOut)
+        try await next.state.verifyEmailOTP(email: user.email, token: fixture.code(for: user.email))
+        XCTAssertEqual(next.state.launchState, .signedIn(user))
+        XCTAssertTrue(next.state.allowsDraftWrites(for: user.id))
+    }
+
+    func testLateRealFeatureReadDoesNotReachTheReplacementAccount() async throws {
+        let fixture = try LocalAuthFixture()
+        let a = try await fixture.createUser(), b = try await fixture.createUser()
+        let cacheSuite = "IsolatedNativeAuth.Cache.\(UUID().uuidString)"
+        addTeardownBlock { UserDefaults(suiteName: cacheSuite)?.removePersistentDomain(forName: cacheSuite) }
+        let app = fixture.app(storage: AuthFixtureStorage(), defaults: isolatedAuthOwnerDefaults(),
+                              cache: UserScopedCacheStore(suiteName: cacheSuite))
+        let realRepository = SupabaseRecoveryRepository(client: app.client)
+        let arrived = expectation(description: "A's authenticated PostgREST read returned")
+        let held = HeldAccountRead(repository: realRepository, arrived: arrived)
+        let cacheKey = CacheKey("isolated-owner-check")
+
+        try await firstAccountSetup(a, fixture: fixture, app: app, cacheKey: cacheKey)
+        let aData = try GoalSessionData(repository: held, user: a) { app.state.allowsDraftWrites(for: a.id) }
+        let oldRead = Task { try await aData.list(.goals, orderBy: "created_date", limit: 10) as [EntityRecord<JSONValue>] }
+        defer { held.release(); oldRead.cancel() }
+        await fulfillment(of: [arrived], timeout: 12)
+        XCTAssertEqual(held.rowOwners, [a.id])
+
+        await app.state.signOut()
+        XCTAssertEqual(app.state.launchState, .signedOut)
+        try await app.state.verifyEmailOTP(email: b.email, token: fixture.code(for: b.email))
+        XCTAssertEqual(app.state.launchState, .signedIn(b))
+        XCTAssertEqual(app.router.selectedTab, .home)
+        XCTAssertTrue(app.router.pathBinding(for: .track).wrappedValue.isEmpty)
+        let inherited = await app.cache.read(cacheKey, as: String.self, userID: b.id)
+        guard case .missing = inherited else { return XCTFail("B inherited A's cache") }
+        app.router.select(.nutrition)
+        let data = SupabaseDataService(client: app.client)
+        let rowB = try await data.create(.goals, payload: JSONValue.object(["title": .string("B only")]), user: b)
+        try await app.cache.write("B only", for: cacheKey, userID: b.id)
+
+        held.release()
+        do {
+            _ = try await oldRead.value
+            XCTFail("A's stale feature response reached its caller after the switch")
+        } catch is CancellationError {
+            // The captured account is rechecked after the real request returns.
+        }
+
+        let bData = try GoalSessionData(repository: realRepository, user: b) { app.state.allowsDraftWrites(for: b.id) }
+        let bRows: [EntityRecord<JSONValue>] = try await bData.list(.goals, orderBy: "created_date", limit: 10)
+        XCTAssertEqual(bRows.map(\.id), [rowB.id])
+        let after = await app.cache.read(cacheKey, as: String.self, userID: b.id)
+        guard case .fresh("B only") = after else { return XCTFail("B's cache was displaced") }
+        XCTAssertEqual(app.state.launchState, .signedIn(b))
+        XCTAssertEqual(app.router.selectedTab, .nutrition)
+        XCTAssertFalse(app.state.allowsDraftWrites(for: a.id))
+        XCTAssertTrue(app.state.allowsDraftWrites(for: b.id))
+        XCTAssertFalse(app.state.premiumState.isPremium)
+    }
+
+    private func firstAccountSetup(_ user: ExecuteUser, fixture: LocalAuthFixture, app: LocalAuthFixture.App,
+                                   cacheKey: CacheKey) async throws {
+        try await app.state.verifyEmailOTP(email: user.email, token: fixture.code(for: user.email))
+        let data = SupabaseDataService(client: app.client)
+        _ = try await data.create(.goals, payload: JSONValue.object(["title": .string("A only")]), user: user)
+        let subscription = EntityInsert(ownerID: user.id, ownerEmail: user.email, createdBy: user.email,
+            userEmail: user.email, data: JSONValue.object(["user_id": .string(user.email),
+                "plan": .string("premium"), "status": .string("active")]), createdDate: .now, updatedDate: .now)
+        try await fixture.admin.from("user_subscriptions").insert(subscription).execute()
+        await app.state.handleScenePhase(.active)
+        // Activation may already have started a refresh before the subscription insert.
+        let deadline = ContinuousClock.now + .seconds(6)
+        while !app.state.premiumState.isPremium && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+            await app.state.handleScenePhase(.active)
+        }
+        XCTAssertTrue(app.state.premiumState.isPremium)
+        try await app.cache.write("A only", for: cacheKey, userID: user.id)
+        app.router.select(.track)
+        app.router.navigate(to: .trackingHistory)
+    }
+}
+
+@MainActor
+private struct LocalAuthFixture {
+    typealias App = (client: SupabaseClient, state: AppState, router: AppRouter, cache: UserScopedCacheStore)
+    let admin: SupabaseClient
+    private let url: URL
+    private let publicKey: String
+
+    init() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["EXECUTE_ISOLATED_AUTH"] == "1" else { throw XCTSkip("Requires the dedicated local W04 fixture") }
+        guard let endpoint = env["EXECUTE_ISOLATED_AUTH_URL"],
+              endpoint == "http://127.0.0.1:55421", let url = URL(string: endpoint),
+              let publicKey = env["EXECUTE_ISOLATED_AUTH_PUBLIC_KEY"], !publicKey.isEmpty,
+              let adminKey = env["EXECUTE_ISOLATED_AUTH_ADMIN_KEY"], !adminKey.isEmpty else {
+            throw AppError(title: "Invalid W04 fixture configuration", message: "Use the local test runner and its dedicated loopback stack.")
+        }
+        self.url = url
+        self.publicKey = publicKey
+        admin = Self.makeClient(url: url, key: adminKey, storage: AuthFixtureStorage())
+    }
+
+    func createUser() async throws -> ExecuteUser {
+        let address = "w04-\(UUID().uuidString.lowercased())@example.com"
+        let user = try await admin.auth.admin.createUser(attributes: .init(email: address, emailConfirm: true, password: UUID().uuidString))
+        return ExecuteUser(id: user.id, email: address, displayName: address)
+    }
+
+    func code(for email: String) async throws -> String {
+        try await admin.auth.admin.generateLink(params: .magicLink(email: email)).properties.emailOTP
+    }
+
+    func app(storage: AuthFixtureStorage, defaults: UserDefaults,
+             cache: UserScopedCacheStore = UserScopedCacheStore()) -> App {
+        let client = Self.makeClient(url: url, key: publicKey, storage: storage)
+        let config = AppConfiguration(supabaseURL: url, supabaseAnonKey: publicKey, revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "execute-w04-fixture")
+        let service = SupabaseAuthService(client: client, configuration: config, ownerDefaults: defaults)
+        let router = AppRouter()
+        let state = AppState(authService: service, cache: cache, router: router, subscriptionService: MockSubscriptionService(),
+                             subscriptionReader: SupabaseSubscriptionReader(client: client), configurationError: nil)
+        return (client, state, router, cache)
+    }
+
+    private static func makeClient(url: URL, key: String, storage: AuthFixtureStorage) -> SupabaseClient {
+        let transport = URLSessionConfiguration.ephemeral
+        transport.timeoutIntervalForRequest = 8
+        return SupabaseClient(supabaseURL: url, supabaseKey: key, options: .init(
+            auth: .init(storage: storage, storageKey: "native-auth-fixture", autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: URLSession(configuration: transport))))
+    }
+}
+
+@MainActor
+private final class HeldAccountRead: RecoveryRepository {
+    private let repository: RecoveryRepository
+    private let arrived: XCTestExpectation
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var rowOwners: [UUID] = []
+
+    init(repository: RecoveryRepository, arrived: XCTestExpectation) {
+        self.repository = repository
+        self.arrived = arrived
+    }
+
+    func identity(for user: ExecuteUser) throws -> RecoveryIdentity { try repository.identity(for: user) }
+    func validate(_ identity: RecoveryIdentity) throws { try repository.validate(identity) }
+    func rows(_ table: EntityTable, fields: [String: String], identity: RecoveryIdentity) async throws -> [BackendRow] {
+        let rows = try await repository.rows(table, fields: fields, identity: identity)
+        rowOwners = rows.compactMap(\.ownerID)
+        arrived.fulfill()
+        if !released { await withCheckedContinuation { continuation = $0 } }
+        return rows
+    }
+    func recent(_ table: EntityTable, through date: String, identity: RecoveryIdentity) async throws -> [BackendRow] {
+        try await repository.recent(table, through: date, identity: identity)
+    }
+    func write(_ table: EntityTable, id: UUID?, patch: JSONValue, identity: RecoveryIdentity) async throws -> BackendRow {
+        try await repository.write(table, id: id, patch: patch, identity: identity)
+    }
+
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
