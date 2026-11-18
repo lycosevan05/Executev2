@@ -890,6 +890,86 @@ final class AuthPersistenceTests: XCTestCase {
         return (client, SupabaseAuthService(client: client, configuration: configuration))
     }
 
+    func testLateSDKRefreshClosesUIWhenStoredOwnerNoLongerMatches() async throws {
+        let host = "late-refresh.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let (client, service) = fixture(storage: AuthFixtureStorage(), host: host)
+        let original = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        let suiteName = "LateSDKRefresh.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let cache = UserScopedCacheStore(suiteName: suiteName)
+        let router = AppRouter()
+        let paid = PremiumState(isPremium: true, entitlementIdentifier: "fixture", expirationDate: nil)
+        let state = AppState(authService: service, cache: cache, router: router,
+                             subscriptionService: MockSubscriptionService(state: paid), configurationError: nil)
+        await state.start()
+        XCTAssertEqual(state.launchState, .signedIn(original))
+
+        let signedOut = expectation(description: "Mismatched SDK owner closes the authenticated screen")
+        let observer = state.$launchState.filter { $0 == .signedOut }.sink { _ in signedOut.fulfill() }
+        defer { observer.cancel() }
+        let monitor = Task { await state.monitorSessionLoss() }
+        defer { monitor.cancel() }
+
+        let refreshStarted = expectation(description: "Old owner's SDK refresh is waiting for its response")
+        AuthFixtureProtocol.traffic.holdRefresh(host) { refreshStarted.fulfill() }
+        defer { AuthFixtureProtocol.traffic.releaseRefresh(host) }
+        let lateRefresh = Task { try await client.auth.refreshSession() }
+        defer { lateRefresh.cancel() }
+        await fulfillment(of: [refreshStarted], timeout: 3)
+
+        _ = try await state.authorizationURL(for: .google)
+        let callback = try XCTUnwrap(URL(string: "fixture://login-callback?code=fixture-only-code"))
+        await state.handleOpenURL(callback)
+        guard case let .signedIn(current) = state.launchState else { return XCTFail("Expected the new owner to activate") }
+        XCTAssertEqual(current.id, AuthFixtureProtocol.callbackUserID)
+        XCTAssertNotEqual(current.id, original.id)
+        XCTAssertEqual(client.auth.currentSession?.user.id, current.id)
+        XCTAssertTrue(state.allowsDraftWrites(for: current.id))
+        await state.billing.refresh()
+        XCTAssertEqual(state.premiumState, paid)
+        router.select(.plan)
+        let key = CacheKey("saved-fixture")
+        try await cache.write("new owner snapshot", for: key, userID: current.id)
+
+        AuthFixtureProtocol.traffic.releaseRefresh(host)
+        let refreshed = try await lateRefresh.value
+        XCTAssertEqual(refreshed.user.id, original.id)
+        // The SDK has already overwritten its saved owner when it emits the event.
+        XCTAssertEqual(client.auth.currentSession?.user.id, original.id)
+        await fulfillment(of: [signedOut], timeout: 3)
+        XCTAssertEqual(state.launchState, .signedOut)
+        XCTAssertEqual(router.selectedTab, .home)
+        XCTAssertEqual(state.premiumState, .free)
+        XCTAssertFalse(state.allowsDraftWrites(for: current.id))
+        XCTAssertFalse(state.allowsDraftWrites(for: original.id))
+        guard case .missing = await cache.read(key, as: String.self, userID: current.id) else {
+            return XCTFail("The previous UI owner's cache must be inactive")
+        }
+        XCTAssertNotNil(defaults.data(forKey: "execute.cache.\(current.id.uuidString).\(key.storageKey)"))
+    }
+
+    func testSameOwnerSDKRefreshKeepsCurrentAppSession() async throws {
+        let host = "late-refresh.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let (client, service) = fixture(storage: AuthFixtureStorage(), host: host)
+        let user = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
+        let state = AppState(authService: service, cache: UserScopedCacheStore(), router: AppRouter(),
+                             subscriptionService: MockSubscriptionService(), configurationError: nil)
+        await state.start()
+        let unexpectedSignOut = expectation(description: "Same-owner refresh never closes the app session")
+        unexpectedSignOut.isInverted = true
+        let observer = state.$launchState.filter { $0 == .signedOut }.sink { _ in unexpectedSignOut.fulfill() }
+        defer { observer.cancel() }
+        let monitor = Task { await state.monitorSessionLoss() }
+        defer { monitor.cancel() }
+
+        let refreshed = try await client.auth.refreshSession()
+        XCTAssertEqual(refreshed.user.id, user.id)
+        await fulfillment(of: [unexpectedSignOut], timeout: 0.25)
+        XCTAssertEqual(state.launchState, .signedIn(user))
+        XCTAssertTrue(state.allowsDraftWrites(for: user.id))
+    }
+
     func testRevokedRefreshSendsAnOpenSessionBackToSignIn() async throws {
         let (client, service) = fixture(storage: AuthFixtureStorage(), host: "revoked.auth-fixture.invalid")
         let user = try await service.verifyEmailOTP(email: "fixture@example.invalid", token: "fixture-code")
@@ -1116,11 +1196,14 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
             return
         }
-        let callbackNumber = isCallback ? Self.traffic.record(url.host!) : 0
+        let grant = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "grant_type" })?.value
+        let originalOwnerRefresh = url.host?.hasPrefix("late-refresh.") == true && grant == "refresh_token"
+        let callbackNumber = isCallback && !originalOwnerRefresh ? Self.traffic.record(url.host!) : 0
         let verifyNumber = url.path == "/auth/v1/verify" ? Self.traffic.record(url.host! + ".verify") : 0
         let revoked = isCallback && url.host?.hasPrefix("revoked.") == true
         let failed = isCallback && (revoked || callbackNumber > 1 || url.host!.hasPrefix("provider-error."))
-        let id = isCallback && !url.host!.hasPrefix("same-owner.") ? Self.callbackUserID : Self.userID
+        let id = isCallback && !originalOwnerRefresh && !url.host!.hasPrefix("same-owner.") ? Self.callbackUserID : Self.userID
         let user: [String: Any] = ["id": id.uuidString, "aud": "authenticated", "role": "authenticated",
             "email": "fixture@example.invalid", "app_metadata": [:], "user_metadata": [:],
             "created_at": "2026-11-09T00:00:00Z", "updated_at": "2026-11-09T00:00:00Z"]
@@ -1134,9 +1217,15 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
         do {
             let response = HTTPURLResponse(url: url, statusCode: failed ? 400 : 200, httpVersion: nil,
                                            headerFields: ["Content-Type": "application/json", "X-Supabase-Api-Version": "2024-01-01"])!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: try JSONSerialization.data(withJSONObject: body))
-            client?.urlProtocolDidFinishLoading(self)
+            let data = try JSONSerialization.data(withJSONObject: body)
+            let deliver: @Sendable () -> Void = { [self] in
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: data)
+                client?.urlProtocolDidFinishLoading(self)
+            }
+            if !originalOwnerRefresh || !Self.traffic.holdRefreshResponse(url.host!, deliver: deliver) {
+                deliver()
+            }
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() { }
@@ -1146,6 +1235,33 @@ private final class CallbackFixtureTraffic: @unchecked Sendable {
     private let lock = NSLock()
     private var counts: [String: Int] = [:]
     private var offlineHosts: Set<String> = []
+    private struct HeldRefresh {
+        let didStart: @Sendable () -> Void
+        var deliver: (@Sendable () -> Void)?
+    }
+    private var heldRefreshes: [String: HeldRefresh] = [:]
+
+    func holdRefresh(_ host: String, didStart: @escaping @Sendable () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        heldRefreshes[host] = HeldRefresh(didStart: didStart)
+    }
+
+    func holdRefreshResponse(_ host: String, deliver: @escaping @Sendable () -> Void) -> Bool {
+        lock.lock()
+        let didStart = heldRefreshes[host]?.didStart
+        heldRefreshes[host]?.deliver = deliver
+        lock.unlock()
+        didStart?()
+        return didStart != nil
+    }
+
+    func releaseRefresh(_ host: String) {
+        lock.lock()
+        let deliver = heldRefreshes.removeValue(forKey: host)?.deliver
+        lock.unlock()
+        deliver?()
+    }
 
     func setOffline(_ offline: Bool, for host: String) {
         lock.lock(); defer { lock.unlock() }

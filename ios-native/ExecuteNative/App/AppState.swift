@@ -114,11 +114,13 @@ final class AppState: ObservableObject {
     }
 
     private func handleSessionLoss() async {
-        // Activation checks SDK storage again before exposing a signed-in screen.
-        // Let an explicit sign-out or deletion handle its own SDK notifications.
+        // Activation checks SDK storage before exposing the account. Sign-out
+        // and deletion own their transitions. For other SDK notifications,
+        // compare the current stored owner rather than trusting the event.
         guard let userID = signedInUserID, activatingSession == nil,
               !deletingUserIDs.contains(userID),
-              !authenticationRequestsInFlight.contains(sessionGeneration) else { return }
+              !authenticationRequestsInFlight.contains(sessionGeneration),
+              !authService.hasLocalSession(for: userID) else { return }
         await closeSession(for: userID)
     }
 

@@ -28,10 +28,11 @@ final class SupabaseAuthService: AuthServicing {
     func monitorSessionLoss(onLoss: @escaping @MainActor () async -> Void) async {
         for await (event, session) in client.auth.authStateChanges {
             guard !Task.isCancelled else { return }
-            // Recheck live storage because a new sign-in may have completed
-            // since the SDK emitted a loss event for the previous session.
-            if (event == .signedOut || event == .initialSession), session == nil,
-               client.auth.currentSession == nil {
+            // Refresh stores its response before the event arrives, even when
+            // the app has activated a different account in the meantime.
+            let sessionWasRemoved = (event == .signedOut || event == .initialSession)
+                && session == nil && client.auth.currentSession == nil
+            if sessionWasRemoved || event == .tokenRefreshed {
                 await onLoss()
             }
         }
