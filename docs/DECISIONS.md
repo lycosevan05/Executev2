@@ -30,6 +30,17 @@
 
 ---
 
+## 2026-11-17 — Keep Execute session lifetime independent of OAuth consent
+**Type:** architecture · **Status:** active
+
+**Context.** Disposable Apple and Google QA confirmed that removing provider consent left the already-issued Supabase session restorable. Both users signed out explicitly and then recovered the same Execute account through fresh provider authorization.
+
+**Decision.** For native parity, an existing Execute session follows Supabase Auth expiry and revocation, including Execute sign-out. Removing Execute consent at Apple or Google affects future OAuth authorization. It carries no immediate Execute sign-out guarantee.
+
+**Why.** This preserves the observed account lifecycle and lets the release verify terminal expiry and account isolation directly. Immediate provider-driven invalidation would require separate provider-event delivery, account attribution, and Supabase invalidation acceptance.
+
+**Touches.** W04, G04, G05, native authentication and account isolation. See the [acceptance checklist](native-parity-audit.md).
+
 ## 2026-11-01 — Reconcile refund reversals from current provider state
 **Type:** architecture · **Status:** active
 **Context:** The webhook acknowledged `REFUND_REVERSED` without refreshing customer state, so a reversal could leave backend access stale.
