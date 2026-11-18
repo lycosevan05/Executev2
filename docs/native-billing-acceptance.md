@@ -245,7 +245,52 @@ an old Premium screenshot is insufficient proof that B is still entitled.
 | Reinstall/restore | Return to purchaser tester and B; verify current entitlement and back up evidence before removing only the native-dev test app. Reinstall a verified ordinary-scheme build, sign into B, record access before Restore, then Restore once. | The same customer's valid purchase recovers; if auto-refresh already recovered it, record that separately. No extra purchase or ownership transfer; exactly one backend row; Premium and Nutrition agree. If entitlement expired, this is an expired-restore case, not active recovery. |
 | Slow account switch | Start a delayed billing read/operation on one disposable identity, then switch accounts. | Previous result cannot unlock the new account or display its success message; provider/backend ownership remains explainable. Mock race tests are separate from device evidence. |
 | Cancellation/expiry/refund | Use the intended native-dev Sandbox subscription in Apple management; observe each supported lifecycle separately. | Cancellation preserves access through its paid period; expiry/refund follows actual provider truth and matching webhook/backend state. Previous expiry evidence does not prove cancellation/refund. |
-| Pending approval | Use a working supported StoreKit testing environment. | Pending does not grant access; approval/rejection resolves correctly. Local Code 3 currently prevents treating SKTestSession controls as accepted. |
+| Pending approval | Use Xcode StoreKit Testing with Ask to Buy enabled. Resolve the request using the test transaction controls. | Pending leaves access Free. Approval unlocks the entitlement, and decline keeps access Free. |
+
+### Hosted App Store exception cases
+
+Use one approved disposable Execute identity and a designated Sandbox Apple
+Account on the development-signed native-dev app with StoreKit Configuration
+set to **None**. Confirm the exact Apple sandbox product and Apple's notification
+destination, the RevenueCat App Store app and environment, and the intended
+Supabase project before making a purchase or changing tester settings. Record
+the exact account, transaction lineage, provider event, delivery response and
+readback privately. Get separate approval for any app-wide configuration change.
+
+- **Interruption.** Use the tester's interruption setting. Verify that the
+  purchase attempt leaves the disposable identity Free, and privately resolve
+  any Apple-required action. Restore the tester's original setting. After the
+  purchase resolves, match the actual sandbox transaction, entitlement and
+  backend row to the same owner. [Testing an interrupted purchase](https://developer.apple.com/documentation/storekit/testing-an-interrupted-purchase)
+- **Billing grace.** Confirm the app already has Sandbox billing grace enabled,
+  or obtain approval for a Sandbox-only change before proceeding. Buy the
+  approved monthly subscription, then turn off **Allow Purchases & Renewals**
+  for the designated tester. Check paid access during grace. Re-enable the
+  setting for a recovery test or wait for grace and retry to end for an expiry
+  test. Match the provider events, row and native access before resetting the
+  tester setting. [Apple's failing-renewal testing procedure](https://developer.apple.com/documentation/storekit/testing-failing-subscription-renewals-and-in-app-purchases)
+- **Refund.** Use the dedicated Debug XCTest on a signed native-dev host with
+  the approved Execute account already restored. Capture the exact current
+  transaction and original transaction IDs from the authorized purchase. Build
+  the ordinary `ExecuteNative` scheme for testing. Select only
+  `ExecuteNativeTests/HostedAppleSandboxRefundTests/testPresentRefundSheetForVerifiedSandboxPurchase`.
+  Set `EXECUTE_HOSTED_APPLE_SANDBOX_REFUND=1`,
+  `EXECUTE_HOSTED_APPLE_REFUND_PRODUCT_ID`,
+  `EXECUTE_HOSTED_APPLE_REFUND_TRANSACTION_ID`,
+  `EXECUTE_HOSTED_APPLE_REFUND_ORIGINAL_TRANSACTION_ID`, and
+  `EXECUTE_HOSTED_APPLE_REFUND_CUSTOMER` in the test target's private temporary
+  `.xctestrun` environment. Remove the file after the test. The test compares
+  the active RevenueCat customer and exact App Store Sandbox transaction with
+  the verified StoreKit purchase. It opens Apple's sheet for the operator to
+  submit after specific refund approval. A renewal can change the current
+  transaction ID. Stop and reverify the approved scope if any guard rejects
+  the request. A submitted sheet still requires separate Apple revocation,
+  RevenueCat delivery, database and native access evidence.
+  [Testing refund requests](https://developer.apple.com/documentation/storekit/testing-refund-requests)
+- **Refund reversal.** Apple documents `REFUND_REVERSED` for a reversed refund
+  after a customer dispute. Its test-notification API sends `TEST`. Keep the
+  webhook fixture result and actual reversal acceptance distinct.
+  [Apple notification types](https://developer.apple.com/documentation/appstoreservernotifications/notificationtype)
 
 ## Server and release follow-up
 
