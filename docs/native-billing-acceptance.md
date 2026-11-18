@@ -263,8 +263,11 @@ readback privately. Get separate approval for any app-wide configuration change.
   purchase resolves, match the actual sandbox transaction, entitlement and
   backend row to the same owner. [Testing an interrupted purchase](https://developer.apple.com/documentation/storekit/testing-an-interrupted-purchase)
 - **Billing grace.** Confirm the app already has Sandbox billing grace enabled,
-  or obtain approval for a Sandbox-only change before proceeding. Buy the
-  approved monthly subscription, then turn off **Allow Purchases & Renewals**
+  or obtain approval for a Sandbox-only change before proceeding. Allow the
+  setting to propagate before inducing a failure. Apple says configuration
+  edits can take up to 24 hours and apply to upcoming renewals.
+  [Apple's grace configuration](https://developer.apple.com/help/app-store-connect/manage-subscriptions/enable-billing-grace-period-for-auto-renewable-subscriptions/)
+  Buy the approved monthly subscription, then turn off **Allow Purchases & Renewals**
   for the designated tester. Check paid access during grace. Re-enable the
   setting for a recovery test or wait for grace and retry to end for an expiry
   test. Match the provider events, row and native access before resetting the
@@ -285,7 +288,11 @@ readback privately. Get separate approval for any app-wide configuration change.
   submit after specific refund approval. A renewal can change the current
   transaction ID. Stop and reverify the approved scope if any guard rejects
   the request. A submitted sheet still requires separate Apple revocation,
-  RevenueCat delivery, database and native access evidence.
+  RevenueCat delivery, database and native access evidence. Use the same private
+  environment and select only
+  `ExecuteNativeTests/HostedAppleSandboxRefundTests/testReadRevocationOfVerifiedSandboxPurchase`
+  after the refund. This read-only test checks the exact verified StoreKit
+  transaction in history and fresh RevenueCat access. It opens no Apple sheet.
   [Testing refund requests](https://developer.apple.com/documentation/storekit/testing-refund-requests)
 - **Refund reversal.** Apple documents `REFUND_REVERSED` for a reversed refund
   after a customer dispute. Its test-notification API sends `TEST`. Keep the

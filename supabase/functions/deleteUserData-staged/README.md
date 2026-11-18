@@ -55,11 +55,13 @@ replacement of v6 unnecessary for this staged route.
    exact synthetic Auth UUID. The staged endpoint refuses access to Stripe. An
    inventoried Stripe reference stops deletion before any writes. A
    billing-linked rehearsal needs separately reviewed code and authorization.
-   The staged handler requires the upload-dispatch guard RPC. It closes
-   admission for the approved UUID and stops before cleanup if any dispatch
-   remains pending or the response is unverified. After a verified drain it
-   takes a fresh Storage inventory. Exercise only writers that use the dispatch
-   guard and account for every other upload path before hosted acceptance.
+   The staged handler requires the canonical-writer cutover for the `uploads`
+   bucket. The guarded RPC verifies the database policies and closes admission
+   for the approved UUID in one transaction. The handler stops before cleanup if
+   any dispatch remains pending or the response is unverified. After a verified
+   drain it takes a fresh Storage inventory. Account for legacy clients,
+   pre-cutover uploads, signed capabilities, resumable uploads and external
+   privileged writers before hosted acceptance.
 4. Preserve Auth, Storage byte and database snapshots for the target and an
    unrelated synthetic owner. Rehearse rejection for a matching email on a
    different UUID, successful target cleanup, and an injected partial failure
@@ -109,8 +111,8 @@ requires a separate recovery decision.
 
 The tests in this directory exercise the local HTTP admission and shutoff
 contract. The structural reversal rehearsal uses a fresh PostgreSQL fixture with
-the six baseline migrations, the five E63 optional guards, and the E64 dispatch
-guard.
+the six baseline migrations, the five E63 optional guards, the E64 dispatch
+guard, and the E65 exact dispatch and canonical writer cutover.
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 supabase/tests/account-deletion/test_staged_schema_reversal.py \

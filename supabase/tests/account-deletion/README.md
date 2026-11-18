@@ -206,12 +206,27 @@ original upload admission check passed on Storage v1.54.1 and PostgreSQL
 entity guards and the E63 Stripe retirement guard installed. The sequential
 E62 Storage lifecycle passed with those guards installed.
 
-Before enabling this candidate, route native, web, and service writes through
-the writer and retire direct, signed, resumable, and any other bypass paths in
-the configured bucket. Verify that requests already accepted on those paths
-have finished before relying on the ledger. The writer and deletion service
-adapters still need implementation and isolated acceptance. A recovery process
-also needs a definitive terminal signal for otherwise unresolved dispatches.
+### Route app uploads through the ledger
+
+The native Storage service and web and Capacitor photo and barcode flows use
+`guardedStorageUpload`. The endpoint verifies the current Auth UUID and routes
+new raw uploads to the canonical `uploads/<owner>/<filename>` path. It preserves
+the bucket's MIME and size limits and refuses overwrites. A stored object,
+verified duplicate or definite provider MIME or size rejection is terminal.
+An unknown Storage outcome or lost final acknowledgment keeps the dispatch
+pending until it can be independently reconciled.
+
+For an approved isolated rollout, install
+`storage-upload-exact-dispatch.sql` after the existing admission and dispatch
+guards. Deploy and verify the canonical writer before distributing rebuilt
+clients that depend on it. Retire pre-cutover clients and establish that
+previously admitted direct, signed and resumable requests have finished. Account
+for any external service-role or S3 writers before relying on the ledger.
+Once ready, `storage-upload-writer-cutover.sql` blocks direct actor inserts and
+updates in `uploads`, while retaining the existing read and delete policies.
+The staged deletion route checks that this exact cutover is active in the same
+database transaction in which it closes admission and inventories dispatches.
+Hosted rollout and unknown-outcome reconciliation still need acceptance.
 
 To roll back this candidate in a staged environment, stop dispatching new
 writes and reconcile outstanding dispatches with their terminal results. Once
