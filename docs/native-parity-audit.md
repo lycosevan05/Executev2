@@ -248,6 +248,12 @@ The additive local migration installs a restrictive ownership policy on all 19 p
 
 Ten local PostgreSQL test groups covered the 19 tables, including the native patch RPC and rollback with exact record and policy preservation. The 20 existing patch-record checks and 32 deletion checks passed. The local W09 artifact search found the verified version 6 source ZIP and no compiled bundle matching the production digest. Deployed policy validation and the final concurrency gap remain open, and account deletion remains gated.
 
+### E58 — Verify ownership through isolated PostgREST
+
+The exact ownership migration passed 10 HTTP test groups on native PostgreSQL 17.12 and PostgREST 14.18 with synthetic JWTs and records. The loopback runner covered owner-scoped CRUD, exact reserved-character email matching, the native patch RPC, subscription selection, conditional service cleanup and exact affected-row counts. The separate full-chain local database applied all six migrations, installed all 19 restrictive guards, and confirmed that the actual Stripe and RevenueCat row-writing RPCs still produced rows visible to the expected synthetic owner. The existing data-only subscription fixture remained guarded. Production legacy-data compatibility and the final concurrent-write gap remain open.
+
+Supabase Support accepted the authorized request for the exact version 6 compiled deletion artifact or the byte representation identified by the provider digest. The reply and matching bundle remain outstanding. The temporary HTTP and PostgreSQL processes were stopped after validation. Counts remain 42 of 45 with all nine release gates open.
+
 ## Authorization and preservation
 
 Use standalone ios-native and the isolated checkout. Original Developer README/legal/PDF/ZIP changes remain untouched; baseline binary-diff hash4ba519d51f7d630a0695b9191e11287f350162810f7d0fb9aca5e3e297dc66eb reverified. Normal designated disposable-QA synthetic actions, SELECT-only independent DB, local fixes/tests/commits and normal signing/install are authorized. Credentials/auth storage stay private; UI through CUA; manual physical preference retained. No new backend/schema/function deployment, billing mutation, real-account deletion, credential automation, push, merge or distribution without separate authorization. Canonical Execute Document maintained by separate writer.
