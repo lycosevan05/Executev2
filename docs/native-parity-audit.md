@@ -182,7 +182,7 @@ The user separately approved revocation for Execute. The Apple Account entry mat
 
 ### E46 — Accept Apple OAuth and verify same-owner recovery
 
-After Apple removed the exact authorization in E45 and the disposable identity explicitly signed out, the user completed fresh Apple authorization privately. The normal app returned to Home. Profile showed the same relay address, and a fresh Supabase Auth readback matched exactly one Apple-provider row with the original disposable owner UUID. Reuse E14 cancellation and E44 successful initial callback and relaunch evidence. W02 is accepted at 41 of 45 with W03, W04, W09 and W15 open and all nine release gates open. Automatic invalidation of already-issued Supabase sessions after provider consent removal remains under W04/G05.
+After Apple removed the exact authorization in E45 and the disposable identity explicitly signed out, the user completed fresh Apple authorization privately. The normal app returned to Home. Profile showed the same relay address, and a fresh Supabase Auth readback matched exactly one Apple-provider row with the original disposable owner UUID. Reuse E14 cancellation and E44 successful initial callback and relaunch evidence. W02 is accepted at 41 of 45 with W03, W04, W09 and W15 open and all nine release gates open. Automatic invalidation of already-issued Supabase sessions after provider consent removal remains under W04/G05. A normal same-bundle update on the disposable simulator installed the current strict-signature Debug build from source `571d159`. Home and Profile restored the same Apple QA identity through the new session storage backend.
 
 ## Authorization and preservation
 
