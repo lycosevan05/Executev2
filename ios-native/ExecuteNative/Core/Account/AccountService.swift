@@ -58,6 +58,7 @@ final class SupabaseAccountService: AccountServicing {
               let results = response.results,
               results["authentication"] == .string("deleted"),
               results["storage"] != nil,
+              EntityTable.allCases.allSatisfy({ results[$0.rawValue] != nil }),
               results.allSatisfy({ key, value in
                   if key == "authentication" { return value == .string("deleted") }
                   guard let status = value.stringValue else { return false }

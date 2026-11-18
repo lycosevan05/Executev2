@@ -200,6 +200,10 @@ The normal signed Release build restored the same disposable Google profile afte
 
 The app now exits the startup waiting state at its deadline when SDK restore ignores cancellation. The new regression failed before the fix and passed afterward. Home now ends initial widget loading as soon as it restores the current owner's saved dashboard, including while a network refresh is pending. The new transport fixture verified that the cached dashboard renders while the server read is suspended. The full unit suite passed 637 tests. The changed Release offline retest, live session expiry, in-flight isolation and provider-to-session invalidation still require acceptance. Counts remain 42 of 45 with all nine release gates open.
 
+### E50 — Require complete account deletion receipts
+
+The verified-rollout client now requires a valid deletion count for each of the 19 entity tables, along with the existing storage count and authentication acknowledgement. The native and backend table names match. The nine focused contract tests passed, including rejection for each omitted receipt and preservation of session, cache, navigation and drafts when only authentication and storage were acknowledged. The production readiness gate remains closed.
+
 ## Authorization and preservation
 
 Use standalone ios-native and the isolated checkout. Original Developer README/legal/PDF/ZIP changes remain untouched; baseline binary-diff hash4ba519d51f7d630a0695b9191e11287f350162810f7d0fb9aca5e3e297dc66eb reverified. Normal designated disposable-QA synthetic actions, SELECT-only independent DB, local fixes/tests/commits and normal signing/install are authorized. Credentials/auth storage stay private; UI through CUA; manual physical preference retained. No new backend/schema/function deployment, billing mutation, real-account deletion, credential automation, push, merge or distribution without separate authorization. Canonical Execute Document maintained by separate writer.

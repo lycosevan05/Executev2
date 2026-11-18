@@ -1651,8 +1651,19 @@ final class DailyActivityChecklistTests: XCTestCase {
 }
 
 @MainActor final class AccountDeletionContractTests: XCTestCase {
-    private let success: JSONValue = .object(["success": .bool(true), "results": .object([
-        "authentication": .string("deleted"), "storage": .string("deleted 0"), "goals": .string("deleted 2")])])
+    private var completeResults: [String: JSONValue] {
+        var results = Dictionary(uniqueKeysWithValues: EntityTable.allCases.map { ($0.rawValue, JSONValue.string("deleted 0")) })
+        results["authentication"] = .string("deleted")
+        results["storage"] = .string("deleted 0")
+        results["goals"] = .string("deleted 2")
+        return results
+    }
+
+    private var success: JSONValue { acknowledgment(completeResults) }
+
+    private func acknowledgment(_ results: [String: JSONValue]) -> JSONValue {
+        .object(["success": .bool(true), "results": .object(results)])
+    }
 
     func testUnverifiedRolloutCannotInvokeMutatingLegacyEndpoint() async {
         let fixture = DeletionFunctionFixture()
@@ -1676,17 +1687,25 @@ final class DailyActivityChecklistTests: XCTestCase {
     }
 
     func testMissingFailedMalformedAndContradictoryCleanupStatusesAreRejectedWithoutEchoingProviderDetails() async {
+        var missingStorage = completeResults
+        missingStorage.removeValue(forKey: "storage")
+        let invalidStatuses: [(String, JSONValue)] = [
+            ("authentication", .string("pending")),
+            ("storage", .string("error: private-fixture-provider-detail")),
+            ("storage", .string("deleted -1")),
+            ("storage", .string("deleted nonsense")),
+            ("goals", .object(["error": .string("private-fixture-provider-detail")])),
+            ("goals", .string("error: private-fixture-provider-detail"))
+        ]
         let variants: [JSONValue] = [
             .object(["success": .bool(false), "error": .string("private-fixture-provider-detail")]),
-            .object(["success": .bool(true), "error": .string("private-fixture-provider-detail"), "results": success["results"]!]),
-            .object(["success": .bool(true), "results": .object(["authentication": .string("pending"), "storage": .string("deleted 0")])]),
-            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted")])]),
-            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("error: private-fixture-provider-detail")])]),
-            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("deleted -1")])]),
-            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("deleted nonsense")])]),
-            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("deleted 0"), "goals": .object(["error": .string("private-fixture-provider-detail")])])]),
-            .object(["success": .bool(true), "results": .object(["authentication": .string("deleted"), "storage": .string("deleted 0"), "goals": .string("error: private-fixture-provider-detail")])])
-        ]
+            .object(["success": .bool(true), "error": .string("private-fixture-provider-detail"), "results": .object(completeResults)]),
+            acknowledgment(missingStorage)
+        ] + invalidStatuses.map { key, status in
+            var results = completeResults
+            results[key] = status
+            return acknowledgment(results)
+        }
         for payload in variants {
             let service = SupabaseAccountService(functions: DeletionFunctionFixture(payload), readiness: .verifiedServerRollout)
             do { try await service.deleteAccount(); XCTFail("Incomplete cleanup accepted") }
@@ -1694,6 +1713,24 @@ final class DailyActivityChecklistTests: XCTestCase {
                 XCTAssertEqual(error.title, "Account deletion not confirmed")
                 XCTAssertFalse(error.message.contains("private-fixture-provider-detail"))
             } catch { XCTFail("Expected redacted app error") }
+        }
+    }
+
+    func testAcknowledgmentRequiresEveryEntityReceipt() async {
+        for table in EntityTable.allCases {
+            var results = completeResults
+            results.removeValue(forKey: table.rawValue)
+            let fixture = DeletionFunctionFixture(acknowledgment(results))
+            let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+            do {
+                try await service.deleteAccount()
+                XCTFail("Accepted an acknowledgment missing \(table.rawValue)")
+            } catch let error as AppError {
+                XCTAssertEqual(error.title, "Account deletion not confirmed")
+            } catch {
+                XCTFail("Expected safe acknowledgment rejection")
+            }
+            XCTAssertEqual(fixture.calls, 1)
         }
     }
 
@@ -1734,8 +1771,10 @@ final class DailyActivityChecklistTests: XCTestCase {
         XCTAssertEqual(fixture.calls, 0)
     }
 
-    func testLegacyAcknowledgmentPreservesSessionCacheNavigationAndDraftPermissions() async throws {
-        let fixture = DeletionFunctionFixture()
+    func testPartialAcknowledgmentPreservesSessionCacheNavigationAndDraftPermissions() async throws {
+        let fixture = DeletionFunctionFixture(acknowledgment([
+            "authentication": .string("deleted"), "storage": .string("deleted 0")
+        ]))
         try await verifyPreservedState(SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout), expectedAvailable: true)
         XCTAssertEqual(fixture.calls, 1)
     }
