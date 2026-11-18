@@ -108,9 +108,9 @@ Restoration of canceled subscriptions or deleted bytes, rows and Auth accounts
 requires a separate recovery decision.
 
 The tests in this directory exercise the local HTTP admission and shutoff
-contract. The structural reversal rehearsal uses a fresh PostgreSQL fixture
-with the six baseline migrations, the five E63 optional guards, and the E64
-dispatch guard.
+contract. The structural reversal rehearsal uses a fresh PostgreSQL fixture with
+the six baseline migrations, the five E63 optional guards, and the E64 dispatch
+guard.
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 supabase/tests/account-deletion/test_staged_schema_reversal.py \
