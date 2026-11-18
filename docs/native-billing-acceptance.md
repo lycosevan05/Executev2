@@ -18,6 +18,115 @@ of completed physical tests. A fixture pass does not establish a sandbox pass.
 - Authentication, new passwords and Apple authorization are handled by the user.
   Stop any transaction that is not explicitly identified as Sandbox/testing.
 
+## Isolated Stripe and RevenueCat acceptance
+
+E60 verified the Stripe destination and previously successful deliveries. The
+first new check establishes how one fresh Stripe subscription changes the
+matching backend row and authenticated app access. It uses only the Star
+Learning Stripe sandbox (`acct_1TAfBREiWRJocTMe`), Execute Billing Integration
+Supabase (`zpnvnsdtbtdyhvipctpa`) and the isolated RevenueCat project (`5414e2b1`).
+
+### Read-only preflight
+
+1. Verify the active Stripe destination is Sandbox, is set to API version
+   `2024-04-10` and points to
+   `https://zpnvnsdtbtdyhvipctpa.supabase.co/functions/v1/stripeWebhook`. Its
+   six events are `checkout.session.completed`, the
+   `customer.subscription.created` / `updated` / `deleted` events and the
+   `invoice.payment_succeeded` / `failed` events. Confirm the isolated
+   RevenueCat destination is Sandbox-only and points to the isolated project's
+   `revenuecatWebhook`. Check credential names and runtime evidence by presence
+   only. Even a Stripe-only delivery needs the isolated RevenueCat v1 lookup.
+2. Use a fresh confirmed Auth user with a controlled email and no earlier
+   purchase, entitlement or subscription row. The Auth email, RevenueCat App
+   User ID and Stripe **subscription** `metadata.user_id` must match exactly.
+   Customer email alone has no effect on row ownership.
+3. Verify a normally signed Debug native-dev build points to the isolated
+   Supabase URL and uses only the isolated RevenueCat Test Store client
+   configuration. Check Profile, Premium & Billing and Nutrition while the
+   same fresh identity is free. For live Test Store purchase follow-up, both
+   configured products need to load under the selected current offering. The
+   client checks exact monthly and annual product IDs and durations.
+4. The isolated project was previously verified with a billing-only database
+   bootstrap. Confirm the signed app can actually sign in and show the required
+   routes before treating native acceptance as available. If that preflight
+   fails, stop before billing mutations unless the owner has explicitly
+   approved provider-to-row testing on a separate synthetic identity. Keep
+   those results scoped to the provider and database.
+
+### First provider run
+
+Approve the exact new Execute-prefixed test customer and subscription, and
+their immediate cancellation after the active readback. Reuse only a recurring
+price confirmed to belong to the isolated Execute fixture. If one is missing,
+include creation of one Execute-prefixed sandbox product and recurring price
+in the approval. A brief free trial with the subscription configured to cancel
+if no payment method is present provides a deterministic eligible `trialing`
+state without a test payment method. Skip trial invoice payment, email sending,
+receipt transfers and historical event replay.
+
+| Checkpoint | Current provider and delivery | Row and matching native app |
+| --- | --- | --- |
+| Before creation | New identity, no Stripe subscription and no active RevenueCat entitlement | Zero matching rows. Billing and Nutrition show free access. |
+| Trial starts | The new test subscription is `trialing`, its exact `metadata.user_id` is present and a matching `customer.subscription.created` delivery succeeds | Exactly one matching row with `premium/trialing`, `store=stripe`, the matching Stripe ID and the most recent correlated event ID. After Billing refresh, app shows Trial active, the web-management explanation and an unlocked Nutrition Premium gate. |
+| Immediate cancellation | Cancel only the new test subscription without any additional invoice or refund. Stripe confirms `canceled` and a matching `customer.subscription.deleted` delivery succeeds | The same row remains, with `free/canceled` and Stripe canceled. After refresh and relaunch of the same account, Billing and Nutrition agree on free access. |
+
+Capture the delivery response and the current provider snapshot before each
+readback. Concurrent legitimate events can change `stripe_last_event_id`
+before the read. Reconcile the newer event to the same exact Stripe subscription
+and current stage, or record the stage as inconclusive. A transport-only test
+event, a historical delivery and a successful cancel request do not establish
+the row or app result.
+
+Use an isolated dashboard with read-only access for the exact private identity.
+This query does not change the fixture or disclose the email in its result.
+
+```sql
+with identity as (select '<exact disposable Auth email>'::text as email)
+select s.id, s.updated_date,
+       s.data->>'plan' as effective_plan,
+       s.data->>'status' as effective_status,
+       s.data->>'store' as effective_store,
+       s.data->>'stripe_subscription_id' as stripe_subscription_id,
+       s.data->>'stripe_status' as stripe_status,
+       s.data->>'stripe_last_event_type' as stripe_event_type,
+       s.data->>'stripe_last_event_id' as stripe_event_id,
+       s.data->>'revenuecat_status' as revenuecat_status,
+       s.data->>'revenuecat_last_event_type' as revenuecat_event_type,
+       s.data->>'revenuecat_last_event_id' as revenuecat_event_id
+from public.user_subscriptions s, identity
+where s.data->>'user_id' = identity.email;
+```
+
+### Mixed-provider follow-up
+
+Choose two fresh disposable identities and scope another approval to those
+identities. Use the exact same identity across Stripe, RevenueCat and native
+Auth on each run. Establish an actual RevenueCat Test Store purchase with
+active `Execute Performance Premium` and a delivery to the isolated endpoint.
+Keep Apple Sandbox cases separate.
+
+- **Stripe ends first.** Establish both grants on identity A. Stripe has
+  priority while both grants are current. After immediately canceling only the
+  A Stripe fixture, the Stripe event must produce one matching
+  `premium/active` row through RevenueCat. The app must stay Premium.
+- **RevenueCat ends first.** Establish both grants on identity B. Let Test
+  Store expire while B's Stripe grant still has time remaining. Wait for
+  actual provider expiry and its successful `EXPIRATION` delivery. The same
+  B row must stay Premium through Stripe until its trial is also canceled.
+  Both providers ended means one `free/canceled` row and free app access.
+
+The local combined-handler fixture exercises both loss orders, same-row
+continuity, and correlation of both final event IDs. Run it independently with
+`deno test --no-config --deny-net supabase/functions/stripeWebhook/reconcile_test.ts`.
+An actual RevenueCat Test Store transaction can establish sandbox projection and
+app grant behavior. Apple pending purchase, interruption, refund, refund
+reversal and grace remain separate acceptance scopes. Record which surfaces
+were exercised and omit personal email, tokens and secrets from progress notes.
+[Stripe subscription trials](https://docs.stripe.com/billing/subscriptions/trials)
+· [Stripe cancellation](https://docs.stripe.com/billing/subscriptions/cancel)
+· [RevenueCat Test Store](https://www.revenuecat.com/docs/test-and-launch/sandbox/test-store)
+
 ## Account matrix
 
 | Label | Execute account | Sandbox Apple Account | Purpose |

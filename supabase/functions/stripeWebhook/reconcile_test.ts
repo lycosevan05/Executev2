@@ -1,8 +1,9 @@
 import { deepEqual, equal } from "node:assert/strict";
 import { createStripeHandler, type StripeEvent } from "./reconcile.ts";
-import type {
-  SubscriptionChange,
-  SubscriptionRow,
+import {
+  createHandler as createRevenueCatHandler,
+  type SubscriptionChange,
+  type SubscriptionRow,
 } from "../revenuecatWebhook/reconcile.ts";
 
 // Isolated provider/RPC fixtures. These do not exercise real signatures,
@@ -179,6 +180,76 @@ Deno.test("Stripe deletion cannot remove independently current RevenueCat access
   equal(f.row().unrelated, "retained");
   equal(f.batches.length, 1);
   equal(f.batches[0].length, 1);
+});
+
+Deno.test("both webhook handlers retain exactly one row through either mixed-provider loss order", async () => {
+  for (const endsFirst of ["stripe", "revenuecat"]) {
+    const f = fixture();
+    f.rows.clear();
+    const handleStripe = createStripeHandler(f.deps);
+    const handleRevenueCat = createRevenueCatHandler({
+      ...f.deps,
+      webhookSecret: "rc-webhook-fixture",
+    });
+    const stripeEvent = async (type: string, id: string) => {
+      f.event.type = type;
+      f.event.id = id;
+      equal((await handleStripe(f.request())).status, 200);
+    };
+    const rcEvent = async (type: string, id: string) => {
+      const response = await handleRevenueCat(
+        new Request("https://fixture.invalid/revenuecat", {
+          method: "POST",
+          headers: { authorization: "Bearer rc-webhook-fixture" },
+          body: JSON.stringify({ event: { type, id, app_user_id: email } }),
+        }),
+      );
+      equal(response.status, 200);
+    };
+
+    f.subscriptions.set("sub_current", stripe("trialing"));
+    await stripeEvent("customer.subscription.created", "evt_stripe_start");
+    equal(f.row().plan, "premium");
+    equal(f.row().status, "trialing");
+    equal(f.row().store, "stripe");
+    equal(f.row().revenuecat_plan, "free");
+
+    f.rc(revenueCat(true));
+    await rcEvent("INITIAL_PURCHASE", "evt_rc_start");
+    equal(f.row().stripe_plan, "premium");
+    equal(f.row().revenuecat_plan, "premium");
+    equal(f.row().store, "stripe");
+
+    const endStripe = async () => {
+      f.subscriptions.set("sub_current", stripe("canceled"));
+      await stripeEvent("customer.subscription.deleted", "evt_stripe_end");
+    };
+    const endRevenueCat = async () => {
+      f.rc(revenueCat(true, { expires_date: before }));
+      await rcEvent("EXPIRATION", "evt_rc_end");
+    };
+    if (endsFirst === "stripe") {
+      await endStripe();
+      equal(f.row().plan, "premium");
+      equal(f.row().status, "active");
+      equal(f.row().store, "app_store");
+      await endRevenueCat();
+    } else {
+      await endRevenueCat();
+      equal(f.row().plan, "premium");
+      equal(f.row().status, "trialing");
+      equal(f.row().store, "stripe");
+      await endStripe();
+    }
+    equal(f.row().plan, "free");
+    equal(f.row().status, "canceled");
+    equal(f.row().stripe_status, "canceled");
+    equal(f.row().revenuecat_status, "canceled");
+    equal(f.row().stripe_last_event_id, "evt_stripe_end");
+    equal(f.row().revenuecat_last_event_id, "evt_rc_end");
+    equal(f.rows.size, 1);
+    equal(f.row().user_id, email);
+  }
 });
 
 Deno.test("checkout and paid invoice cannot revive a canceled current Stripe subscription", async () => {
