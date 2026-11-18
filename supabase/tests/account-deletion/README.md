@@ -167,13 +167,57 @@ requests and verify other write channels, including service uploads, signed
 uploads and resumable uploads. Keep deletion disabled until those paths, the
 supported object cleanup, and staged retries are verified. [Pinned Storage uploader source](https://github.com/supabase/storage/blob/v1.54.1/src/storage/uploader.ts)
 
-One design to validate is a single writer boundary for the native, web and
-service upload paths. It would register each pending upload against its owner
-UUID before sending bytes to Storage, persist the exact object name, and let
-deletion proceed only after all admitted writes have finished or their outcome
-has been reconciled through the Storage API. Test an interrupted upload with
-an unknown result before relying on this design. A process deadline alone
-cannot verify that Storage has finished writing.
+### Track outstanding upload requests
+
+`storage-upload-dispatch-guard.sql` adds a service-only ledger for the writer
+boundary. It requires the admission guard above. Before each actual Storage
+send, the trusted writer registers the verified Auth UUID and obtains a fresh
+dispatch ID and an exact, canonical object name in `uploads`. The writer uses
+that name for a single request and acknowledges the dispatch only after it has
+a definitive terminal result. An acknowledgment can be retried. A missing
+or ambiguous result keeps the dispatch pending, including after a process
+restart. A timeout, a missing file, or a file listing alone cannot establish
+that the request has finished. Each new send must have a separate registration.
+
+The deletion service closes admission and queries pending dispatches together.
+The existing Auth row lock orders closure and registration. A nonempty result
+stops cleanup and preserves Auth for a retry. The ledger's foreign key also
+prevents hard Auth removal while a dispatch is pending. Once the result is empty,
+the service can take its fresh Storage inventory before cleanup. Each retry
+checks the same Auth UUID. A new UUID can upload after reusing a deleted email.
+
+```sh
+docker exec -i supabase_db_execute-w04-e59 psql -XqAt -U postgres -d postgres \
+  -v ON_ERROR_STOP=1 < supabase/tests/account-deletion/storage-upload-dispatch-guard.sql
+python3 supabase/tests/account-deletion/test_storage_upload_dispatch_guard.py \
+  --stack-dir "$fixture"
+```
+
+The fixture sends part of a real Storage request body and pauses before
+completing the transfer. It checks that closure reports the pending dispatch
+even with an empty inventory, rejects a new target registration, keeps the
+target Auth account, and permits an unrelated owner to upload. After Storage
+acknowledges the transfer, the test withholds the writer acknowledgment to
+model a lost reply. The barrier stays closed until that acknowledgment arrives.
+The final Storage inventory, cleanup, hard Auth deletion, and a same-email
+replacement upload all use the real local APIs. Both this check and the
+original upload admission check passed on Storage v1.54.1 and PostgreSQL
+17.6.1.106 with the baseline migrations. They also passed with the three E61
+entity guards and the E63 Stripe retirement guard installed. The sequential
+E62 Storage lifecycle passed with those guards installed.
+
+Before enabling this candidate, route native, web, and service writes through
+the writer and retire direct, signed, resumable, and any other bypass paths in
+the configured bucket. Verify that requests already accepted on those paths
+have finished before relying on the ledger. The writer and deletion service
+adapters still need implementation and isolated acceptance. A recovery process
+also needs a definitive terminal signal for otherwise unresolved dispatches.
+
+To roll back this candidate in a staged environment, stop dispatching new
+writes and reconcile outstanding dispatches with their terminal results. Once
+the ledger is empty, remove the three dispatch RPCs and the pending table in one
+transaction. Preserve the earlier admission guard and account retry state
+until every pending deletion has a reviewed outcome.
 
 A future authorized Edge rollout must close admission and then take a fresh
 inventory before removing objects. Keep the admission marker when cleanup
