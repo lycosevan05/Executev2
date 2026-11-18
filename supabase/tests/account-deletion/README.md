@@ -84,6 +84,47 @@ still coordinates row writes and Auth removal. Legacy rows awaiting cleanup
 can remain visible to a matching current account, so prove account reuse and
 cleanup before rollout.
 
+## Local Auth and Storage lifecycle
+
+The [W04 disposable stack](../native-auth/README.md#start-the-dedicated-stack)
+also runs the official Storage service. From a repository checkout with the
+Supabase JS dependencies in Deno's module cache, run the W09 lifecycle against
+that unlinked stack after verifying its loopback bindings.
+
+```sh
+python3 supabase/tests/account-deletion/run_storage_lifecycle.py --stack-dir "$fixture"
+```
+
+On a fresh checkout with an empty module cache, first run
+`deno check --no-lock supabase/tests/account-deletion/storage-lifecycle.ts`
+to cache the repository's Supabase JS imports. The lifecycle runner separately
+checks the stack identity and published ports before obtaining credentials.
+During the lifecycle, Deno can only connect to the exact local API endpoint.
+No hosted project, Stripe API, or Edge Function deployment is involved.
+
+The fixture signs in a fresh owner and uploads a file. It also uploads a nested
+file under that owner's prefix through the service client. It reads the bytes
+back, then invokes Execute's deletion orchestration and its production Storage,
+PostgREST and Auth adapters against the local APIs. The run must verify recursive
+inventory scoped to the target UUID, absence by listing and exact object path
+after deletion, and hard Auth removal. An unrelated owner's file must remain
+readable. A new Auth user reusing the deleted account's email must receive a
+different UUID and upload normally. The runner cleans up the synthetic paths
+and users it created. Purge the disposable stack after use if cleanup fails.
+
+The E62 run passed against local Supabase CLI v2.101.0, Auth v2.188.1,
+Storage v1.54.1, PostgREST v14.10 and the PostgreSQL image 17.6.1.106.
+It passed with the six baseline migrations and again after installing all
+three opt-in entity guards on the same disposable stack. The 35 offline
+deletion fixtures passed independently.
+
+This covers the sequential API lifecycle. The staged acceptance below still
+requires verification of coordinated in-flight uploads, provider projections
+and retry behavior. Use the Storage API for uploads and deletion. Supabase
+stores file metadata in PostgreSQL and object bytes in the Storage backend.
+Keep the managed Storage schema read-only. Bucket policies can use PostgreSQL
+RLS for supported access control. [Supabase Storage schema](https://supabase.com/docs/guides/storage/schema/design) · [Supabase Storage ownership](https://supabase.com/docs/guides/storage/security/ownership)
+
 ## Remaining boundaries
 
 - Auth hard-deletion prevents issuing refreshed tokens. An already-issued access
