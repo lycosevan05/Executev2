@@ -78,6 +78,60 @@ replacement of v6 unnecessary for this staged route.
    release. Unset the UUID and project approval after shutoff. A request already
    admitted can still complete. Determine its actual phase before further tests.
 
+## Run the isolated hosted rehearsal
+
+Use a fresh disposable project with its own project ref, database and Storage
+bucket. Verify the ref for every linked CLI operation. Record the exact ref and
+source revision privately. Apply the six tracked baseline migrations first.
+Supabase provisions Auth and Storage in hosted projects, so omit the local
+`bootstrap.sql` fixture. Capture the managed functions list, the baseline
+`uploads` bucket configuration, and the following read-only catalog snapshot.
+Use the same role and project for each catalog read.
+
+```sh
+guard_sql=supabase/tests/account-deletion
+supabase db query --linked --workdir "$isolated_link" --file "$guard_sql/staged-guard-schema.sql"
+```
+
+Apply the first seven optional files listed in `GUARDS` in
+`test_staged_schema_reversal.py` in order. Verify the canonical writer on the
+isolated project before applying `storage-upload-writer-cutover.sql` as the
+eighth file. Keep staged deletion off during these steps. Verify no deployed
+client or external privileged writer targets this project. Use newly created
+synthetic accounts for both the target and the unrelated control. Record the
+control's exact Auth UUID, row and canonical Storage object hash immediately
+before the deletion checks. Keep that control intact through structural
+rollback. Read file bytes through the Storage API.
+[Supabase Storage deletion guidance](https://supabase.com/docs/guides/storage/management/delete-objects)
+
+After the lifecycle and any retries reach known terminal states, unset
+`EXECUTE_STAGED_DELETION_MODE`. Use a valid fixture JWT to verify the staged
+route responds `503` while shut off. Then remove both staged endpoints if they
+were newly deployed for this rehearsal and verify that neither route remains
+deployed. Remove only the rehearsal settings. Drain all admitted invocations and
+maintain the isolated writer freeze through rollback.
+[Supabase secrets](https://supabase.com/docs/guides/functions/secrets) ·
+[Supabase Function deletion](https://supabase.com/docs/reference/cli/supabase-functions-delete)
+
+With all eight optional SQL files installed, read counts from
+`execute_storage_deletion_guard.closed_upload_admission`,
+`execute_storage_deletion_guard.pending_upload_dispatch`, and
+`execute_deletion_private.retired_stripe_subscription`. If all counts are zero
+and admitted requests are terminal, apply `reverse-staged-guards.sql` as one
+transaction against the same verified disposable project. The script takes
+bounded locks and checks the three tables again before dropping any objects. It
+has no conditional drops and aborts as a unit on an unexpected schema or busy
+lock. Record exact forward files after any partial installation and reverse only
+their reviewed changes.
+
+Read `staged-guard-schema.sql` again and compare the `guard_schema` value to the
+baseline. Verify the unrelated account, record and bytes independently,
+including an ordinary authenticated read. Verify a disposable post-rollback
+standard upload through Storage and remove only the exact synthetic object.
+After recording the comparison, clean up the remaining synthetic objects, rows
+and Auth user through their respective APIs. Schema, surviving data and endpoint
+state are independent rollback evidence.
+
 ## Rehearse database compatibility and rollback independently
 
 Side-by-side Edge Function routing shares the same database in any one project.

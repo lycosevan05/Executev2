@@ -33,54 +33,8 @@ GUARDS = (
 STRIPE_ID = "sub_fixture_rollback"
 UNRELATED_EMAIL = "unrelated@example.invalid"
 
-# Fixture-only structural reversal. Hosted rollout must coordinate stopped
-# writers and unresolved external work before any objects can be removed.
-REVERSE = """
-begin;
-do $$
-declare
-  entity regclass;
-begin
-  if exists (select from execute_storage_deletion_guard.closed_upload_admission)
-    or exists (select from execute_storage_deletion_guard.pending_upload_dispatch)
-    or exists (select from execute_deletion_private.retired_stripe_subscription) then
-    raise exception 'pending deletion state requires reconciliation';
-  end if;
-  for entity in select conrelid::regclass from pg_catalog.pg_constraint
-    where conname = 'account_deletion_live_owner'
-  loop
-    execute format('drop policy "live auth for legacy entities" on %s', entity);
-    execute format('drop trigger pin_authenticated_legacy_owner on %s', entity);
-    execute format('alter table %s drop constraint account_deletion_live_owner', entity);
-  end loop;
-end;
-$$;
-drop function public.pin_authenticated_legacy_entity_owner();
-drop function execute_deletion_guard.current_auth_owner_exists();
-drop schema execute_deletion_guard;
-drop trigger reject_retired_stripe_subscription_insert on public.user_subscriptions;
-drop trigger reject_retired_stripe_subscription_update on public.user_subscriptions;
-drop function public.retire_account_stripe_subscription_rows(uuid, text, jsonb);
-drop function execute_deletion_private.reject_retired_stripe_subscription();
-drop function execute_deletion_private.stripe_subscription_fingerprints(jsonb);
-drop table execute_deletion_private.retired_stripe_subscription;
-drop schema execute_deletion_private;
-drop function public.close_and_list_guarded_account_upload_dispatches(uuid);
-drop policy "uploads require canonical writer for insert" on storage.objects;
-drop policy "uploads require canonical writer for update" on storage.objects;
-drop policy "account deletion uploads insert guard" on storage.objects;
-drop policy "account deletion uploads update guard" on storage.objects;
-drop function public.begin_exact_account_upload_dispatch(uuid, text);
-drop function public.begin_account_upload_dispatch(uuid, text);
-drop function public.finish_account_upload_dispatch(uuid, uuid);
-drop function public.close_and_list_account_upload_dispatches(uuid);
-drop table execute_storage_deletion_guard.pending_upload_dispatch;
-drop function public.close_account_upload_admission(uuid);
-drop function execute_storage_deletion_guard.current_owner_can_upload();
-drop table execute_storage_deletion_guard.closed_upload_admission;
-drop schema execute_storage_deletion_guard;
-commit;
-"""
+REVERSE = (HERE / "reverse-staged-guards.sql").read_text()
+CATALOG = (HERE / "staged-guard-schema.sql").read_text()
 
 
 def schema(db):
@@ -137,11 +91,13 @@ def rehearse(db):
     )
     existing_rows = db.sql("select row_to_json(g) from public.goals g;")
     baseline = schema(db)
+    baseline_catalog = db.sql(CATALOG)
     probe_existing_authenticated_client(db)
     probe_existing_provider(db)
 
     install(db)
     assert schema(db) != baseline
+    assert db.sql(CATALOG) != baseline_catalog
     assert db.sql(
         "select count(*) from pg_constraint where conname = 'account_deletion_live_owner'"
     ) == "19"
@@ -153,6 +109,7 @@ def rehearse(db):
     probe_existing_provider(db)
     db.sql(REVERSE)
     assert schema(db) == baseline
+    assert db.sql(CATALOG) == baseline_catalog
     assert db.sql("select row_to_json(g) from public.goals g;") == existing_rows
     probe_existing_authenticated_client(db)
     probe_existing_provider(db)
