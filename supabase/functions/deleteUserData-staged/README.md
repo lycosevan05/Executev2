@@ -113,8 +113,9 @@ maintain the isolated writer freeze through rollback.
 [Supabase secrets](https://supabase.com/docs/guides/functions/secrets) ·
 [Supabase Function deletion](https://supabase.com/docs/reference/cli/supabase-functions-delete)
 
-With all eight optional SQL files installed, read counts from
-`execute_storage_deletion_guard.closed_upload_admission`,
+With all eight optional SQL files installed, compare the current catalog to the
+staged snapshot taken after cutover. Investigate any intervening schema changes.
+Read counts from `execute_storage_deletion_guard.closed_upload_admission`,
 `execute_storage_deletion_guard.pending_upload_dispatch`, and
 `execute_deletion_private.retired_stripe_subscription`. If all counts are zero
 and admitted requests are terminal, apply `reverse-staged-guards.sql` as one
