@@ -124,7 +124,7 @@ struct ExecuteTabBar: View {
                         tab == .track ? ExecuteColor.charcoal :
                             tab == selectedTab ? ExecuteColor.chartreuseDark : ExecuteColor.olive
                     )
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(ExecutePressStyle())

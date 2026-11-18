@@ -3,12 +3,7 @@ import XCTest
 @MainActor
 final class PlanAccessibilityUITests: XCTestCase {
     func testLargestTextLetsPlanHeaderScrollAndBlueprintOpen() {
-        let app = XCUIApplication()
-        app.launchArguments = [
-            "-execute-plan-preview",
-            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"
-        ]
-        app.launch()
+        let app = launchLargestTextPreview("-execute-plan-preview")
 
         let title = app.staticTexts["Your Performance Plan"]
         let refresh = app.buttons["Refresh plan"]
@@ -27,6 +22,53 @@ final class PlanAccessibilityUITests: XCTestCase {
         XCTAssertTrue(heading.waitForExistence(timeout: 5))
         scrollTo(heading, app: app)
         attachScreenshot("Plan Blueprint at largest accessibility text", app: app)
+    }
+
+    func testLargestTextKeepsHomeHeaderAndTabsReachable() {
+        let app = launchLargestTextPreview("-execute-home-preview")
+        let customize = app.buttons["Customize Home"]
+        XCTAssertTrue(customize.waitForExistence(timeout: 10))
+
+        for label in ["Progress", "Customize Home", "Profile", "Home", "Train", "Track", "Nutrition", "Plan"] {
+            assertTapTarget(app.buttons[label].firstMatch)
+        }
+        attachScreenshot("Home and tabs at largest accessibility text", app: app)
+
+        customize.tap()
+        XCTAssertTrue(app.navigationBars["Customize Home"].waitForExistence(timeout: 5))
+    }
+
+    func testLargestTextKeepsTrackHeaderActionsReachable() {
+        let app = launchLargestTextPreview("-execute-track-preview")
+        let manage = app.buttons["Manage"]
+        XCTAssertTrue(manage.waitForExistence(timeout: 10))
+        assertTapTarget(manage)
+        assertTapTarget(app.buttons["History"])
+        attachScreenshot("Track at largest accessibility text", app: app)
+
+        manage.tap()
+        XCTAssertTrue(app.navigationBars["Manage Tracking"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Manage Tracking"].buttons["Done"].isHittable)
+    }
+
+    private func launchLargestTextPreview(_ argument: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            argument,
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"
+        ]
+        app.launch()
+        return app
+    }
+
+    private func assertTapTarget(
+        _ button: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(button.isHittable, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(button.frame.width.rounded(), 44, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(button.frame.height.rounded(), 44, file: file, line: line)
     }
 
     private func scrollTo(_ element: XCUIElement, app: XCUIApplication) {

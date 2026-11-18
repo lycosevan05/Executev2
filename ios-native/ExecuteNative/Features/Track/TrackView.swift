@@ -176,7 +176,7 @@ private struct TrackHeaderButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(ExecuteColor.olive)
-                .frame(width: 42, height: 42)
+                .frame(width: 44, height: 44)
                 .background(ExecuteColor.parchmentCard.opacity(0.72))
                 .clipShape(Circle())
                 .overlay(Circle().stroke(ExecuteColor.warmBorder.opacity(0.72), lineWidth: 0.75))
