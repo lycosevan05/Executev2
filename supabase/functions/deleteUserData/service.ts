@@ -13,6 +13,7 @@ export async function removeAccount(
   options: {
     allowStripe: boolean;
     requireUploadDrain?: boolean;
+    enableStagedBilling?: boolean;
     revokeAppleAuthorization?: () => Promise<
       AppleRevocationOutcome | undefined
     >;
@@ -22,10 +23,19 @@ export async function removeAccount(
   if (options.requireUploadDrain && uploadsBucket !== "uploads") {
     throw new Error("The configured bucket has no guarded upload cutover.");
   }
+  const retireSubscriptions =
+    Deno.env.get("EXECUTE_STAGED_STRIPE_RETIREMENT") ===
+      "1";
+  if (
+    options.enableStagedBilling &&
+    (!options.requireUploadDrain || !retireSubscriptions)
+  ) {
+    throw new Error("The staged billing deletion safeguards are unavailable.");
+  }
   const service = createServiceClient();
   let stripe: Stripe | undefined;
   const billing = createDeletionBilling(() => {
-    if (!options.allowStripe) {
+    if (!options.allowStripe && !options.enableStagedBilling) {
       throw new Error("Stripe access is unavailable in this rehearsal.");
     }
     if (stripe) return stripe;
@@ -36,7 +46,7 @@ export async function removeAccount(
       apiVersion: "2024-04-10" as Stripe.LatestApiVersion,
     });
     return stripe;
-  });
+  }, { requireOwnerUUID: options.requireUploadDrain === true });
   return await deleteAccount(
     user,
     ENTITY_TABLES,
@@ -44,7 +54,7 @@ export async function removeAccount(
     createDeletionStore(
       service as unknown as DeletionClient,
       uploadsBucket,
-      Deno.env.get("EXECUTE_STAGED_STRIPE_RETIREMENT") === "1"
+      retireSubscriptions
         ? (account, rows) =>
           service.rpc("retire_account_stripe_subscription_rows", {
             p_owner_id: account.id,
@@ -52,6 +62,18 @@ export async function removeAccount(
             p_rows: rows,
           })
         : undefined,
+      {
+        requireBillingFenceForSubscriptions:
+          options.requireUploadDrain === true,
+        closeBillingProjection: options.enableStagedBilling
+          ? (account, rows) =>
+            service.rpc("close_account_billing_projection", {
+              p_owner_id: account.id,
+              p_email: account.email ?? null,
+              p_rows: rows,
+            })
+          : undefined,
+      },
     ),
     billing,
     options.requireUploadDrain

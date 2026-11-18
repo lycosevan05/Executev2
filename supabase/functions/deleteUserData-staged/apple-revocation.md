@@ -29,10 +29,10 @@ credential material.
 
 For existing Apple accounts where no Apple credential is available, deletion
 continues under Apple's documented fallback. After verifying the server's full
-deletion receipt, the native app signs out and directs the user to Apple's manual
-revocation instructions. Accounts with other sign-in methods also take this path
-if their verified Auth record has a linked Apple identity. Unrelated accounts
-make no Apple request.
+deletion receipt, the native app signs out and directs the user to Apple's
+manual revocation instructions. Accounts with other sign-in methods also take
+this path if their verified Auth record has a linked Apple identity. Unrelated
+accounts make no Apple request.
 
 - [Apple TN3194 account deletion and legacy workflow](https://developer.apple.com/documentation/technotes/tn3194-handling-account-deletions-and-revoking-tokens-for-sign-in-with-apple)
 - [Apple token revocation API](https://developer.apple.com/documentation/signinwithapplerestapi/revoke-tokens)

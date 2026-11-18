@@ -52,10 +52,18 @@ replacement of v6 unnecessary for this staged route.
    `EXECUTE_STAGED_DELETION_MODE` to `disposable-account`, set
    `EXECUTE_STAGED_DELETION_PROJECT_URL` to the exact approved project origin
    matching `SUPABASE_URL`, and set `EXECUTE_STAGED_DELETION_OWNER_UUID` to the
-   exact synthetic Auth UUID. The staged endpoint refuses access to Stripe. An
-   inventoried Stripe reference stops deletion before any writes. A
-   billing-linked rehearsal needs separately reviewed code and authorization.
-   The staged handler requires the canonical-writer cutover for the `uploads`
+   exact synthetic Auth UUID. By default the staged endpoint has no Stripe
+   access and stops before writes if it finds an attributed subscription row. A
+   separately approved Stripe-only fixture can opt into
+   `EXECUTE_STAGED_BILLING_LINKED_DELETION=1` with
+   `EXECUTE_STAGED_STRIPE_RETIREMENT=1` and both optional billing SQL guards
+   installed. This mode verifies immutable Stripe ownership, refuses App Store
+   and RevenueCat projections before cleanup, and requires a verified projection
+   closure before provider writes. The billing fence retains keyed identity
+   fingerprints and keeps legacy email projections closed until independently
+   verified provider reassociation. Review retention and writer drain before
+   considering rollout. See [Apple token revocation](apple-revocation.md). The
+   staged handler requires the canonical-writer cutover for the `uploads`
    bucket. The guarded RPC verifies the database policies and closes admission
    for the approved UUID in one transaction. The handler stops before cleanup if
    any dispatch remains pending or the response is unverified. After a verified

@@ -825,6 +825,39 @@ Deno.test("staged billed deletion refuses email-only RevenueCat rows without ver
   equal(fixture.tables.get("user_subscriptions")?.length, 1);
 });
 
+Deno.test("the opted-in Stripe fixture stops on mixed or legacy App Store billing", async () => {
+  for (
+    const projection of [
+      { store: "app_store" },
+      { store: "stripe", revenuecat_app_user_id: user.email },
+    ]
+  ) {
+    const fixture = new Fixture();
+    const billing = new BillingFixture();
+    fixture.tables.set("user_subscriptions", [sub("mixed", null, projection)]);
+    const store = createDeletionStore(
+      fixture,
+      "uploads",
+      async () => ({ error: null, data: 0 }),
+      {
+        requireBillingFenceForSubscriptions: true,
+        requireStripeOnly: true,
+        closeBillingProjection: async () => {
+          throw new Error("Projection fence was called for a mixed account");
+        },
+      },
+    );
+    await rejects(
+      () =>
+        deleteAccount(user, ["user_subscriptions"], store, billing.billing()),
+      /Non-Stripe billing ownership/,
+    );
+    deepEqual(billing.events, []);
+    deepEqual(fixture.listings, []);
+    deepEqual(fixture.events, []);
+  }
+});
+
 Deno.test("staged billing fence requires a positive RPC and forwards the exact raw snapshot", async () => {
   const fixture = new Fixture();
   const subscription = sub("old");

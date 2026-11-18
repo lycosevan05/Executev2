@@ -94,6 +94,7 @@ export type BillingProjectionSnapshot = {
 
 type BillingFenceOptions = {
   requireBillingFenceForSubscriptions?: boolean;
+  requireStripeOnly?: boolean;
   closeBillingProjection?: (
     user: DeletionUser,
     snapshots: BillingProjectionSnapshot[],
@@ -347,6 +348,20 @@ export function createDeletionStore(
       ) {
         throw new Error(
           "Billing-linked deletion has no verified projection fence.",
+        );
+      }
+      if (
+        billingFence.requireStripeOnly &&
+        subscriptionRows.some(({ billingProjection }) => {
+          const data = billingProjection?.data ?? {};
+          return data.store === "app_store" || data.store === "play_store" ||
+            Object.entries(data).some(([key, value]) =>
+              key.startsWith("revenuecat_") && value != null
+            );
+        })
+      ) {
+        throw new Error(
+          "Non-Stripe billing ownership needs separate acceptance.",
         );
       }
       const subscriptionIds = subscriptionRows.flatMap(({ subscriptionIds }) =>

@@ -3,7 +3,7 @@ import { handleCors, json } from '../_shared/cors.ts';
 import { createServiceClient, findRecords, getUser } from '../_shared/records.ts';
 
 const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') || '', {
-  apiVersion: '2024-04-10',
+  apiVersion: '2024-04-10' as Stripe.LatestApiVersion,
 });
 
 Deno.serve(async (req) => {
@@ -36,7 +36,8 @@ Deno.serve(async (req) => {
       execute_owner_uuid: user.id,
     };
 
-    let customerId = existingSubs?.[0]?.stripe_customer_id as string | undefined;
+    const existing = existingSubs?.[0] as Record<string, unknown> | undefined;
+    let customerId = typeof existing?.stripe_customer_id === 'string' ? existing.stripe_customer_id : undefined;
     if (!customerId) {
       const customer = await stripe.customers.create({
         email: user.email || undefined,
@@ -62,6 +63,6 @@ Deno.serve(async (req) => {
     return json({ url: session.url, session_id: session.id });
   } catch (error) {
     if (error instanceof Response) return error;
-    return json({ error: error.message || 'stripeCreateCheckout failed.' }, 500);
+    return json({ error: error instanceof Error && error.message ? error.message : 'stripeCreateCheckout failed.' }, 500);
   }
 });

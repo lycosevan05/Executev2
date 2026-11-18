@@ -17,6 +17,9 @@ Deno.serve(createStagedDeletionHandler({
     removeAccount(user, {
       allowStripe: false,
       requireUploadDrain: true,
+      enableStagedBilling:
+        Deno.env.get("EXECUTE_STAGED_BILLING_LINKED_DELETION") ===
+          "1",
       revokeAppleAuthorization: () =>
         revokeStagedAppleAuthorization(
           user,

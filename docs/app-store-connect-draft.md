@@ -36,6 +36,14 @@ page both returned HTTP 200 and their expected page titles. The native legal
 reader lists `privacy@executelabs.ca` and `support@executelabs.ca`.
 [Apple's App Review requirements](https://developer.apple.com/app-store/review/)
 
+## Saved version draft
+
+The owner approved draft-only edits for Execute Native Dev. The iOS 1.0
+description, keywords, and Support URL were saved and read back after reload.
+App Store Connect still showed Prepare for Submission. The public listing
+decision remains open. Apple displayed an updated Developer Program License
+Agreement notice for the Account Holder to review before submission.
+
 ## Review notes draft
 
 > Execute is a fitness and performance app for organizing training, nutrition
