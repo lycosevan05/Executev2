@@ -30,11 +30,11 @@ nutrition tools.
 
 **Privacy and support**
 
-The approved privacy policy URL is [executelabs.ca/privacy](https://executelabs.ca/privacy).
-The native legal reader lists `privacy@executelabs.ca` for privacy and
-`support@executelabs.ca` for support. Confirm the public Support URL displays
-current contact information before using it in the listing. Apple requires a
-support link and privacy policy link. [App Review](https://developer.apple.com/app-store/review/)
+The approved privacy policy is at [executelabs.ca/privacy](https://executelabs.ca/privacy).
+The public [Execute Support page](https://executelabs.ca/support) and privacy
+page both returned HTTP 200 and their expected page titles. The native legal
+reader lists `privacy@executelabs.ca` and `support@executelabs.ca`.
+[Apple's App Review requirements](https://developer.apple.com/app-store/review/)
 
 ## Review notes draft
 
