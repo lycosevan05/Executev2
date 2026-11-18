@@ -79,13 +79,15 @@ struct SupabaseSubscriptionReader: SubscriptionReading {
     let client: SupabaseClient
 
     func subscription(for user: ExecuteUser) async throws -> BillingSubscription? {
-        // Authenticated RLS query, further restricted to the existing email identity.
-        // There is deliberately no write API for user_subscriptions here.
+        // Keep null-owner legacy webhook rows, but exclude explicitly foreign
+        // owners before choosing the newest row. This remains a read-only query.
         let rows: [BackendRow] = try await client.from("user_subscriptions")
             .select().eq("data->>user_id", value: user.email)
+            .or("owner_id.eq.\(user.id.uuidString),owner_id.is.null")
             .order("updated_date", ascending: false).limit(1).execute().value
-        let payload = try rows.first?.data.decoded(as: BillingSubscription.self)
-        return payload?.userID == user.email ? payload : nil
+        guard let row = rows.first, row.ownerID == nil || row.ownerID == user.id else { return nil }
+        let payload = try row.data.decoded(as: BillingSubscription.self)
+        return payload.userID == user.email ? payload : nil
     }
 }
 

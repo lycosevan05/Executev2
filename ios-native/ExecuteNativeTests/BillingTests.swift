@@ -1,5 +1,7 @@
 import XCTest
 import RevenueCat
+import class Supabase.SupabaseClient
+import protocol Auth.AuthLocalStorage
 @testable import ExecuteNative
 
 private let billingUserA = ExecuteUser(id: UUID(), email: "paid@example.com", displayName: "Paid")
@@ -62,6 +64,88 @@ final class PremiumResolutionTests: XCTestCase {
         XCTAssertNil(LiveRevenueCatClient.purchaseOutcome(for: ErrorCode.networkError))
         XCTAssertNil(LiveRevenueCatClient.purchaseOutcome(for: NSError(domain: "unrelated", code: ErrorCode.paymentPendingError.rawValue)))
     }
+}
+
+@MainActor
+final class SupabaseSubscriptionReaderTransportTests: XCTestCase {
+    func testOwnerFilterKeepsVerifiedAndLegacyRows() async throws {
+        for shape in ["own", "legacy"] {
+            let row = try await read(shape: shape)
+            XCTAssertEqual(row?.userID, billingUserA.email, shape)
+            XCTAssertEqual(row?.grantsPremium, true, shape)
+        }
+    }
+
+    func testReturnedForeignOwnerOrMailboxCannotAcknowledgeAccess() async throws {
+        for shape in ["foreign-owner", "wrong-mailbox"] {
+            let row = try await read(shape: shape)
+            XCTAssertNil(row, shape)
+        }
+    }
+
+    private func read(shape: String) async throws -> BillingSubscription? {
+        let url = try XCTUnwrap(URL(string: "https://\(shape).billing-reader.invalid"))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SubscriptionReaderFixtureProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = SupabaseClient(supabaseURL: url, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: SubscriptionReaderFixtureStorage(), autoRefreshToken: false, accessToken: { nil }),
+            global: .init(session: session)))
+        return try await SupabaseSubscriptionReader(client: client).subscription(for: billingUserA)
+    }
+}
+
+private struct SubscriptionReaderFixtureStorage: AuthLocalStorage {
+    func store(key: String, value: Data) throws { throw URLError(.unsupportedURL) }
+    func retrieve(key: String) throws -> Data? { nil }
+    func remove(key: String) throws { throw URLError(.unsupportedURL) }
+}
+
+private final class SubscriptionReaderFixtureProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host?.hasSuffix(".billing-reader.invalid") == true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url, url.path == "/rest/v1/user_subscriptions", request.httpMethod == "GET",
+              let shape = url.host?.split(separator: ".").first,
+              let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              queryItems.contains(URLQueryItem(name: "data->>user_id", value: "eq.\(billingUserA.email)")),
+              queryItems.contains(URLQueryItem(name: "or", value: "(owner_id.eq.\(billingUserA.id.uuidString),owner_id.is.null)")),
+              queryItems.contains(URLQueryItem(name: "order", value: "updated_date.desc.nullslast")),
+              queryItems.contains(URLQueryItem(name: "limit", value: "1")) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        let ownerID: Any
+        switch shape {
+        case "legacy": ownerID = NSNull()
+        case "foreign-owner": ownerID = billingUserB.id.uuidString
+        default: ownerID = billingUserA.id.uuidString
+        }
+        let mailbox = shape == "wrong-mailbox" ? billingUserB.email : billingUserA.email
+        let row: [String: Any] = [
+            "id": UUID().uuidString,
+            "owner_id": ownerID,
+            "data": ["user_id": mailbox, "plan": "premium", "status": "active"]
+        ]
+        do {
+            let payload = try JSONSerialization.data(withJSONObject: [row])
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                                           headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: payload)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }
 
 @MainActor
