@@ -140,6 +140,9 @@ class HostedFixture:
         }]
         if goals != expected:
             raise Stop("The independent database row did not match the expected result.")
+        self.readback_storage(actor, missing, name)
+
+    def readback_storage(self, actor, missing, name):
         path = self.path(actor, name)
         files = self.json("POST", f"/storage/v1/object/list/{BUCKET}", 200, admin=True,
                           payload={"prefix": actor["id"], "search": path.split("/")[1]})
@@ -165,6 +168,21 @@ class HostedFixture:
             result = self.json("POST", path, 404, token=token, payload={})
             if result.get("code") != "NOT_FOUND" or result.get("message") != "Requested function was not found":
                 raise Stop("The provider did not confirm withdrawal of the exact function.")
+
+    def check_cutover(self):
+        self.check_off()
+        witness = self.state["actors"]["witness"]
+        token = self.sign_in(witness)
+        path = self.path(witness, "cutover")
+        _, body = self.request(
+            "POST", f"/storage/v1/object/{BUCKET}/{path}", (400, 403), token=token,
+            blob=self.contents(witness, "cutover"),
+            headers={"Content-Type": "text/plain", "x-upsert": "false"},
+        )
+        if b"row-level security" not in body.lower():
+            raise Stop("The Storage response did not establish direct-write policy denial.")
+        self.readback_storage(witness, missing=True, name="cutover")
+        self.readback(witness)
 
     def hold(self, save):
         target = self.state["actors"]["target"]
@@ -244,7 +262,8 @@ class HostedFixture:
                 if not self.matches(actor, json.loads(body)):
                     raise Stop("Cleanup refused an account without its matching fixture marker.")
                 self.request("DELETE", f"/storage/v1/object/{BUCKET}", (200,), admin=True,
-                             payload={"prefixes": [self.path(actor), self.path(actor, "restored")]})
+                             payload={"prefixes": [self.path(actor), self.path(actor, "restored"),
+                                                  self.path(actor, "cutover")]})
                 query = urlencode({"id": f"eq.{actor['goal']}", "owner_id": f"eq.{actor['id']}",
                                    "data->>w09_fixture": f"eq.{actor['marker']}"})
                 self.request("DELETE", "/rest/v1/goals?" + query, (204,), admin=True)
@@ -252,7 +271,8 @@ class HostedFixture:
                              admin=True, payload={"should_soft_delete": False})
                 self.readback(actor, missing=True)
             if role == "witness":
-                self.readback(actor, missing=True, name="restored")
+                self.readback_storage(actor, missing=True, name="restored")
+                self.readback_storage(actor, missing=True, name="cutover")
 
     def sql_readback(self, include_guard_state):
         if not self.state["actors"]:
@@ -307,7 +327,7 @@ def private_state(path, origin, prepare):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("prepare", "seed", "check-off", "hold", "rehearse",
+    parser.add_argument("phase", choices=("prepare", "seed", "check-off", "check-cutover", "hold", "rehearse",
                                           "readback-sql", "check-withdrawn", "check-restored", "cleanup"))
     parser.add_argument("--approved-origin", required=True)
     parser.add_argument("--state", required=True, type=Path)
@@ -345,6 +365,8 @@ def main():
             fixture.seed(actor)
     elif args.phase == "check-off":
         fixture.check_off()
+    elif args.phase == "check-cutover":
+        fixture.check_cutover()
     elif args.phase == "hold":
         fixture.hold(save)
     elif args.phase == "rehearse":

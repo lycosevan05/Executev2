@@ -211,8 +211,10 @@ python3 supabase/tests/account-deletion/run_hosted_rehearsal.py "$phase" \
    deletion off.
 2. Run `prepare` and `seed` to create the target and unrelated witness. Each
    receives an Auth identity, one goal, and one canonical upload. Run
-   `check-off`. Use the exact new target UUID returned by `prepare` for the
-   server's one-account setting. The runner does not manage that setting.
+   `check-cutover` while staged deletion is off to verify the ordinary
+   authenticated writer is blocked from writing to its own path and leaves no
+   object. Use the exact new target UUID returned by `prepare` for the server's
+   one-account setting. The runner does not manage that setting.
 3. Run `hold`. The fixture registers one dispatch without sending any bytes. The
    staged request must stop while the ledger is nonempty, preserving both
    actors, rows and files. Run `readback-sql --include-guard-state` and execute
