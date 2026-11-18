@@ -125,6 +125,63 @@ stores file metadata in PostgreSQL and object bytes in the Storage backend.
 Keep the managed Storage schema read-only. Bucket policies can use PostgreSQL
 RLS for supported access control. [Supabase Storage schema](https://supabase.com/docs/guides/storage/schema/design) · [Supabase Storage ownership](https://supabase.com/docs/guides/storage/security/ownership)
 
+## Authenticated upload admission during deletion
+
+`storage-upload-admission-guard.sql` is an opt-in policy candidate for the
+`uploads` bucket. It uses the verified Auth UUID and lasts across cleanup
+retries. The service-only `close_account_upload_admission(uuid)` RPC locks
+that owner's Auth row and records a private marker. The restrictive insert
+and update policies require a live Auth row and open admission. A concurrent
+permission check waits for an earlier closure transaction, then evaluates the
+committed marker. A hard Auth delete removes the marker in the same database
+transaction. A replacement owner using the same email receives a different
+UUID and starts with open admission.
+
+Apply the candidate only to a verified isolated fixture. From the repository
+root, after starting the dedicated loopback W04 stack described above, run
+
+```sh
+docker exec -i supabase_db_execute-w04-e59 psql -X -U postgres -d postgres \
+  -v ON_ERROR_STOP=1 < supabase/tests/account-deletion/storage-upload-admission-guard.sql
+python3 supabase/tests/account-deletion/test_storage_upload_admission_guard.py \
+  --stack-dir "$fixture"
+```
+
+Against Storage v1.54.1 and PostgreSQL 17.6.1.106, the test held a closure
+transaction open and observed the ordinary authenticated Storage upload waiting
+on it in PostgreSQL. After the closure committed, the API refused the upload.
+An unrelated owner's upload succeeded while the target request waited. The test
+also verified denial of overwrites, the original bytes, the service-only RPC,
+idempotent retry with Auth intact, API cleanup, and hard Auth deletion. An upload
+using the old session was still denied after the private marker was removed.
+The replacement UUID could upload successfully. The runner uses actual
+synthetic Auth sessions and performs all file reads and writes through Storage
+APIs.
+
+The exact uploader version checks RLS in a preliminary permission transaction.
+Its later metadata commit runs under the Storage service's elevated role after
+the byte upload. An upload already admitted can therefore complete after a
+closure. This candidate controls new standard uploads and overwrites made by
+authenticated users. A deployment design still needs to coordinate earlier
+requests and verify other write channels, including service uploads, signed
+uploads and resumable uploads. Keep deletion disabled until those paths, the
+supported object cleanup, and staged retries are verified. [Pinned Storage uploader source](https://github.com/supabase/storage/blob/v1.54.1/src/storage/uploader.ts)
+
+One design to validate is a single writer boundary for the native, web and
+service upload paths. It would register each pending upload against its owner
+UUID before sending bytes to Storage, persist the exact object name, and let
+deletion proceed only after all admitted writes have finished or their outcome
+has been reconciled through the Storage API. Test an interrupted upload with
+an unknown result before relying on this design. A process deadline alone
+cannot verify that Storage has finished writing.
+
+A future authorized Edge rollout must close admission and then take a fresh
+inventory before removing objects. Keep the admission marker when cleanup
+returns a retryable error. If rollout is rolled back, reconcile all existing
+markers and incomplete deletions before removing the optional policies, RPC,
+and private schema. The current Edge path and automatic migrations are
+unchanged by this fixture.
+
 ## Remaining boundaries
 
 - Auth hard-deletion prevents issuing refreshed tokens. An already-issued access
