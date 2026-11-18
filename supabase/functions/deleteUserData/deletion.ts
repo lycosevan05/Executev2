@@ -77,6 +77,12 @@ export async function collectUploads(
   return files;
 }
 
+async function assertUploadsAbsent(store: DeletionStore, userId: string) {
+  if ((await collectUploads(store, userId)).length) {
+    throw new Error("Uploaded files remain; retry account deletion.");
+  }
+}
+
 export async function deleteAccount(
   user: DeletionUser,
   tables: readonly string[],
@@ -96,10 +102,8 @@ export async function deleteAccount(
   for (let offset = 0; offset < uploads.length; offset += pageSize) {
     await store.removeUploads(uploads.slice(offset, offset + pageSize));
   }
-  // A successful remove response is not proof of removal (or absence of concurrent uploads).
-  if ((await collectUploads(store, user.id)).length) {
-    throw new Error("Uploaded files remain; retry account deletion.");
-  }
+  // Confirm removal before touching database records.
+  await assertUploadsAbsent(store, user.id);
   const results: Record<string, string> = {
     storage: `deleted ${uploads.length}`,
   };
@@ -107,6 +111,8 @@ export async function deleteAccount(
     results[table] = `deleted ${await plan.deleteRows(table)}`;
   }
   for (const table of tables) await store.assertRowsAbsent(table, user);
+  // Detect uploads made during database cleanup before removing the retry path.
+  await assertUploadsAbsent(store, user.id);
   // Retain authentication on any earlier partial failure so the account can retry.
   await store.deleteAuthentication(user.id);
   results.authentication = "deleted";

@@ -152,10 +152,12 @@ Uploads are traversed under the exact UUID prefix, paginated by stable name
 order, with depth32 and total-entry10000 safety bounds,
 invalid-path/unknown-entry/repeated-page rejection. File placeholders with real
 IDs are removed too. Inventory completes before deleting objects; removal uses
-batches of100. A fresh inventory must be empty before row deletion, and fresh
-row checks must be empty before auth removal. Limit/shape/failure conditions
-stop instead of silently reporting success. Bucket-not-found is ignored only for
-the exact404/Bucket not found shape; other storage errors fail closed.
+batches of100. A fresh upload inventory must be empty before row deletion and
+again after all row checks, immediately before auth removal. The final check
+catches files left by a writer during row cleanup and preserves the ability to
+retry. Limit/shape/failure conditions stop instead of silently reporting
+success. Bucket-not-found is ignored only for the exact404/Bucket not found
+shape; other storage errors fail closed.
 
 `_shared/records.ts` has four **type-only** parameter corrections: use
 ReturnType of the concrete createServiceClient factory rather than generic
@@ -189,6 +191,32 @@ depth/count, stale provider references or incomplete inventory require operator
 review. An error is preferable to canceling another account's subscription or
 deleting its data.
 
+### Concurrency acceptance still required
+
+E58 verified the ownership migration through isolated PostgREST and the full
+local migration chain. Supabase Support accepted the request for the exact v6
+compiled rollback artifact. The reply and digest-matching bytes are pending.
+
+Before enabling account deletion, a staged design needs to coordinate the same
+owner's authenticated entity and upload writes, in-flight database writes and
+subscription provider projections during deletion. A durable deletion state with
+retry access is a candidate. Any schema proposal must account for legacy email
+rows and existing providers that project by email, define how delayed provider
+events are handled after final deletion, and avoid suppressing a new UUID
+account that legitimately uses the same email. Application checks alone cannot
+coordinate database and provider writes. Keep provider cancellation and external
+object cleanup retryable with Auth removal as the final step.
+
+Prove this on a disposable isolated backend first. Hold a same-owner write in
+flight while starting deletion, cover uploads and a delayed provider projection,
+verify unrelated-owner writes still succeed, and check whether the app can retry
+after a controlled partial failure. After all app and writer actions,
+independently verify no deleted-owner records or objects returned, the old
+session cannot read or write, and fresh sign-in follows the intended account
+contract without inheriting old private data. Isolated proof, rollback
+readiness, rollout approval and final disposable-account acceptance are separate
+milestones.
+
 ## Reproducible local checks
 
 Run from repository root with Deno2.8.1:
@@ -199,19 +227,20 @@ deno check --no-config --node-modules-dir=none supabase/functions/deleteUserData
 deno fmt --check supabase/functions/deleteUserData
 ```
 
-32 unique methods cover 27 in-memory orchestration/adapter/provider cases, four
+33 unique methods cover 28 in-memory orchestration/adapter/provider cases, four
 HTTP boundary cases, and one actual Supabase SDK serialization case with
 injected fetch. The six added cases cover conflicting ordinary and subscription
 legacy identity, UUID authority, overlap instability, changed preconditions, and
-a late subscription. The SDK fixture verifies exact quoted email, conditional
-DELETE by batched ID and owner scope, null and blank predicates, JSON-path
-predicates, pagination/count, Storage payload and Auth route. Dependencies can
-be resolved from the public package cache during module loading. Runtime
-network, environment, file and process access are denied. These are local
-fixtures. Deployed PostgREST predicate behavior with the actual schema and
-response counts, realistic-account timing, the live provider and the native
-deletion lifecycle still require acceptance. Earlier 26-method results overlap
-this run.
+a late subscription. The late-upload regression verifies that a retry removes
+only the new owned file and reaches Auth exactly once. The SDK fixture verifies
+exact quoted email, conditional DELETE by batched ID and owner scope, null and
+blank predicates, JSON-path predicates, pagination/count, Storage payload and
+Auth route. Dependencies can be resolved from the public package cache during
+module loading. Runtime network, environment, file and process access are
+denied. These are local fixtures. Deployed PostgREST predicate behavior with the
+actual schema and response counts, realistic-account timing, the live provider
+and the native deletion lifecycle still require acceptance. Earlier 26-method
+results overlap this run.
 
 ## Proposed rollout — review before execution
 

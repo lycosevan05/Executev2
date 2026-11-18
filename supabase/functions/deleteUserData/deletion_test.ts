@@ -579,6 +579,28 @@ Deno.test("post-delete record appearance prevents authentication removal", async
   );
   equal(f.events.includes("auth"), false);
 });
+Deno.test("an upload arriving during row cleanup retains authentication and is removed on retry", async () => {
+  const f = new Fixture();
+  const lateUpload = user.id + "/late/photo.jpg";
+  const foreignUpload = foreign + "/keep.jpg";
+  f.files.add(foreignUpload);
+  f.tables.set("goals", [sub("owned"), sub("foreign", foreign)]);
+  f.beforeDelete = (table) => {
+    if (table === "goals") f.files.add(lateUpload);
+  };
+
+  await rejects(() => run(f), /Uploaded files remain/);
+  equal(f.events.includes("auth"), false);
+  deepEqual([...f.files], [foreignUpload, lateUpload]);
+  deepEqual(f.tables.get("goals")?.map(({ id }) => id), ["foreign"]);
+
+  f.beforeDelete = undefined;
+  const result = await run(f);
+  equal(result.results.storage, "deleted 1");
+  equal(result.results.authentication, "deleted");
+  deepEqual([...f.files], [foreignUpload]);
+  equal(f.events.filter((event) => event === "auth").length, 1);
+});
 Deno.test("authentication failure is retryable after data cleanup", async () => {
   const f = new Fixture();
   f.authFailure = true;
