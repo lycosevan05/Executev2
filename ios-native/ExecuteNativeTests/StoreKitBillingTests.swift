@@ -244,7 +244,7 @@ final class StoreKitBillingTests: XCTestCase {
 
 #if DEBUG
 /// Run only on an approved, signed native-dev host using Apple's hosted Sandbox.
-/// StoreKit and RevenueCat must agree on the exact transaction before Apple opens its sheet.
+/// Verify exact App Store Sandbox transactions, refund revocation, and billing grace.
 @MainActor
 final class HostedAppleSandboxRefundTests: XCTestCase {
     func testPresentRefundSheetForVerifiedSandboxPurchase() async throws {
@@ -256,19 +256,19 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
               let subscription = info.subscriptionsByProductIdentifier[productID],
               subscription.store == .appStore, subscription.isSandbox,
               subscription.storeTransactionId == String(transactionID) else {
-            throw RefundFixtureError.unexpectedRevenueCatPurchase
+            throw SandboxFixtureError.unexpectedRevenueCatPurchase
         }
         guard case .verified(let transaction)? = await Transaction.latest(for: productID),
               transaction.productID == productID, transaction.id == transactionID, transaction.originalID == originalID,
               transaction.environment == .sandbox, transaction.ownershipType == .purchased,
               transaction.productType == .autoRenewable, !transaction.isUpgraded, transaction.revocationDate == nil,
               let expiration = transaction.expirationDate, expiration > .now else {
-            throw RefundFixtureError.unexpectedAppleTransaction
+            throw SandboxFixtureError.unexpectedAppleTransaction
         }
         guard Purchases.shared.appUserID == customer,
               let scene = UIApplication.shared.connectedScenes
                   .compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive }) else {
-            throw RefundFixtureError.unexpectedPresentationContext
+            throw SandboxFixtureError.unexpectedPresentationContext
         }
 
         // Apple presents its own sheet. An operator submits the approved request.
@@ -284,20 +284,53 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
                   transaction.productID == productID, transaction.id == transactionID,
                   transaction.originalID == originalID, transaction.environment == .sandbox,
                   transaction.ownershipType == .purchased, transaction.productType == .autoRenewable else { continue }
-            guard Purchases.shared.appUserID == customer else { throw RefundFixtureError.unexpectedCustomer }
+            guard Purchases.shared.appUserID == customer else { throw SandboxFixtureError.unexpectedCustomer }
             XCTAssertNotNil(transaction.revocationDate, "StoreKit's verified Sandbox transaction has no refund revocation date")
             XCTAssertNotNil(transaction.revocationReason, "StoreKit's verified Sandbox transaction has no revocation reason")
             let info = try await Purchases.shared.customerInfo(fetchPolicy: .fetchCurrent)
             XCTAssertNil(info.entitlements.active[config.revenueCatEntitlementID], "RevenueCat still grants this fixture Premium")
             return
         }
-        throw RefundFixtureError.unexpectedAppleTransaction
+        throw SandboxFixtureError.unexpectedAppleTransaction
     }
 
-    private func loadFixture() async throws -> (String, UInt64, UInt64, String, AppConfiguration) {
+    func testReadGraceOfVerifiedSandboxPurchase() async throws {
+        let (productID, transactionID, originalID, customer, config) =
+            try await loadFixture(enableFlag: "EXECUTE_HOSTED_APPLE_SANDBOX_GRACE")
+        let products = try await Product.products(for: [productID])
+        let product = try XCTUnwrap(products.first)
+        let subscription = try XCTUnwrap(product.subscription)
+        for status in try await subscription.status {
+            guard case .verified(let transaction) = status.transaction,
+                  case .verified(let renewal) = status.renewalInfo,
+                  transaction.productID == productID, transaction.id == transactionID,
+                  transaction.originalID == originalID, renewal.originalTransactionID == originalID,
+                  transaction.environment == .sandbox, transaction.ownershipType == .purchased,
+                  transaction.revocationDate == nil else { continue }
+            guard Purchases.shared.appUserID == customer else { throw SandboxFixtureError.unexpectedCustomer }
+            XCTAssertEqual(status.state, .inGracePeriod, "Apple status: \(status.state.localizedDescription)")
+            XCTAssertTrue(renewal.isInBillingRetry)
+            let expiry = try XCTUnwrap(transaction.expirationDate)
+            let graceEnd = try XCTUnwrap(renewal.gracePeriodExpirationDate)
+            XCTAssertLessThanOrEqual(expiry, .now)
+            XCTAssertGreaterThan(graceEnd, .now)
+            print("Verified StoreKit Sandbox grace expiration: \(graceEnd.ISO8601Format())")
+            let info = try await Purchases.shared.customerInfo(fetchPolicy: .fetchCurrent)
+            let entitlement = info.entitlements.active[config.revenueCatEntitlementID]
+            XCTAssertEqual(entitlement?.productIdentifier, productID)
+            XCTAssertEqual(entitlement?.store, .appStore)
+            XCTAssertEqual(entitlement?.isSandbox, true)
+            return
+        }
+        throw SandboxFixtureError.unexpectedAppleTransaction
+    }
+
+    private func loadFixture(
+        enableFlag: String = "EXECUTE_HOSTED_APPLE_SANDBOX_REFUND"
+    ) async throws -> (String, UInt64, UInt64, String, AppConfiguration) {
         let env = ProcessInfo.processInfo.environment
-        guard env["EXECUTE_HOSTED_APPLE_SANDBOX_REFUND"] == "1" else {
-            throw XCTSkip("Requires an approved hosted Apple Sandbox refund fixture")
+        guard env[enableFlag] == "1" else {
+            throw XCTSkip("Requires an approved hosted Apple Sandbox fixture")
         }
         guard Bundle.main.bundleIdentifier == "com.executelabs.execute.native-dev",
               let productID = env["EXECUTE_HOSTED_APPLE_REFUND_PRODUCT_ID"],
@@ -307,12 +340,12 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
               let originalID = UInt64(rawOriginal), originalID > 0,
               let customer = env["EXECUTE_HOSTED_APPLE_REFUND_CUSTOMER"],
               EmailOTPInput.email(customer) == customer else {
-            throw RefundFixtureError.invalidInputs
+            throw SandboxFixtureError.invalidInputs
         }
         let config = try AppConfiguration.load()
         guard config.revenueCatAPIKey.hasPrefix("appl_"),
               [config.revenueCatMonthlyProductID, config.revenueCatAnnualProductID].contains(productID) else {
-            throw RefundFixtureError.unexpectedAppConfiguration
+            throw SandboxFixtureError.unexpectedAppConfiguration
         }
 
         // The normal app host restores its saved session and configures the SDK.
@@ -321,12 +354,12 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(200))
         }
         guard Purchases.isConfigured, !Purchases.shared.isAnonymous, Purchases.shared.appUserID == customer else {
-            throw RefundFixtureError.unexpectedCustomer
+            throw SandboxFixtureError.unexpectedCustomer
         }
         return (productID, transactionID, originalID, customer, config)
     }
 
-    private enum RefundFixtureError: Error {
+    private enum SandboxFixtureError: Error {
         case invalidInputs, unexpectedAppConfiguration, unexpectedCustomer, unexpectedRevenueCatPurchase
         case unexpectedAppleTransaction, unexpectedPresentationContext
     }
