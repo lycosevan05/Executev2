@@ -67,6 +67,7 @@ struct HomePlanBanner: View {
     let snapshot: HomeDashboardSnapshot
     let isLoading: Bool
     let openPlan: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Group {
@@ -74,13 +75,16 @@ struct HomePlanBanner: View {
                 let isRest = HomeCalculations.isRestDay(snapshot.overviewDay)
                 let priority = snapshot.overviewDay?.priority ?? snapshot.overviewDay?.dayFocus ?? plan.resolvedPlanSummary?.primaryGoal
                 VStack(alignment: .leading, spacing: 9) {
-                    HStack(spacing: ExecuteSpacing.xs) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("TODAY'S PERFORMANCE PLAN")
-                            .font(ExecuteTypography.caption(9).weight(.semibold))
-                            .tracking(0.55)
-                        Spacer()
+                    planHeaderLayout {
+                        HStack(spacing: ExecuteSpacing.xs) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("TODAY'S PERFORMANCE PLAN")
+                                .font(ExecuteTypography.caption(9).weight(.semibold))
+                                .tracking(0.55)
+                                .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+                        }
+                        if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                         if let label = isRest ? "Recovery day" : snapshot.overviewDay?.dayType == "training" || snapshot.overviewDay?.trainingType != nil ? "Training day" : nil {
                             Text(label)
                                 .font(ExecuteTypography.caption(9).weight(.medium))
@@ -138,6 +142,12 @@ struct HomePlanBanner: View {
                 .homeSurface(.plan)
             }
         }
+    }
+
+    private var planHeaderLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ExecuteSpacing.xs))
+            : AnyLayout(HStackLayout(spacing: ExecuteSpacing.xs))
     }
 }
 
@@ -474,13 +484,22 @@ private struct HomeMacroRing: View {
     let target: Double?
     let tint: Color
     let action: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 6) {
-                HomeRing(progress: target.map { consumed / $0 } ?? 0, tint: ringTint, lineWidth: 4.5, size: 52) {
-                    Text("\(Int(consumed.rounded()))").font(ExecuteTypography.caption(11).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
-                    Text("g").font(ExecuteTypography.caption(8)).foregroundStyle(ExecuteColor.olive)
+                if dynamicTypeSize.isAccessibilitySize {
+                    HomeRing(progress: progress, tint: ringTint, lineWidth: 4.5, size: 34) { EmptyView() }
+                        .accessibilityHidden(true)
+                    Text("\(Int(consumed.rounded())) g")
+                        .font(ExecuteTypography.caption(11).weight(.semibold))
+                        .foregroundStyle(ExecuteColor.charcoal)
+                } else {
+                    HomeRing(progress: progress, tint: ringTint, lineWidth: 4.5, size: 52) {
+                        Text("\(Int(consumed.rounded()))").font(ExecuteTypography.caption(11).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
+                        Text("g").font(ExecuteTypography.caption(8)).foregroundStyle(ExecuteColor.olive)
+                    }
                 }
                 Text(title).font(ExecuteTypography.caption(10).weight(.semibold)).foregroundStyle(ExecuteColor.charcoal)
                 Text(target.map { isOver ? "+\(Int((consumed - $0).rounded()))g" : "/ \(Int($0.rounded()))g" } ?? "Set target")
@@ -494,6 +513,7 @@ private struct HomeMacroRing: View {
         .buttonStyle(ExecutePressStyle())
     }
 
+    private var progress: Double { target.map { consumed / $0 } ?? 0 }
     private var isOver: Bool { target.map { consumed > $0 } ?? false }
     private var ringTint: Color { isOver ? ExecuteColor.destructive : tint }
 }

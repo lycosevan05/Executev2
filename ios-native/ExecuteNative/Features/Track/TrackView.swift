@@ -43,6 +43,7 @@ struct TrackDashboardView: View {
     @State private var selectedMetric: TrackMetric?
     @State private var selectedCustom: CustomTrackerDefinition?
     @State private var isManagePresented = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private let columns = [
         GridItem(.flexible(), spacing: ExecuteSpacing.sm),
@@ -51,54 +52,21 @@ struct TrackDashboardView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: ExecuteSpacing.md) {
-                if let error = model.error {
-                    TrackInlineError(error: error) { Task { await model.refresh() } }
-                }
-
-                TrackPendingCard(model: model)
-                ForEach(model.currentWarnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
-
-                TrackFoodSummaryCard(
-                    caloriesConsumed: model.snapshot.dailyLog?.caloriesConsumed ?? 0,
-                    caloriesBurned: model.snapshot.dailyLog?.caloriesBurned ?? 0,
-                    action: model.openFoodLog
-                )
-
-                LazyVGrid(columns: columns, spacing: ExecuteSpacing.sm) {
-                    ForEach(model.visibleMetrics) { metric in
-                        TrackMetricCard(
-                            metric: metric,
-                            value: model.displayValue(for: metric),
-                            unit: model.unit(for: metric),
-                            isLogged: model.isLogged(metric),
-                            isSaving: model.savingMetrics.contains(metric)
-                        ) {
-                            selectedMetric = metric
-                        }
-                        .disabled(!model.canLog(metric))
-                    }
-
-                    ForEach(model.visibleCustomTrackers) { item in
-                        TrackCustomCard(definition: item, value: model.customDisplay(item.id)) { selectedCustom = item }
-                            .disabled(!model.canLogCustom)
-                    }
-                    TrackAddMetricCard { isManagePresented = true }
-                }
-
-                TrackCompletionCard(
-                    completed: model.loggedMetricCount,
-                    total: model.visibleMetrics.count + model.visibleCustomTrackers.count,
-                    progress: model.completionProgress
-                )
+            VStack(spacing: 0) {
+                if dynamicTypeSize.isAccessibilitySize { header }
+                dashboardContent
             }
-            .padding(.horizontal, ExecuteHomeStyle.screenInset)
-            .padding(.top, ExecuteSpacing.md)
-            .padding(.bottom, ExecuteHomeStyle.bottomContentInset)
         }
         .scrollIndicators(.hidden)
         .background(ExecuteColor.parchment)
-        .safeAreaInset(edge: .top, spacing: 0) { header }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if dynamicTypeSize.isAccessibilitySize {
+                Color.clear.frame(height: 0)
+                    .background(ExecuteColor.parchment, ignoresSafeAreaEdges: .top)
+            } else {
+                header
+            }
+        }
         .refreshable { await model.refresh() }
         .overlay(alignment: .top) {
             if model.isInitialLoading || model.isRefreshing {
@@ -137,8 +105,59 @@ struct TrackDashboardView: View {
         .navigationBarHidden(true)
     }
 
+    private var dashboardContent: some View {
+        LazyVStack(spacing: ExecuteSpacing.md) {
+            if let error = model.error {
+                TrackInlineError(error: error) { Task { await model.refresh() } }
+            }
+
+            TrackPendingCard(model: model)
+            ForEach(model.currentWarnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
+
+            TrackFoodSummaryCard(
+                caloriesConsumed: model.snapshot.dailyLog?.caloriesConsumed ?? 0,
+                caloriesBurned: model.snapshot.dailyLog?.caloriesBurned ?? 0,
+                action: model.openFoodLog
+            )
+
+            LazyVGrid(columns: columns, spacing: ExecuteSpacing.sm) {
+                ForEach(model.visibleMetrics) { metric in
+                    TrackMetricCard(
+                        metric: metric,
+                        value: model.displayValue(for: metric),
+                        unit: model.unit(for: metric),
+                        isLogged: model.isLogged(metric),
+                        isSaving: model.savingMetrics.contains(metric)
+                    ) {
+                        selectedMetric = metric
+                    }
+                    .disabled(!model.canLog(metric))
+                }
+
+                ForEach(model.visibleCustomTrackers) { item in
+                    TrackCustomCard(definition: item, value: model.customDisplay(item.id)) { selectedCustom = item }
+                        .disabled(!model.canLogCustom)
+                }
+                TrackAddMetricCard { isManagePresented = true }
+            }
+
+            TrackCompletionCard(
+                completed: model.loggedMetricCount,
+                total: model.visibleMetrics.count + model.visibleCustomTrackers.count,
+                progress: model.completionProgress
+            )
+        }
+        .padding(.horizontal, ExecuteHomeStyle.screenInset)
+        .padding(.top, ExecuteSpacing.md)
+        .padding(.bottom, ExecuteHomeStyle.bottomContentInset)
+    }
+
     private var header: some View {
-        HStack(spacing: ExecuteSpacing.sm) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ExecuteSpacing.sm))
+            : AnyLayout(HStackLayout(spacing: ExecuteSpacing.sm))
+
+        return layout {
             VStack(alignment: .leading, spacing: 2) {
                 Text("TRACK")
                     .font(ExecuteTypography.caption(9).weight(.semibold))
@@ -147,11 +166,16 @@ struct TrackDashboardView: View {
                 Text(model.dateLabel)
                     .font(ExecuteTypography.title(20))
                     .foregroundStyle(ExecuteColor.charcoal)
+                    .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+                    .accessibilityAddTraits(.isHeader)
             }
-            Spacer()
-            TrackHeaderButton(symbol: "clock.arrow.circlepath", title: "History", action: model.openHistory)
-            TrackHeaderButton(symbol: "slider.horizontal.3", title: "Manage") { isManagePresented = true }
+            if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+            HStack(spacing: ExecuteSpacing.sm) {
+                TrackHeaderButton(symbol: "clock.arrow.circlepath", title: "History", action: model.openHistory)
+                TrackHeaderButton(symbol: "slider.horizontal.3", title: "Manage") { isManagePresented = true }
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, ExecuteHomeStyle.screenInset)
         .padding(.top, ExecuteSpacing.xs)
         .padding(.bottom, 10)
