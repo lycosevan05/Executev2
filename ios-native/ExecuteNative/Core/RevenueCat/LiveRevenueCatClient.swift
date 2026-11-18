@@ -94,11 +94,14 @@ final class LiveRevenueCatClient: RevenueCatClient {
     }
 
     nonisolated static func purchaseOutcome(for error: Error) -> BillingPurchaseResult? {
-        guard let code = error as? ErrorCode else { return nil }
-        switch code {
+        switch error as? ErrorCode {
         case .purchaseCancelledError: return .cancelled
         case .paymentPendingError: return .pending
-        default: return nil
+        case .networkError: return .unconfirmed(AppError.from(error, title: "Billing could not be completed"))
+        default:
+            guard let transport = error as? URLError,
+                  transport.code == .timedOut || transport.code == .networkConnectionLost else { return nil }
+            return .unconfirmed(AppError.from(error, title: "Billing could not be completed"))
         }
     }
 

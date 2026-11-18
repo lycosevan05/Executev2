@@ -61,7 +61,11 @@ final class PremiumResolutionTests: XCTestCase {
         XCTAssertEqual(LiveRevenueCatClient.purchaseOutcome(for: ErrorCode.purchaseCancelledError), .cancelled)
         XCTAssertEqual(LiveRevenueCatClient.purchaseOutcome(for: ErrorCode.paymentPendingError), .pending)
         XCTAssertEqual(LiveRevenueCatClient.purchaseOutcome(for: ErrorCode.paymentPendingError as NSError), .pending)
-        XCTAssertNil(LiveRevenueCatClient.purchaseOutcome(for: ErrorCode.networkError))
+        guard case .unconfirmed? = LiveRevenueCatClient.purchaseOutcome(for: ErrorCode.networkError as NSError),
+              case .unconfirmed? = LiveRevenueCatClient.purchaseOutcome(for: URLError(.timedOut)) else {
+            return XCTFail("A transport failure after requesting a purchase has an unconfirmed outcome")
+        }
+        XCTAssertNil(LiveRevenueCatClient.purchaseOutcome(for: ErrorCode.purchaseNotAllowedError))
         XCTAssertNil(LiveRevenueCatClient.purchaseOutcome(for: NSError(domain: "unrelated", code: ErrorCode.paymentPendingError.rawValue)))
     }
 }
@@ -456,7 +460,10 @@ private final class TestRevenueCatClient: RevenueCatClient {
         purchasedBy.append(appUserID ?? "anonymous")
         let id = appUserID ?? ""
         if let purchaseGate { self.purchaseGate = nil; await purchaseGate.suspend() }
-        if let operationError { throw operationError }
+        if let operationError {
+            if let outcome = LiveRevenueCatClient.purchaseOutcome(for: operationError) { return outcome }
+            throw operationError
+        }
         if case .purchased(let state) = result { states[id] = state }
         return result
     }
@@ -850,6 +857,66 @@ final class BillingStoreTests: XCTestCase {
         await store.purchaseSelectedPackage()
         XCTAssertTrue(store.premiumState.isPremium)
         XCTAssertNil(store.error)
+    }
+
+    func testTimedOutPurchaseClearsOnlyAfterNewAppStoreAccessIsConfirmed() async {
+        let client = TestRevenueCatClient()
+        let reader = TestSubscriptionReader()
+        let store = makeStore(client, reader: reader)
+        await store.load()
+
+        client.operationError = ErrorCode.networkError as NSError
+        await store.purchaseSelectedPackage()
+        XCTAssertFalse(store.premiumState.isPremium)
+        XCTAssertNotNil(store.error)
+
+        client.operationError = nil
+        reader.rows[billingUserA.email] = BillingSubscription(userID: billingUserA.email, plan: "premium", status: "active")
+        await store.refresh()
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertNotNil(store.error)
+        XCTAssertNil(store.message)
+
+        client.states[billingUserA.email] = entitled
+        await store.refresh()
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.message, "Your Premium access is active.")
+        XCTAssertEqual(client.purchasedBy, [billingUserA.email])
+    }
+
+    func testExistingAppStoreAccessDoesNotConfirmTimedOutPurchase() async {
+        let client = TestRevenueCatClient()
+        client.states[billingUserA.email] = entitled
+        let store = makeStore(client)
+        await store.load()
+
+        client.operationError = URLError(.timedOut)
+        await store.purchaseSelectedPackage()
+        client.operationError = nil
+        await store.refresh()
+
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertNotNil(store.error)
+        XCTAssertNil(store.message)
+    }
+
+    func testLateAccessDoesNotClearAnUnrelatedPlansError() async {
+        let client = TestRevenueCatClient()
+        let store = makeStore(client)
+        await store.load()
+
+        client.operationError = URLError(.timedOut)
+        await store.purchaseSelectedPackage()
+        client.operationError = nil
+        client.offeredPackages = []
+        await store.loadPackages()
+        let plansError = store.error
+        XCTAssertNotNil(plansError)
+
+        client.states[billingUserA.email] = entitled
+        await store.refresh()
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertEqual(store.error, plansError)
     }
 
     func testDelayedRestoreCannotUnlockAnotherAccount() async {

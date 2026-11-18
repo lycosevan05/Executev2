@@ -67,6 +67,7 @@ enum BillingPurchaseResult: Equatable, Sendable {
     case purchased(PremiumState)
     case cancelled
     case pending
+    case unconfirmed(AppError)
 }
 
 @MainActor

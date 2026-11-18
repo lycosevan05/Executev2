@@ -21,7 +21,7 @@ final class BillingStore: ObservableObject {
     private var generation = UUID()
     private var refreshGeneration = UUID()
     private var liveState: PremiumState?
-    private enum AppStoreNotice { case pending, active, restored }
+    private enum AppStoreNotice { case pending, purchaseUnconfirmed, active, restored }
     private var appStoreNotice: AppStoreNotice?
     private var customerInfoRefreshPending = false
 
@@ -122,7 +122,8 @@ final class BillingStore: ObservableObject {
             liveState = state
             let hasLiveAccess = PremiumState.resolve(server: nil, live: state).isPremium
             switch appStoreNotice {
-            case .pending where hasLiveAccess:
+            case .pending where hasLiveAccess, .purchaseUnconfirmed where hasLiveAccess:
+                if case .purchaseUnconfirmed = appStoreNotice { error = nil }
                 appStoreNotice = .active
                 message = Self.premiumActiveMessage
             case .active where !hasLiveAccess, .restored where !hasLiveAccess:
@@ -149,6 +150,7 @@ final class BillingStore: ObservableObject {
         let session = generation
         isLoadingPackages = true
         error = nil
+        if case .purchaseUnconfirmed = appStoreNotice { appStoreNotice = nil }
         do {
             try await service.configure(appUserID: user.email)
             guard generation == session else { return }
@@ -209,6 +211,13 @@ final class BillingStore: ObservableObject {
                         appStoreNotice = .pending
                     }
                     message = "Your purchase is awaiting approval. Premium will update when the App Store confirms it."
+                case .unconfirmed(let failure):
+                    // A previously observed Free App Store state lets a fresh entitlement
+                    // supersede this specific error. Server or already-active access cannot.
+                    if let liveState, !PremiumState.resolve(server: nil, live: liveState).isPremium {
+                        appStoreNotice = .purchaseUnconfirmed
+                    }
+                    error = failure
                 }
             case .restore:
                 let state = try await service.restorePurchases()
