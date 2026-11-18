@@ -265,7 +265,12 @@ row and preserved the foreign owner. Hosted PostgREST, realistic-account timing,
 live providers and the native deletion lifecycle still require acceptance.
 Earlier fixture counts overlap this run.
 
-## Proposed rollout — review before execution
+## Proposed in-place rollout — review before execution
+
+The steps below apply to replacing the existing function. The separate
+[`deleteUserData-staged` rehearsal](../deleteUserData-staged/README.md) keeps
+the hosted v6 route in place and documents an independent database rollback
+exercise.
 
 1. Review the committed diff/manifest, provider-metadata behavior, bounds,
    residual race and shared type-only correction. Keep this function unavailable

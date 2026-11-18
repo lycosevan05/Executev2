@@ -6,6 +6,9 @@ verify_jwt = true
 [functions.deleteUserData]
 verify_jwt = true
 
+[functions.deleteUserData-staged]
+verify_jwt = true
+
 [functions.stripeCreateCheckout]
 verify_jwt = true
 
