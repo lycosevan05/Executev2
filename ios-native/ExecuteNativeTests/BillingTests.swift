@@ -327,6 +327,31 @@ final class BillingStoreTests: XCTestCase {
         XCTAssertTrue(store.premiumState.isPremium)
     }
 
+    func testLiveEntitlementPublishesWhileBackendReadIsStillPending() async {
+        let client = TestRevenueCatClient()
+        client.states[billingUserA.email] = entitled
+        let reader = TestSubscriptionReader()
+        let gate = BillingGate()
+        reader.gate = gate
+        let store = makeStore(client, reader: reader)
+        let accessPublished = expectation(description: "App Store access published")
+        store.onPremiumStateChanged = { state in
+            if state.isPremium { accessPublished.fulfill() }
+        }
+
+        let refresh = Task { await store.refresh() }
+        await gate.waitUntilEntered()
+        await fulfillment(of: [accessPublished], timeout: 2)
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertTrue(store.isRefreshing)
+
+        store.onPremiumStateChanged = nil
+        gate.release()
+        await refresh.value
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertFalse(store.isRefreshing)
+    }
+
     func testForeignBackendRowCannotUnlock() async {
         let reader = TestSubscriptionReader()
         reader.rows[billingUserA.email] = BillingSubscription(userID: billingUserB.email, plan: "premium", status: "active")
@@ -492,6 +517,32 @@ final class BillingStoreTests: XCTestCase {
         await store.restorePurchases()
         XCTAssertNotNil(store.error)
         XCTAssertFalse(store.isBusy)
+    }
+
+    func testExpiredRestoreReportsNoActiveAppStoreSubscription() async {
+        let client = TestRevenueCatClient()
+        client.states[billingUserA.email] = PremiumState(isPremium: true, entitlementIdentifier: "paid",
+                                                        expirationDate: .distantPast)
+        let store = makeStore(client)
+        await store.restorePurchases()
+        XCTAssertFalse(store.premiumState.isPremium)
+        XCTAssertTrue(store.message?.contains("No active App Store subscription") == true)
+    }
+
+    func testRevokedAppStoreRestoreClearsSuccessWhileWebAccessRemains() async {
+        let client = TestRevenueCatClient()
+        client.states[billingUserA.email] = entitled
+        let reader = TestSubscriptionReader()
+        reader.rows[billingUserA.email] = BillingSubscription(userID: billingUserA.email, plan: "premium", status: "active")
+        let store = makeStore(client, reader: reader)
+        await store.restorePurchases()
+        XCTAssertTrue(store.message?.contains("restored") == true)
+
+        client.states[billingUserA.email] = .free
+        await store.refresh()
+
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertNil(store.message)
     }
 
     func testManagementErrorsAreVisible() async {

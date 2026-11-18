@@ -21,8 +21,8 @@ final class BillingStore: ObservableObject {
     private var generation = UUID()
     private var refreshGeneration = UUID()
     private var liveState: PremiumState?
-    private enum PurchaseNotice { case pending, active }
-    private var purchaseNotice: PurchaseNotice?
+    private enum AppStoreNotice { case pending, active, restored }
+    private var appStoreNotice: AppStoreNotice?
     private var customerInfoRefreshPending = false
 
     private static let premiumActiveMessage = "Your Premium access is active."
@@ -52,7 +52,7 @@ final class BillingStore: ObservableObject {
         user = nil
         subscription = nil
         liveState = nil
-        purchaseNotice = nil
+        appStoreNotice = nil
         customerInfoRefreshPending = false
         packages = []
         selectedPackageID = nil
@@ -95,14 +95,8 @@ final class BillingStore: ObservableObject {
         refreshGeneration = request
         isRefreshing = true
         refreshError = nil
-        // Run both sources independently: a RevenueCat outage must not suppress
-        // an authenticated backend entitlement (including existing web members).
-        let liveTask = Task { @MainActor in
-            guard generation == session, refreshGeneration == request else { throw CancellationError() }
-            try await service.configure(appUserID: user.email)
-            guard generation == session, refreshGeneration == request else { throw CancellationError() }
-            return try await service.currentPremiumState()
-        }
+        // Publish each source as it arrives so a slow read on either side cannot delay the other.
+        async let appStoreError = refreshAppStore(user: user, session: session, request: request)
         do {
             let row = try await reader.subscription(for: user)
             guard generation == session, refreshGeneration == request else { return }
@@ -112,28 +106,37 @@ final class BillingStore: ObservableObject {
             guard generation == session, refreshGeneration == request else { return }
             refreshError = AppError.from(error, title: "Subscription status could not be refreshed")
         }
+        let storeError = await appStoreError
+        guard generation == session, refreshGeneration == request else { return }
+        if let storeError { refreshError = storeError }
+        isRefreshing = false
+    }
+
+    private func refreshAppStore(user: ExecuteUser, session: UUID, request: UUID) async -> AppError? {
+        guard generation == session, refreshGeneration == request else { return nil }
         do {
-            let state = try await liveTask.value
-            guard generation == session, refreshGeneration == request else { return }
+            try await service.configure(appUserID: user.email)
+            guard generation == session, refreshGeneration == request else { return nil }
+            let state = try await service.currentPremiumState()
+            guard generation == session, refreshGeneration == request else { return nil }
             liveState = state
             let hasLiveAccess = PremiumState.resolve(server: nil, live: state).isPremium
-            switch purchaseNotice {
+            switch appStoreNotice {
             case .pending where hasLiveAccess:
-                purchaseNotice = .active
+                appStoreNotice = .active
                 message = Self.premiumActiveMessage
-            case .active where !hasLiveAccess:
-                purchaseNotice = nil
+            case .active where !hasLiveAccess, .restored where !hasLiveAccess:
+                appStoreNotice = nil
                 message = nil
             default:
                 break
             }
+            publishPremiumState()
+            return nil
         } catch {
-            guard generation == session, refreshGeneration == request else { return }
-            refreshError = AppError.from(error, title: "App Store status could not be refreshed")
+            guard generation == session, refreshGeneration == request else { return nil }
+            return AppError.from(error, title: "App Store status could not be refreshed")
         }
-        guard generation == session, refreshGeneration == request else { return }
-        publishPremiumState()
-        isRefreshing = false
     }
 
     func load() async {
@@ -185,7 +188,7 @@ final class BillingStore: ObservableObject {
         isBusy = true
         error = nil
         message = nil
-        purchaseNotice = nil
+        appStoreNotice = nil
         do {
             try await service.configure(appUserID: user.email)
             guard generation == session else { return }
@@ -197,13 +200,13 @@ final class BillingStore: ObservableObject {
                 case .purchased(let state):
                     liveState = state
                     let hasLiveAccess = PremiumState.resolve(server: nil, live: state).isPremium
-                    purchaseNotice = hasLiveAccess ? .active : .pending
+                    appStoreNotice = hasLiveAccess ? .active : .pending
                     message = hasLiveAccess ? Self.premiumActiveMessage : "Your purchase was received. Access is still being confirmed. Try refreshing or restoring purchases."
                 case .cancelled:
                     message = "Purchase canceled. No changes were made."
                 case .pending:
                     if !PremiumState.resolve(server: nil, live: liveState).isPremium {
-                        purchaseNotice = .pending
+                        appStoreNotice = .pending
                     }
                     message = "Your purchase is awaiting approval. Premium will update when the App Store confirms it."
                 }
@@ -211,7 +214,9 @@ final class BillingStore: ObservableObject {
                 let state = try await service.restorePurchases()
                 guard generation == session else { return }
                 liveState = state
-                message = state.isPremium ? "Your App Store purchase was restored." : "No active App Store subscription was found to restore. Check that you are using the Apple Account that made the purchase."
+                let hasLiveAccess = PremiumState.resolve(server: nil, live: state).isPremium
+                appStoreNotice = hasLiveAccess ? .restored : nil
+                message = hasLiveAccess ? "Your App Store purchase was restored." : "No active App Store subscription was found to restore. Check that you are using the Apple Account that made the purchase."
             case .manage:
                 try await service.manageSubscriptions()
                 guard generation == session else { return }
