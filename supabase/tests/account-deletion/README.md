@@ -478,7 +478,7 @@ fixtures=supabase/tests/account-deletion
 python3 "$fixtures/seed-native-deletion.py" new "$fixture"
 deno run --cached-only --no-lock --node-modules-dir=none \
   --allow-net=127.0.0.1:55471,127.0.0.1:55473 \
-  --allow-env=SUPABASE_URL,SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY,SERVICE_ROLE_KEY,EXECUTE_STAGED_DELETION_OWNER_UUID \
+  --allow-env=SUPABASE_URL,SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY,SERVICE_ROLE_KEY,SUPABASE_UPLOAD_BUCKET,EXECUTE_STAGED_STRIPE_RETIREMENT,EXECUTE_STAGED_DELETION_OWNER_UUID \
   --env-file="$fixture/edge.env" "$fixtures/serve-native-deletion.ts"
 ```
 

@@ -114,10 +114,11 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             headers = {key: value for key, value in self.headers.items() if key.lower() not in hop}
             response = upstream(self.command, self.path, port=port, headers=headers, data=raw or None)
-            if self.command == "POST" and url.path == "/functions/v1/deleteUserData-staged" and response[0] == 200:
-                with lock:
-                    observed_deletion_count += 1
-                print("Staged deletion accepted through the native TLS endpoint.", flush=True)
+            if self.command == "POST" and url.path == "/functions/v1/deleteUserData-staged":
+                if response[0] == 200:
+                    with lock:
+                        observed_deletion_count += 1
+                print(f"POST staged deletion returned HTTP {response[0]}.", flush=True)
             self.respond(*response)
         except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
             return
