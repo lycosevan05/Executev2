@@ -210,7 +210,7 @@ The local backend candidate checks for conflicting legacy ownership before stora
 
 ### E51 — Check session lifetime and protect the active owner
 
-The dedicated Apple QA simulator restored its saved Profile after a full process relaunch. The Execute Authentication dashboard shows a 3,600-second access-token lifetime, zero session time-box and inactivity limits, and disabled single-session enforcement. The authorized Google QA read selected only timestamps and found two active rows for the disposable owner, neither previously refreshed. Execute was terminated only on the iPhone 17e Google simulator to let its older access token age without foreground refresh. No provider consent or database settings changed.
+The dedicated Apple QA simulator restored its saved Profile after a full process relaunch. The Execute Authentication dashboard shows a 3,600-second access-token lifetime, zero session time-box and inactivity limits, and disabled single-session enforcement. The authorized Google QA read selected only timestamps and found two active rows for the disposable owner, neither previously refreshed. Execute was terminated only on the iPhone 17e Google simulator to let its older access token age without foreground refresh. No provider consent or database settings changed. E54 records the passing live refresh.
 
 Write preflights now require the SDK to still have the signed-in owner's saved session. The new real-SDK fixture removes local storage before the loss event can update the UI and verifies draft writes stop immediately. The offline fixture still permits writes for a saved same-owner session. All 639 unit tests passed.
 
@@ -222,13 +222,15 @@ Synthetic PostgreSQL 17.5 checks confirmed exact email and UUID matching, distin
 
 ### E53 — Verify billing and SDK refresh ownership
 
-Billing clears a confirmed purchase notice when a successful read reports loss of App Store access. It preserves pending confirmation and the existing backend entitlement policy, and uses the same resolved expiry calculation when showing purchase success. The subscription reader excludes an explicitly foreign owner before choosing the newest current or null-owner legacy row and verifies the returned owner and email. Fixtures exercised those cases without purchases on a live account.
+Billing clears a confirmed purchase notice when a successful read reports loss of App Store access. It preserves pending confirmation and the existing backend entitlement policy, and uses the same resolved expiry calculation when showing purchase success. The subscription reader excludes an explicitly foreign owner before choosing the newest current or null-owner legacy row and verifies the returned owner and email. The three fixture billing UI tests passed for purchase, restore and the legal destinations. Live billing remains open.
 
 The real SDK fixture held one owner's refresh across a completed sign-in for another owner. The late response reached SDK storage. Execute responded by dismissing the mismatched session and clearing active billing, navigation and cache context. A separate fixture confirmed that same-owner rotation leaves the active app open. The suite passed 645 tests.
 
 ### E54 — Fence cold restore against an unacknowledged SDK owner
 
 Execute now remembers the last acknowledged owner or signed-out state for the configured backend. A legitimate existing session adopts its owner after a verified restore, and a newer explicit sign-in cannot be displaced by an older restore. The marker stores an owner UUID or signed-out value. The refreshed SDK session remains subject to the app owner check after relaunch. Fixture coverage includes cold relaunch after an older owner's refresh, a newer sign-in during legacy restore, and a failed Keychain removal followed by private reauthentication in the fixture. The full native suite passed 648 tests. The pinned SDK can still write a stale credential or remove the newer session before the app sees the event. The app-level guard can require a fresh sign-in when that happens.
+
+The updated simulator Release restored the exact disposable Apple profile. On iPhone 17e, Execute stayed closed through the one-hour lifetime of the disposable Google access token. The prelaunch timestamp-only readback showed no refresh after the update. A normal cold launch about 61 minutes after issuance returned to the same Google profile. Supabase recorded a refresh at 21:07:22 Vancouver time on the existing older session row, with the other row unchanged and no new session. Live access-token expiry and refresh passed. Terminal expiry tied to project session policy, the live in-flight owner-switch matrix and provider-to-session invalidation remain open. The development-signed arm64 device archive passed signature verification. Counts remain 42 of 45 accepted with all nine gates open.
 
 ## Authorization and preservation
 
