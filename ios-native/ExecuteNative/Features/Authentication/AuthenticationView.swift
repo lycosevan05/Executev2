@@ -5,6 +5,8 @@ struct AuthenticationView: View {
     @EnvironmentObject private var environment: AppEnvironment
     @State private var email = ""
     @State private var code = ""
+    @State private var reviewPassword = ""
+    @State private var isReviewSignIn = false
     @State private var otpWasSent = false
     @State private var sentEmail: String?
     @State private var isWorking = false
@@ -30,7 +32,19 @@ struct AuthenticationView: View {
                             .padding(ExecuteSpacing.sm)
                             .background(ExecuteColor.parchment)
                             .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
-                        if otpWasSent {
+                        if isReviewSignIn {
+                            SecureField("Password", text: $reviewPassword)
+                                .textContentType(.password)
+                                .padding(ExecuteSpacing.sm)
+                                .background(ExecuteColor.parchment)
+                                .clipShape(RoundedRectangle(cornerRadius: ExecuteRadius.small, style: .continuous))
+                            ExecutePrimaryButton(title: "Sign in for App Review", action: signInForReview, isLoading: isWorking)
+                            ExecuteSecondaryButton(title: "Back to sign-in") {
+                                reviewPassword = ""
+                                error = nil
+                                isReviewSignIn = false
+                            }
+                        } else if otpWasSent {
                             TextField("Email code", text: $code)
                                 .keyboardType(.numberPad)
                                 .textContentType(.oneTimeCode)
@@ -49,9 +63,17 @@ struct AuthenticationView: View {
                         } else {
                             ExecutePrimaryButton(title: "Continue with email", action: sendCode, isLoading: isWorking)
                         }
-                        ExecuteDivider()
-                        ExecuteSecondaryButton(title: "Continue with Apple") { startOAuth(.apple) }
-                        ExecuteSecondaryButton(title: "Continue with Google") { startOAuth(.google) }
+                        if !isReviewSignIn {
+                            ExecuteDivider()
+                            ExecuteSecondaryButton(title: "Continue with Apple") { startOAuth(.apple) }
+                            ExecuteSecondaryButton(title: "Continue with Google") { startOAuth(.google) }
+                            if !otpWasSent && environment.configuration?.appReviewLogin != nil {
+                                ExecuteSecondaryButton(title: "App Review sign-in") {
+                                    error = nil
+                                    isReviewSignIn = true
+                                }
+                            }
+                        }
                     }
                     .disabled(isWorking)
                     .padding(ExecuteSpacing.md)
@@ -118,6 +140,28 @@ struct AuthenticationView: View {
                 try await environment.appState.verifyEmailOTP(email: address, token: token)
             } catch {
                 self.error = AppError.from(error, title: "Could not verify that code")
+            }
+        }
+    }
+
+    private func signInForReview() {
+        guard !isWorking else { return }
+        guard let address = EmailOTPInput.email(email), !reviewPassword.isEmpty else {
+            error = AppError(title: "Enter your sign-in details", message: "Enter the App Review email and password.")
+            return
+        }
+        let password = reviewPassword
+        reviewPassword = ""
+        isWorking = true
+        error = nil
+        Task {
+            defer { isWorking = false }
+            do {
+                try await environment.appState.signInForAppReview(email: address, password: password)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.error = AppError.from(error, title: "Could not sign in")
             }
         }
     }

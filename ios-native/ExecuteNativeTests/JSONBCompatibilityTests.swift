@@ -919,6 +919,121 @@ private extension XCTestCase {
     }
 }
 
+@MainActor
+final class AppReviewLoginTests: XCTestCase {
+    private func fixture(_ behavior: String = "valid", enabled: Bool = true)
+        -> (host: String, client: SupabaseClient, service: SupabaseAuthService, storage: AuthFixtureStorage) {
+        let host = "\(behavior).\(UUID().uuidString.lowercased()).review-fixture.supabase.co"
+        let url = URL(string: "https://\(host)")!
+        let storage = AuthFixtureStorage()
+        let transportConfiguration = URLSessionConfiguration.ephemeral
+        transportConfiguration.protocolClasses = [AuthFixtureProtocol.self]
+        let transport = URLSession(configuration: transportConfiguration)
+        let client = SupabaseClient(supabaseURL: url, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: storage, storageKey: "native-auth-fixture", autoRefreshToken: false),
+            global: .init(session: transport)))
+        var configuration = AppConfiguration(supabaseURL: url, supabaseAnonKey: "public-fixture-only",
+                                             revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "fixture")
+        if enabled {
+            configuration.appReviewLogin = AppReviewLogin(
+                email: AuthFixtureProtocol.reviewEmail, accountID: AuthFixtureProtocol.userID.uuidString,
+                origin: url.absoluteString, supabaseURL: url)
+        }
+        return (host, client, SupabaseAuthService(client: client, configuration: configuration,
+                                                 ownerDefaults: isolatedAuthOwnerDefaults(), reviewTransport: transport), storage)
+    }
+
+    func testReviewConfigurationRequiresExactHostedOriginAndDedicatedIdentity() {
+        let project = URL(string: "https://review-fixture.supabase.co")!
+        let email = AuthFixtureProtocol.reviewEmail
+        let id = AuthFixtureProtocol.userID.uuidString
+        XCTAssertNotNil(AppReviewLogin(email: email, accountID: id, origin: project.absoluteString, supabaseURL: project))
+        XCTAssertNil(AppReviewLogin(email: email, accountID: id, origin: "https://other.supabase.co", supabaseURL: project))
+        XCTAssertNil(AppReviewLogin(email: email, accountID: "", origin: project.absoluteString, supabaseURL: project))
+        XCTAssertNil(AppReviewLogin(email: "", accountID: id, origin: project.absoluteString, supabaseURL: project))
+        let loopback = URL(string: "https://127.0.0.1:55474")!
+        XCTAssertNil(AppReviewLogin(email: email, accountID: id, origin: loopback.absoluteString, supabaseURL: loopback))
+    }
+
+    func testDisabledBuildAndUnlistedEmailNeverRequestPasswordGrant() async throws {
+        for (isEnabled, email) in [(false, AuthFixtureProtocol.reviewEmail), (true, "another@example.invalid")] {
+            let fixture = fixture(enabled: isEnabled)
+            do {
+                _ = try await fixture.service.signInForAppReview(email: email, password: "local-test-password")
+                XCTFail("An unconfigured review grant succeeded")
+            } catch is AppError {}
+            XCTAssertEqual(AuthFixtureProtocol.traffic.count(fixture.host + ".password"), 0)
+            XCTAssertEqual(fixture.storage.writeAttempts, 0)
+        }
+    }
+
+    func testWrongOwnerAndProviderErrorNeverPersistTokensOrEchoProviderDetails() async throws {
+        for behavior in ["wrong-owner", "rejected"] {
+            let fixture = fixture(behavior)
+            do {
+                _ = try await fixture.service.signInForAppReview(
+                    email: AuthFixtureProtocol.reviewEmail, password: "local-test-password"
+                )
+                XCTFail("An invalid review grant succeeded")
+            } catch let error as AppError {
+                XCTAssertEqual(error.message, "Check the App Review email and password and try again.")
+            }
+            XCTAssertEqual(AuthFixtureProtocol.traffic.count(fixture.host + ".password"), 1)
+            XCTAssertEqual(AuthFixtureProtocol.traffic.count(fixture.host + ".user"), 0)
+            XCTAssertEqual(fixture.storage.writeAttempts, 0)
+            XCTAssertNil(fixture.client.auth.currentSession)
+        }
+    }
+
+    func testValidPasswordGrantRestoresThroughNormalOwnerSessionAndCanSignOut() async throws {
+        let fixture = fixture()
+        let state = AppState(
+            authService: fixture.service, accountService: MockAccountService(),
+            cache: UserScopedCacheStore(suiteName: "AppReviewLoginTests.\(UUID().uuidString)"),
+            router: AppRouter(), subscriptionService: MockSubscriptionService(), configurationError: nil
+        )
+        await state.start()
+        XCTAssertEqual(state.launchState, .signedOut)
+        try await state.signInForAppReview(
+            email: AuthFixtureProtocol.reviewEmail.uppercased(), password: "local-test-password"
+        )
+        guard case let .signedIn(user) = state.launchState else { return XCTFail("Expected the reviewer to activate") }
+        XCTAssertEqual(user.id, AuthFixtureProtocol.userID)
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(fixture.host + ".password"), 1)
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(fixture.host + ".user"), 1)
+        XCTAssertTrue(fixture.service.hasLocalSession(for: user.id))
+        let restored = try await fixture.service.restoreSession()
+        XCTAssertEqual(restored, user)
+
+        do {
+            _ = try await fixture.service.signInForAppReview(
+                email: AuthFixtureProtocol.reviewEmail, password: "local-test-password"
+            )
+            XCTFail("An active session should block another review login")
+        } catch is AppError {}
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(fixture.host + ".password"), 1)
+
+        await state.signOut()
+        XCTAssertEqual(state.launchState, .signedOut)
+        XCTAssertNil(fixture.client.auth.currentSession)
+        XCTAssertFalse(fixture.service.hasLocalSession(for: user.id))
+    }
+
+    func testGrantWithFailedSecureStorageCannotRestore() async throws {
+        let fixture = fixture()
+        fixture.storage.configure(rejectWrites: true)
+        do {
+            _ = try await fixture.service.signInForAppReview(
+                email: AuthFixtureProtocol.reviewEmail, password: "local-test-password"
+            )
+            XCTFail("A review grant was acknowledged without secure storage")
+        } catch is AppError {}
+        let restored = try await fixture.service.restoreSession()
+        XCTAssertNil(restored)
+        XCTAssertFalse(fixture.service.hasLocalSession(for: AuthFixtureProtocol.userID))
+    }
+}
+
 /// Local HTTP/storage fixtures exercise the real SDK's silent storage failure behavior.
 /// They are not provider authentication acceptance and never leave URLProtocol.
 @MainActor
@@ -1352,13 +1467,19 @@ private final class AuthFixtureStorage: AuthLocalStorage, @unchecked Sendable {
 private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
     static let userID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     static let callbackUserID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+    static let reviewEmail = "app-review@example.invalid"
     static let traffic = CallbackFixtureTraffic()
     override class func canInit(with request: URLRequest) -> Bool {
         let host = request.url?.host ?? ""
-        return ["auth-session.invalid", "auth-user-only.invalid"].contains(host) || host.hasSuffix(".auth-fixture.invalid")
+        return ["auth-session.invalid", "auth-user-only.invalid"].contains(host)
+            || host.hasSuffix(".auth-fixture.invalid") || host.hasSuffix(".review-fixture.supabase.co")
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        if let url = request.url, let host = url.host, host.hasSuffix(".review-fixture.supabase.co") {
+            respondToReviewFixture(url: url, host: host)
+            return
+        }
         guard let url = request.url, ["/auth/v1/verify", "/auth/v1/token", "/auth/v1/logout"].contains(url.path) else {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
@@ -1401,6 +1522,55 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
             }
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
+
+    private func respondToReviewFixture(url: URL, host: String) {
+        let expiry = Int(Date().timeIntervalSince1970) + 3600
+        let claims = Data("{\"exp\":\(expiry)}".utf8).base64EncodedString().replacingOccurrences(of: "=", with: "")
+        let ownerID = host.hasPrefix("wrong-owner.") ? Self.callbackUserID : Self.userID
+        let user: [String: Any] = ["id": ownerID.uuidString, "aud": "authenticated", "role": "authenticated",
+            "email": Self.reviewEmail, "app_metadata": [:], "user_metadata": [:], "created_at": "2026-11-09T00:00:00Z"]
+        let body: [String: Any]
+        let status: Int
+        switch (request.httpMethod, url.path) {
+        case ("POST", "/auth/v1/token"):
+            let grant = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "grant_type" })?.value
+            guard grant == "password" else {
+                client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
+                return
+            }
+            _ = Self.traffic.record(host + ".password")
+            if host.hasPrefix("rejected.") {
+                body = ["code": "invalid_credentials", "message": "private-fixture-response-must-not-escape"]
+                status = 400
+            } else {
+                body = ["access_token": "e30.\(claims).test", "refresh_token": "fixture-refresh-not-real",
+                        "token_type": "bearer", "expires_in": 3600, "expires_at": expiry, "user": user]
+                status = 200
+            }
+        case ("GET", "/auth/v1/user"):
+            _ = Self.traffic.record(host + ".user")
+            body = user
+            status = 200
+        case ("POST", "/auth/v1/logout"):
+            body = [:]
+            status = 200
+        default:
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
+            return
+        }
+        do {
+            let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil,
+                                           headerFields: ["Content-Type": "application/json", "X-Supabase-Api-Version": "2024-01-01"])!
+            let data = try JSONSerialization.data(withJSONObject: body)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
     override func stopLoading() { }
 }
 

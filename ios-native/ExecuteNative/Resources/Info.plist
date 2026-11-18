@@ -39,6 +39,12 @@
     <string>$(SUPABASE_ANON_KEY)</string>
     <key>SupabaseUploadBucket</key>
     <string>$(SUPABASE_UPLOAD_BUCKET)</string>
+    <key>AppReviewAccountEmail</key>
+    <string>$(APP_REVIEW_ACCOUNT_EMAIL)</string>
+    <key>AppReviewAccountID</key>
+    <string>$(APP_REVIEW_ACCOUNT_ID)</string>
+    <key>AppReviewSupabaseURL</key>
+    <string>$(APP_REVIEW_SUPABASE_URL)</string>
     <key>RevenueCatAPIKey</key>
     <string>$(REVENUECAT_API_KEY)</string>
     <key>RevenueCatEntitlementID</key>

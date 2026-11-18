@@ -75,6 +75,7 @@ protocol AuthServicing: AnyObject, Sendable {
     func markSessionLost(for userID: UUID)
     func sendEmailOTP(to email: String) async throws
     func verifyEmailOTP(email: String, token: String) async throws -> ExecuteUser
+    func signInForAppReview(email: String, password: String) async throws -> ExecuteUser
     func authorizationURL(for provider: OAuthProvider) async throws -> URL
     func callbackIdentity(_ url: URL) throws -> String?
     func handleCallbackURL(_ url: URL) async throws -> ExecuteUser?
@@ -86,6 +87,9 @@ extension AuthServicing {
     func markSessionLost(for userID: UUID) {}
     func monitorSessionLoss(onLoss: @escaping @MainActor () async -> Void) async {}
     func callbackIdentity(_ url: URL) throws -> String? { nil }
+    func signInForAppReview(email: String, password: String) async throws -> ExecuteUser {
+        throw AppError(title: "App Review sign-in unavailable", message: "This build does not support App Review sign-in.")
+    }
 }
 
 @MainActor

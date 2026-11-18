@@ -11,3 +11,9 @@ REVENUECAT_MONTHLY_PRODUCT_ID = execute_premium_month
 REVENUECAT_ANNUAL_PRODUCT_ID = execute_premium_annual
 SUPABASE_UPLOAD_BUCKET = uploads
 AUTH_CALLBACK_SCHEME = com.executelabs.execute.native-dev
+// Optional App Review login for one preprovisioned synthetic Auth account.
+// Set all three together for the intended submission environment, or leave blank.
+// Give the password to App Review privately. Never set it in build configuration.
+APP_REVIEW_ACCOUNT_EMAIL =
+APP_REVIEW_ACCOUNT_ID =
+APP_REVIEW_SUPABASE_URL =

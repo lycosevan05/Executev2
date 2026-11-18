@@ -155,6 +155,15 @@ final class AppState: ObservableObject {
         await activate(user)
     }
 
+    func signInForAppReview(email: String, password: String) async throws {
+        let attempt = beginAuthenticationAttempt()
+        authenticationRequestsInFlight.insert(attempt)
+        defer { authenticationRequestsInFlight.remove(attempt) }
+        let user = try await authService.signInForAppReview(email: email, password: password)
+        guard authenticationGeneration == attempt else { throw CancellationError() }
+        await activate(user)
+    }
+
     func authorizationURL(for provider: OAuthProvider) async throws -> URL {
         let attempt = beginAuthenticationAttempt()
         authenticationRequestsInFlight.insert(attempt)

@@ -10,6 +10,7 @@ struct AppConfiguration: Equatable {
     var revenueCatOfferingID = "default"
     var revenueCatMonthlyProductID = "execute_premium_month"
     var revenueCatAnnualProductID = "execute_premium_annual"
+    var appReviewLogin: AppReviewLogin? = nil
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
     var stagedDeletionOwnerID: UUID? = nil
 #endif
@@ -64,6 +65,12 @@ struct AppConfiguration: Equatable {
             uploadBucket: uploadBucket.isEmpty ? "uploads" : uploadBucket,
             callbackScheme: callbackScheme
         )
+        configuration.appReviewLogin = AppReviewLogin(
+            email: value("AppReviewAccountEmail"),
+            accountID: value("AppReviewAccountID"),
+            origin: value("AppReviewSupabaseURL"),
+            supabaseURL: supabaseURL
+        )
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
         configuration.stagedDeletionOwnerID = stagedDeletionOwnerID
 #endif
@@ -88,4 +95,25 @@ struct AppConfiguration: Equatable {
         return UUID(uuidString: owner)
     }
 #endif
+}
+
+struct AppReviewLogin: Equatable {
+    let email: String
+    let accountID: UUID
+
+    init?(email: String, accountID: String, origin: String, supabaseURL: URL) {
+        guard let address = EmailOTPInput.email(email), !address.contains("$("),
+              let id = UUID(uuidString: accountID), id.uuidString != "00000000-0000-0000-0000-000000000000",
+              let components = URLComponents(url: supabaseURL, resolvingAgainstBaseURL: false),
+              components.scheme == "https", components.host?.hasSuffix(".supabase.co") == true,
+              components.path.isEmpty, components.user == nil, components.password == nil,
+              components.port == nil, components.query == nil, components.fragment == nil,
+              origin == supabaseURL.absoluteString else { return nil }
+        self.email = address
+        self.accountID = id
+    }
+
+    func permits(email value: String) -> Bool {
+        EmailOTPInput.email(value)?.caseInsensitiveCompare(email) == .orderedSame
+    }
 }

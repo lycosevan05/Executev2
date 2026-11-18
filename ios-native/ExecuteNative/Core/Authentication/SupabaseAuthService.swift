@@ -8,6 +8,7 @@ final class SupabaseAuthService: AuthServicing {
     private let operations = AuthOperationQueue()
     private let ownerDefaults: UserDefaults
     private let ownerKey: String
+    private let reviewTransport: URLSession?
     private var authEpoch = UUID()
 
     private enum AcknowledgedOwner: Equatable {
@@ -29,10 +30,12 @@ final class SupabaseAuthService: AuthServicing {
     private var callbackOrder: [String] = []
     private var completedCallbacks: Set<String> = []
 
-    init(client: SupabaseClient, configuration: AppConfiguration, ownerDefaults: UserDefaults) {
+    init(client: SupabaseClient, configuration: AppConfiguration, ownerDefaults: UserDefaults,
+         reviewTransport: URLSession? = nil) {
         self.client = client
         self.configuration = configuration
         self.ownerDefaults = ownerDefaults
+        self.reviewTransport = reviewTransport
         let urlDigest = AuthCallbackInput.digest(configuration.supabaseURL.absoluteString)
         self.ownerKey = "execute.auth.acknowledgedOwner.\(urlDigest)"
     }
@@ -116,6 +119,57 @@ final class SupabaseAuthService: AuthServicing {
             self.rememberOwner(user.id)
             self.fencePendingCallbacks()
             return user
+        }
+    }
+
+    func signInForAppReview(email: String, password: String) async throws -> ExecuteUser {
+        let failure = AppError(title: "Could not sign in", message: "Check the App Review email and password and try again.")
+        guard let review = configuration.appReviewLogin, review.permits(email: email),
+              !password.isEmpty else { throw failure }
+        return try await operations.enqueue {
+            guard self.client.auth.currentSession == nil else { throw failure }
+
+            // The SDK saves a successful password grant before returning it. Keep that
+            // first grant out of the main client's storage until the owner is verified.
+            let transport = self.reviewTransport ?? URLSession(configuration: .ephemeral)
+            defer { if self.reviewTransport == nil { transport.finishTasksAndInvalidate() } }
+            let temporaryClient = SupabaseClient(
+                supabaseURL: self.configuration.supabaseURL,
+                supabaseKey: self.configuration.supabaseAnonKey,
+                options: .init(
+                    auth: .init(storage: ReviewGrantStorage(), autoRefreshToken: false),
+                    global: .init(session: transport)
+                )
+            )
+            let session: Session
+            do {
+                session = try await temporaryClient.auth.signIn(email: review.email, password: password)
+            } catch {
+                // Upstream errors can contain identifying details.
+                throw failure
+            }
+            guard session.user.id == review.accountID, let serverEmail = session.user.email,
+                  review.permits(email: serverEmail) else { throw failure }
+
+            self.recordSignedOut()
+            do {
+                let installed = try await self.client.auth.setSession(
+                    accessToken: session.accessToken, refreshToken: session.refreshToken
+                )
+                guard installed.user.id == review.accountID, let installedEmail = installed.user.email,
+                      review.permits(email: installedEmail) else { throw failure }
+                let user = try await self.acknowledgedUser(matching: Self.acknowledgment(session))
+                self.rememberOwner(user.id)
+                self.fencePendingCallbacks()
+                return user
+            } catch {
+                // Only clear a matching grant. The signed-out marker also fences
+                // session restoration if secure storage cannot be cleared.
+                if self.client.auth.currentSession?.user.id == review.accountID {
+                    try? await self.client.auth.signOut(scope: .local)
+                }
+                throw failure
+            }
         }
     }
 
@@ -205,6 +259,12 @@ final class SupabaseAuthService: AuthServicing {
             ?? "Execute member"
         return ExecuteUser(id: user.id, email: user.email ?? "", displayName: name)
     }
+}
+
+private struct ReviewGrantStorage: AuthLocalStorage {
+    func store(key: String, value: Data) throws {}
+    func retrieve(key: String) throws -> Data? { nil }
+    func remove(key: String) throws {}
 }
 
 /// The SDK treats a failed Keychain delete as a signed-out session. Suppress
