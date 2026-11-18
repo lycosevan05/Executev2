@@ -65,15 +65,33 @@ unchanged historical rows, matching and conflicting legacy fields, the real
 These use synthetic Auth and Storage schemas and the full six-migration chain.
 They do not verify either hosted API.
 
+## Extension for Auth liveness on unbound entities
+
+`live-auth-legacy-policy.sql` adds a restrictive policy for the authenticated
+role to all 19 tables. Unbound rows must satisfy both the existing exact-email
+ownership rules and a check that the caller's UUID still exists in Auth. The
+policy applies to existing and proposed rows across SELECT, DELETE, INSERT, and
+UPDATE. UUID-bound rows continue through current ownership rules and the UUID FK.
+The private lookup accepts no caller-supplied ID and returns only whether the
+current UUID exists. Keep its schema outside the exposed API schema list and
+verify the installing role can read Auth. The service role and provider write
+contracts are unaffected.
+
+The staged fixture checks all 19 policy definitions, normal authorized legacy
+reads and deletes, a missing subject's predicate result, and service-role and
+UUID-bound reads. This is a statement-level Auth lookup. The write-side FK
+still coordinates row writes and Auth removal. Legacy rows awaiting cleanup
+can remain visible to a matching current account, so prove account reuse and
+cleanup before rollout.
+
 ## Remaining boundaries
 
 - Auth hard-deletion prevents issuing refreshed tokens. An already-issued access
   token can remain valid until expiry. E58's legacy email branch compares JWT
-  claims and row fields without checking Auth liveness. The extension covers
-  authenticated writes through UUID binding. Reads or deletes of untouched
-  null-owner rows still follow the E58 policy and need separate live Auth
-  ownership review. A liveness check alone cannot coordinate writes that
-  observed the active account before the final cleanup check.
+  claims and row fields. The two extensions supply UUID binding for
+  authenticated writes and Auth liveness for untouched legacy rows in the
+  fixture. Validate both through real Auth and PostgREST, including transaction
+  ordering and account reuse.
 - Supabase documents Auth removal failing for Auth-owned Storage objects.
   Execute's cleanup contract is the configured bucket and its exact UUID prefix,
   which can also contain an object written with service credentials. Prove the
@@ -95,6 +113,8 @@ They do not verify either hosted API.
    the isolated schema rollout and rollback. Apply the candidate only to a
    separately authorized isolated project after checking historical ownership
    counts and every path that deletes Auth users. If installed, remove the
+   `live auth for legacy entities` policies before dropping their private
+   function and schema. Then remove the
    `pin_authenticated_legacy_owner` triggers and their trigger function before
    dropping `account_deletion_live_owner` on the same 19 reviewed tables. Use
    one transaction for the reviewed schema rollback. Keep assigned UUIDs and

@@ -21,6 +21,8 @@ LEGACY_DELETION_FIRST = "66666666-6666-6666-6666-666666666666"
 RETURNING_EMAIL_OWNER = "77777777-7777-7777-7777-777777777777"
 LEGACY_PATCH_ID = "88888888-8888-8888-8888-888888888888"
 LEGACY_WRITER_ROW = "99999999-9999-9999-9999-999999999999"
+LIVENESS_ROW = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+MISSING_AUTH_OWNER = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
 
 class Fixture:
@@ -291,6 +293,41 @@ def test_authenticated_legacy_guard(db):
     print("PASS email-only provider reconciliation remains compatible and outside the guard")
 
 
+def test_legacy_liveness_policy(db):
+    email = "unrelated@example.invalid"
+    db.sql(
+        "set role service_role; "
+        f"insert into public.goals(id, owner_id, owner_email) values ('{LIVENESS_ROW}', null, '{email}');"
+    )
+    db.file(HERE / "live-auth-legacy-policy.sql")
+    assert db.sql(
+        "select count(*) from pg_policies where schemaname = 'public' "
+        "and policyname = 'live auth for legacy entities' and permissive = 'RESTRICTIVE' "
+        "and cmd = 'ALL' and roles = array['authenticated']::name[] and qual = with_check"
+    ) == "19"
+    assert db.sql(
+        "select has_table_privilege('authenticated', 'auth.users', 'select'), "
+        "has_function_privilege('anon', 'execute_deletion_guard.current_auth_owner_exists()', 'execute')"
+    ) == "f|f"
+    print("PASS authenticated liveness policies cover the 19 tables without granting direct Auth access")
+
+    current_owner = authenticated_as(UNRELATED, email)
+    assert db.sql(current_owner + f"select count(*) from public.goals where id = '{LIVENESS_ROW}';") == "1"
+    assert db.sql(
+        authenticated_as(MISSING_AUTH_OWNER, email)
+        + f"select count(*) from public.goals where id = '{LIVENESS_ROW}';"
+    ) == "0"
+    assert db.sql(
+        "set role service_role; select count(*) from public.goals "
+        f"where id = '{LIVENESS_ROW}';"
+    ) == "1"
+    assert db.sql(
+        current_owner + f"delete from public.goals where id = '{LIVENESS_ROW}' returning id;"
+    ) == LIVENESS_ROW
+    assert db.sql(current_owner + f"select count(*) from public.goals where owner_id = '{UNRELATED}';") == "2"
+    print("PASS live owners can read and delete legacy rows while the service path is unchanged")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--postgres-bin", required=True, type=Path)
@@ -299,3 +336,4 @@ if __name__ == "__main__":
         with Fixture(Path(directory), options.postgres_bin.resolve()) as database:
             test_guard(database)
             test_authenticated_legacy_guard(database)
+            test_legacy_liveness_policy(database)
