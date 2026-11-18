@@ -33,8 +33,8 @@ private struct AISharingPrompt: ViewModifier {
             } message: { _ in
                 Text(AISharingConsent.disclosure)
             }
-            .onChange(of: owner) {
-                if let promptOwner = consent.promptOwner, promptOwner != owner {
+            .onChange(of: owner) { currentOwner in
+                if let promptOwner = consent.promptOwner, promptOwner != currentOwner {
                     consent.dismissPrompt()
                 }
             }
