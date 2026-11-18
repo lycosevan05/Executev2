@@ -1,4 +1,4 @@
-"""Rehearse reversal of the five E63 optional deletion guards in a fresh local DB."""
+"""Rehearse reversal of E63 and E64 optional deletion guards in a fresh local DB."""
 
 import argparse
 import tempfile
@@ -26,6 +26,7 @@ GUARDS = (
     "live-auth-legacy-policy.sql",
     "retired-stripe-subscription-guard.sql",
     "storage-upload-admission-guard.sql",
+    "storage-upload-dispatch-guard.sql",
 )
 STRIPE_ID = "sub_fixture_rollback"
 UNRELATED_EMAIL = "unrelated@example.invalid"
@@ -39,6 +40,7 @@ declare
   entity regclass;
 begin
   if exists (select from execute_storage_deletion_guard.closed_upload_admission)
+    or exists (select from execute_storage_deletion_guard.pending_upload_dispatch)
     or exists (select from execute_deletion_private.retired_stripe_subscription) then
     raise exception 'pending deletion state requires reconciliation';
   end if;
@@ -63,6 +65,10 @@ drop table execute_deletion_private.retired_stripe_subscription;
 drop schema execute_deletion_private;
 drop policy "account deletion uploads insert guard" on storage.objects;
 drop policy "account deletion uploads update guard" on storage.objects;
+drop function public.begin_account_upload_dispatch(uuid, text);
+drop function public.finish_account_upload_dispatch(uuid, uuid);
+drop function public.close_and_list_account_upload_dispatches(uuid);
+drop table execute_storage_deletion_guard.pending_upload_dispatch;
 drop function public.close_account_upload_admission(uuid);
 drop function execute_storage_deletion_guard.current_owner_can_upload();
 drop table execute_storage_deletion_guard.closed_upload_admission;
@@ -143,6 +149,20 @@ def rehearse(db):
     print("PASS clean reversal restores the baseline schema and preserves existing client/provider behavior")
 
     install(db)
+    dispatch_id = db.sql(
+        f"set role service_role; select dispatch_id "
+        f"from public.begin_account_upload_dispatch('{WRITER_FIRST}', 'in-flight.txt');"
+    )
+    pending_path = f"{WRITER_FIRST}/{dispatch_id}-in-flight.txt"
+    assert db.sql("select count(*) from execute_storage_deletion_guard.closed_upload_admission;") == "0"
+    reject_pending_reversal(db)
+    assert db.sql(
+        "select object_name from execute_storage_deletion_guard.pending_upload_dispatch;"
+    ) == pending_path
+    print("PASS a pending upload dispatch independently prevents structural reversal")
+    # In this SQL-only fixture no bytes were sent, so the outcome is known.
+    db.sql(f"set role service_role; select public.finish_account_upload_dispatch('{WRITER_FIRST}', '{dispatch_id}');")
+
     db.sql(f"set role service_role; select public.close_account_upload_admission('{WRITER_FIRST}');")
     reject_pending_reversal(db)
     assert db.sql("select count(*) from execute_storage_deletion_guard.closed_upload_admission;") == "1"

@@ -17,6 +17,9 @@ deployment revision. Supabase also documents that its CLI download omits
 dependency configuration.
 [Supabase download and restore guidance](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore)
 
+E64 independently rehashed the three dashboard-captured files in the archived
+deletion evidence. All three matched their recorded per-file digests.
+
 If a compiled candidate becomes available, compare the bytes to the recorded v6
 digest before describing it as the deployed artifact:
 
@@ -106,7 +109,8 @@ requires a separate recovery decision.
 
 The tests in this directory exercise the local HTTP admission and shutoff
 contract. The structural reversal rehearsal uses a fresh PostgreSQL fixture
-with the six baseline migrations and the five E63 optional guards:
+with the six baseline migrations, the five E63 optional guards, and the E64
+dispatch guard.
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 supabase/tests/account-deletion/test_staged_schema_reversal.py \
@@ -116,8 +120,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 supabase/tests/account-deletion/test_staged_sc
 It passed on PostgreSQL 17.12. The clean fixture recovered the exact baseline
 schema export and preserved the existing unrelated row. Authenticated entity
 writes and the billing reconciliation RPC worked before, during and after
-installation. A retained upload closure or Stripe retirement fingerprint each
-blocked reversal and preserved the staged schema.
+installation. An unresolved upload dispatch, an upload closure, and a Stripe
+retirement fingerprint each independently blocked reversal and preserved the
+staged schema. The dispatch check also preserved the exact object path.
 
 The rehearsal uses synthetic Auth and Storage schemas, with no Storage byte
 operations or provider calls. Hosted deployment, provider replay, destructive
