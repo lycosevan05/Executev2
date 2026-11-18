@@ -88,6 +88,7 @@ export async function deleteAccount(
   tables: readonly string[],
   store: DeletionStore,
   billing: DeletionBilling,
+  closeAndDrainUploads?: (ownerId: string) => Promise<void>,
 ) {
   validateUser(user);
   // Complete read-only enumeration before the first irreversible/provider operation.
@@ -96,8 +97,14 @@ export async function deleteAccount(
   if (ids.some((id) => !/^sub_[A-Za-z0-9_]+$/.test(id))) {
     throw new Error("Invalid subscription reference; cleanup stopped.");
   }
-  const uploads = await collectUploads(store, user.id);
+  let uploads = await collectUploads(store, user.id);
   for (const id of ids) await billing.verifyOwner(id, user);
+  if (closeAndDrainUploads) {
+    await closeAndDrainUploads(user.id);
+    // Files that finished before their dispatch was acknowledged can be newer
+    // than the read-only preflight. Inventory them after the upload drain.
+    uploads = await collectUploads(store, user.id);
+  }
   for (const id of ids) await billing.cancel(id);
   for (let offset = 0; offset < uploads.length; offset += pageSize) {
     await store.removeUploads(uploads.slice(offset, offset + pageSize));

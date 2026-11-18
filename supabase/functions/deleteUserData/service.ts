@@ -6,7 +6,9 @@ import { createDeletionBilling } from "./billing.ts";
 
 export async function removeAccount(
   user: DeletionUser,
-  options = { allowStripe: true },
+  options: { allowStripe: boolean; requireUploadDrain?: boolean } = {
+    allowStripe: true,
+  },
 ) {
   const service = createServiceClient();
   let stripe: Stripe | undefined;
@@ -40,5 +42,16 @@ export async function removeAccount(
         : undefined,
     ),
     billing,
+    options.requireUploadDrain
+      ? async (ownerId) => {
+        const reply = await service.rpc(
+          "close_and_list_account_upload_dispatches",
+          { p_owner_id: ownerId },
+        );
+        if (reply.error || !Array.isArray(reply.data) || reply.data.length) {
+          throw new Error("Upload cleanup is waiting for a verified drain.");
+        }
+      }
+      : undefined,
   );
 }

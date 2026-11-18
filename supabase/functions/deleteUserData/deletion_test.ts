@@ -257,6 +257,34 @@ Deno.test("unavailable staged retirement stops before provider or storage operat
   deepEqual(fixture.events, []);
 });
 
+Deno.test("a staged deletion waits for the upload drain and inventories again on retry", async () => {
+  const fixture = new Fixture();
+  const file = `${user.id}/finished-during-preflight.jpg`;
+  const remove = (drain: (ownerId: string) => Promise<void>) =>
+    deleteAccount(
+      user,
+      ["goals"],
+      fixture.store(),
+      new BillingFixture().billing(),
+      drain,
+    );
+
+  await rejects(() =>
+    remove(async (ownerId) => {
+      equal(ownerId, user.id);
+      throw new Error("Upload cleanup is waiting for a verified drain.");
+    }), /waiting for a verified drain/);
+  deepEqual(fixture.events, []);
+
+  const result = await remove(async (ownerId) => {
+    equal(ownerId, user.id);
+    fixture.files.add(file);
+  });
+  equal(fixture.files.has(file), false);
+  equal(result.results.storage, "deleted 1");
+  deepEqual(fixture.events, ["uploads", "rows:goals", "auth"]);
+});
+
 Deno.test("staged retirement keeps absent and JSON-null links distinct and requires an exact count", async () => {
   const fixture = new Fixture();
   fixture.tables.set("user_subscriptions", [

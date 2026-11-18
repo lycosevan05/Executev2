@@ -12,5 +12,6 @@ Deno.serve(createStagedDeletionHandler({
     };
   },
   getUser,
-  remove: (user) => removeAccount(user, { allowStripe: false }),
+  remove: (user) =>
+    removeAccount(user, { allowStripe: false, requireUploadDrain: true }),
 }));
