@@ -153,7 +153,7 @@ struct ProfilePreferenceField: Identifiable {
 enum ProfilePremiumPresentation {
     static func detail(for state: PremiumState, now: Date = Date()) -> String {
         guard state.isPremium else { return "AI plans, guidance and performance insights" }
-        guard let expiration = state.expirationDate, expiration > now else { return "Your premium access is active" }
+        guard let expiration = state.futureExpirationDate(now: now) else { return "Your premium access is active" }
         return "Active through \(expiration.formatted(.dateTime.month(.abbreviated).day().year()))"
     }
 }

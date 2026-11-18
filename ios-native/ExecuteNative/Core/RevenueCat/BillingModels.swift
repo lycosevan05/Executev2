@@ -9,6 +9,11 @@ struct PremiumState: Equatable, Sendable {
 
     static let free = PremiumState(isPremium: false, entitlementIdentifier: "", expirationDate: nil)
 
+    func futureExpirationDate(now: Date = Date()) -> Date? {
+        guard isPremium, let expirationDate, expirationDate > now else { return nil }
+        return expirationDate
+    }
+
     static func resolve(server: BillingSubscription?, live: PremiumState?, now: Date = Date()) -> PremiumState {
         // RevenueCat may keep an entitlement active during Apple's billing grace
         // period even when the ordinary paid period has already ended.

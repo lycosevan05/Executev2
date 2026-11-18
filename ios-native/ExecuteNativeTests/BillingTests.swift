@@ -317,6 +317,43 @@ final class BillingStoreTests: XCTestCase {
         client.states[billingUserA.email] = entitled
         await store.refresh()
         XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertEqual(store.message, "Your Premium access is active.")
+    }
+
+    func testBackendAccessDoesNotConfirmPendingAppStorePurchase() async {
+        let client = TestRevenueCatClient()
+        client.result = .pending
+        let reader = TestSubscriptionReader()
+        let store = makeStore(client, reader: reader)
+        await store.load()
+        await store.purchaseSelectedPackage()
+
+        reader.rows[billingUserA.email] = BillingSubscription(userID: billingUserA.email, plan: "premium", status: "active")
+        await store.refresh()
+
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertTrue(store.message?.contains("awaiting approval") == true)
+    }
+
+    func testCustomerInfoUpdateArrivingDuringRefreshConfirmsPendingPurchase() async {
+        let client = TestRevenueCatClient()
+        client.result = .pending
+        let store = makeStore(client)
+        await store.load()
+        await store.purchaseSelectedPackage()
+
+        let gate = BillingGate()
+        client.premiumGate = gate
+        let refresh = Task { await store.refresh() }
+        await gate.waitUntilEntered()
+        client.states[billingUserA.email] = entitled
+        client.onCustomerInfoChange?()
+        gate.release()
+        await refresh.value
+
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertEqual(store.message, "Your Premium access is active.")
+        XCTAssertFalse(store.isRefreshing)
     }
 
     func testRestoreWithoutStorePurchaseDoesNotMisreportWebMembership() async {

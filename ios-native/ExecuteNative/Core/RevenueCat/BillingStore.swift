@@ -21,12 +21,16 @@ final class BillingStore: ObservableObject {
     private var generation = UUID()
     private var refreshGeneration = UUID()
     private var liveState: PremiumState?
+    private var purchaseConfirmationPending = false
+    private var customerInfoRefreshPending = false
+
+    private static let premiumActiveMessage = "Your Premium access is active."
 
     init(service: SubscriptionServicing, reader: SubscriptionReading = EmptySubscriptionReader()) {
         self.service = service
         self.reader = reader
         service.onCustomerInfoChange = { [weak self] in
-            Task { await self?.refresh() }
+            self?.scheduleCustomerInfoRefresh()
         }
     }
 
@@ -47,6 +51,8 @@ final class BillingStore: ObservableObject {
         user = nil
         subscription = nil
         liveState = nil
+        purchaseConfirmationPending = false
+        customerInfoRefreshPending = false
         packages = []
         selectedPackageID = nil
         error = nil
@@ -63,9 +69,27 @@ final class BillingStore: ObservableObject {
         onPremiumStateChanged?(premiumState)
     }
 
-    func refresh() async {
-        guard let user, !isRefreshing, !isBusy else { return }
+    private func scheduleCustomerInfoRefresh() {
+        guard user != nil else { return }
+        customerInfoRefreshPending = true
+        guard !isRefreshing, !isBusy else { return }
         let session = generation
+        Task { [weak self] in
+            guard let self, self.generation == session, self.customerInfoRefreshPending else { return }
+            await self.refresh()
+        }
+    }
+
+    func refresh() async {
+        let session = generation
+        repeat {
+            guard let user, generation == session, !isRefreshing, !isBusy else { return }
+            customerInfoRefreshPending = false
+            await refresh(user: user, session: session)
+        } while customerInfoRefreshPending
+    }
+
+    private func refresh(user: ExecuteUser, session: UUID) async {
         let request = UUID()
         refreshGeneration = request
         isRefreshing = true
@@ -91,6 +115,10 @@ final class BillingStore: ObservableObject {
             let state = try await liveTask.value
             guard generation == session, refreshGeneration == request else { return }
             liveState = state
+            if purchaseConfirmationPending && PremiumState.resolve(server: nil, live: state).isPremium {
+                purchaseConfirmationPending = false
+                message = Self.premiumActiveMessage
+            }
         } catch {
             guard generation == session, refreshGeneration == request else { return }
             refreshError = AppError.from(error, title: "App Store status could not be refreshed")
@@ -149,6 +177,7 @@ final class BillingStore: ObservableObject {
         isBusy = true
         error = nil
         message = nil
+        purchaseConfirmationPending = false
         do {
             try await service.configure(appUserID: user.email)
             guard generation == session else { return }
@@ -159,10 +188,12 @@ final class BillingStore: ObservableObject {
                 switch result {
                 case .purchased(let state):
                     liveState = state
-                    message = state.isPremium ? "Your Premium access is active." : "Your purchase was received. Access is still being confirmed. Try refreshing or restoring purchases."
+                    purchaseConfirmationPending = !state.isPremium
+                    message = state.isPremium ? Self.premiumActiveMessage : "Your purchase was received. Access is still being confirmed. Try refreshing or restoring purchases."
                 case .cancelled:
                     message = "Purchase canceled. No changes were made."
                 case .pending:
+                    purchaseConfirmationPending = !PremiumState.resolve(server: nil, live: liveState).isPremium
                     message = "Your purchase is awaiting approval. Premium will update when the App Store confirms it."
                 }
             case .restore:

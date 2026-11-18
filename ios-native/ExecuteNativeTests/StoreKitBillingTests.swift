@@ -56,6 +56,84 @@ final class StoreKitBillingTests: XCTestCase {
         XCTAssertEqual(entitlementCount, 0)
     }
 
+    func testAskToBuyApprovalGrantsThePendingEntitlement() async throws {
+        let session = try makeSession()
+        defer { session.resetToDefaultState(); session.clearTransactions() }
+        let productID = "execute_premium_annual"
+        let transaction = try await makePendingPurchase(productID: productID, session: session)
+
+        try session.approveAskToBuyTransaction(identifier: transaction.identifier)
+
+        try await expectEntitlement(productID)
+    }
+
+    func testInterruptedPurchaseGrantsAccessOnlyAfterIssueResolution() async throws {
+        let session = try makeSession()
+        defer { session.resetToDefaultState(); session.clearTransactions() }
+        session.interruptedPurchasesEnabled = true
+        let productID = "execute_premium_month"
+        let products = try await Product.products(for: [productID])
+        let product = try XCTUnwrap(products.first)
+
+        do {
+            if case .success = try await product.purchase() {
+                XCTFail("An interrupted purchase should not succeed")
+            }
+        } catch {
+            // This local StoreKit interruption may surface as a purchase error.
+        }
+        let entitledBeforeResolution = await hasEntitlement(productID)
+        XCTAssertFalse(entitledBeforeResolution)
+        let interrupted = try XCTUnwrap(session.allTransactions().first { $0.productIdentifier == productID })
+
+        try session.resolveIssueForTransaction(identifier: interrupted.identifier)
+
+        try await expectEntitlement(productID)
+    }
+
+    func testAskToBuyDeclineLeavesTheAccountWithoutAnEntitlement() async throws {
+        let session = try makeSession()
+        defer { session.resetToDefaultState(); session.clearTransactions() }
+        let productID = "execute_premium_annual"
+        let transaction = try await makePendingPurchase(productID: productID, session: session)
+
+        try session.declineAskToBuyTransaction(identifier: transaction.identifier)
+
+        XCTAssertFalse(session.allTransactions().contains(where: \.pendingAskToBuyConfirmation))
+        let entitled = await hasEntitlement(productID)
+        XCTAssertFalse(entitled)
+    }
+
+    private func makePendingPurchase(productID: String, session: SKTestSession) async throws -> SKTestTransaction {
+        session.askToBuyEnabled = true
+        let products = try await Product.products(for: [productID])
+        let product = try XCTUnwrap(products.first)
+        if case .pending = try await product.purchase() {
+            let entitled = await hasEntitlement(productID)
+            XCTAssertFalse(entitled)
+        } else {
+            XCTFail("Expected the test purchase to await approval")
+        }
+        return try XCTUnwrap(session.allTransactions().first {
+            $0.productIdentifier == productID && $0.pendingAskToBuyConfirmation
+        })
+    }
+
+    private func expectEntitlement(_ productID: String) async throws {
+        for _ in 0..<30 {
+            if await hasEntitlement(productID) { return }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTFail("StoreKit did not publish the entitlement after resolution")
+    }
+
+    private func hasEntitlement(_ productID: String) async -> Bool {
+        for await result in Transaction.currentEntitlements {
+            if case .verified(let transaction) = result, transaction.productID == productID { return true }
+        }
+        return false
+    }
+
     @available(iOS 17.0, *)
     func testCancellationDoesNotCreateAnEntitlement() async throws {
         let session = try makeSession()

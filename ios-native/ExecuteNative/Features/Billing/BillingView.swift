@@ -90,7 +90,7 @@ struct BillingContentView: View {
                     .foregroundStyle(ExecuteColor.chartreuse)
                     .accessibilityIdentifier("billing.premiumActive")
             }
-            if let date = store.premiumState.expirationDate {
+            if let date = store.premiumState.futureExpirationDate() {
                 Text("Access through \(date.formatted(date: .abbreviated, time: .omitted))")
                     .font(ExecuteTypography.body(13))
             }
