@@ -9,6 +9,7 @@ export interface DeletionStripe {
 }
 export function createDeletionBilling(
   getStripe: () => DeletionStripe,
+  options: { requireOwnerUUID?: boolean } = {},
 ): DeletionBilling {
   const noCancellationNeeded = new Set<string>();
   const verified = new Set<string>();
@@ -30,10 +31,18 @@ export function createDeletionBilling(
           "Subscription ownership could not be verified; no account data deleted.",
         );
       }
-      // Checkout sets metadata.user_id to the authenticated email (or UUID).
-      // Missing/mismatched legacy metadata needs operator reconciliation, never blind cancellation.
       const owner = subscription.metadata.user_id;
-      if (owner !== user.id && (!user.email || owner !== user.email)) {
+      const boundUUID = subscription.metadata.execute_owner_uuid;
+      const hasLegacyOwnerMatch = owner === user.id ||
+        (!!user.email && owner === user.email);
+      // A staged cancellation may not rely on the mutable legacy email alone.
+      // Preserve the verified historical UUID format for earlier purchases.
+      const mayCancel = options.requireOwnerUUID
+        ? (boundUUID === user.id && hasLegacyOwnerMatch) ||
+          (boundUUID === undefined && owner === user.id)
+        : hasLegacyOwnerMatch &&
+          (boundUUID === undefined || boundUUID === user.id);
+      if (!mayCancel) {
         throw new Error(
           "Subscription ownership does not match; cleanup stopped.",
         );

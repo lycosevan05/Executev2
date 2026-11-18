@@ -516,3 +516,36 @@ Keep the gateway and Edge running while the tests run. Read the exact
 fixture owners through the local APIs and independently query the isolated
 database. Afterward, stop the fixture processes and the dedicated stack,
 then discard the simulator and private fixture credential files.
+
+## Staged billing projection fence
+
+Install `billing-projection-fence.sql` after the earlier optional guards
+in a disposable environment. The staged deletion adapter verifies the exact
+subscription payload and owner under a database lock before it cancels
+anything or removes data. A changed projection, conflicting ownership,
+unavailable RPC, or unverified acknowledgement stops cleanup. Stripe
+cancellation in the opted-in staged adapter requires immutable Auth UUID
+metadata from the current provider snapshot. New checkouts stamp that UUID
+alongside the existing provider email field.
+
+Closing a billing identity blocks email-keyed projection writes, including
+late events that use an unseen Stripe subscription ID or arrive with only
+RevenueCat attribution. Same-email account recreation does not reopen the
+identity. Mixed transfers that encounter the fence roll back as a whole.
+Same-owner deletion retries can revalidate and continue. The closed identity
+stores salted fingerprints for the email and Auth UUID in the private schema.
+Treat these markers and their secret as retained account-linked data.
+
+Run `billing-projection-fence-test.sql` in the disposable PostgreSQL fixture
+after the baseline migrations and the optional billing fence. Remove the
+optional fence with `reverse-billing-projection-fence.sql` before the older
+staged guards, after disabling the staged route and draining admitted work.
+Reversal refuses to proceed when closed identities still exist.
+
+The fence is an intermediate safety barrier. A replacement account cannot
+purchase or restore through legacy email-keyed projections while the identity
+is closed. Native and web RevenueCat lookups still use email, and the fence
+does not stop already-admitted provider checkout sessions or cancel active
+App Store subscriptions. Verify immutable provider identities and entitlement
+reads, old purchase reassociation, provider-side renewal behavior and checkout
+drain before production activation.

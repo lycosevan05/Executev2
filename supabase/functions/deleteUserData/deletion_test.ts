@@ -801,3 +801,95 @@ Deno.test("partial provider cancellation retains records and auth; retry skips p
   equal(b.events.filter((e) => e === "cancel:sub_a").length, 1);
   equal(f.events.at(-1), "auth");
 });
+
+Deno.test("staged billed deletion refuses email-only RevenueCat rows without verified fence", async () => {
+  const fixture = new Fixture();
+  const billing = new BillingFixture();
+  fixture.tables.set("user_subscriptions", [
+    sub("rc", null, {
+      stripe_subscription_id: null,
+      revenuecat_app_user_id: user.email,
+      plan: "premium",
+    }),
+  ]);
+  const store = createDeletionStore(fixture, "uploads", undefined, {
+    requireBillingFenceForSubscriptions: true,
+  });
+  await rejects(
+    () => deleteAccount(user, ["user_subscriptions"], store, billing.billing()),
+    /no verified projection fence/,
+  );
+  deepEqual(billing.events, []);
+  deepEqual(fixture.listings, []);
+  deepEqual(fixture.events, []);
+  equal(fixture.tables.get("user_subscriptions")?.length, 1);
+});
+
+Deno.test("staged billing fence requires a positive RPC and forwards the exact raw snapshot", async () => {
+  const fixture = new Fixture();
+  const subscription = sub("old");
+  fixture.tables.set("user_subscriptions", [subscription]);
+  let confirmed = false;
+  const store = createDeletionStore(
+    fixture,
+    "uploads",
+    async () => ({ error: null, data: 0 }),
+    {
+      requireBillingFenceForSubscriptions: true,
+      closeBillingProjection: async (account, snapshots) => {
+        deepEqual(account, user);
+        deepEqual(snapshots, [subscription]);
+        return { error: null, data: confirmed };
+      },
+    },
+  );
+  const plan = await store.prepareRows(["user_subscriptions"], user);
+  if (
+    !("closeBillingProjection" in plan) ||
+    typeof plan.closeBillingProjection !== "function"
+  ) {
+    throw new Error("Missing staged billing callback");
+  }
+  const closeBillingProjection = plan.closeBillingProjection;
+  await rejects(
+    () => closeBillingProjection(),
+    /fence could not be confirmed/,
+  );
+  confirmed = true;
+  await closeBillingProjection();
+  deepEqual(fixture.events, []);
+});
+
+Deno.test("staged Stripe cancellation requires trusted immutable UUID ownership", async () => {
+  for (
+    const [metadata, allowed] of [
+      [{ user_id: user.email! }, false],
+      [{ user_id: user.email!, execute_owner_uuid: foreign }, false],
+      [{ user_id: foreign, execute_owner_uuid: user.id }, false],
+      [{ user_id: user.id }, true],
+      [{ user_id: user.email!, execute_owner_uuid: user.id }, true],
+    ] as [Record<string, string>, boolean][]
+  ) {
+    let cancellations = 0;
+    const billing = createDeletionBilling(() => ({
+      subscriptions: {
+        retrieve: async () => ({ status: "active", metadata }),
+        cancel: async () => {
+          cancellations++;
+        },
+      },
+    }), { requireOwnerUUID: true });
+    if (allowed) {
+      await billing.verifyOwner("sub_a", user);
+      await billing.cancel("sub_a");
+      equal(cancellations, 1);
+    } else {
+      await rejects(
+        () => billing.verifyOwner("sub_a", user),
+        /ownership does not match/,
+      );
+      await rejects(() => billing.cancel("sub_a"), /not verified/);
+      equal(cancellations, 0);
+    }
+  }
+});

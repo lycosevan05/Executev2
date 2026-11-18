@@ -80,7 +80,25 @@ interface RowSnapshot {
   id: string;
   filters: RowFilter[];
   subscriptionIds: string[];
+  billingProjection?: BillingProjectionSnapshot;
 }
+
+export type BillingProjectionSnapshot = {
+  id: string;
+  owner_id: string | null;
+  owner_email: string | null;
+  created_by: string | null;
+  user_email: string | null;
+  data: Record<string, unknown>;
+};
+
+type BillingFenceOptions = {
+  requireBillingFenceForSubscriptions?: boolean;
+  closeBillingProjection?: (
+    user: DeletionUser,
+    snapshots: BillingProjectionSnapshot[],
+  ) => PromiseLike<Result>;
+};
 
 type RetirementSnapshot =
   & { id: string }
@@ -197,7 +215,15 @@ function rowSnapshot(
       ],
     );
   }
-  return { id: row.id, filters, subscriptionIds };
+  const billingProjection = data && {
+    id: row.id,
+    owner_id: owner,
+    owner_email: nullableText(row.owner_email),
+    created_by: nullableText(row.created_by),
+    user_email: nullableText(row.user_email),
+    data,
+  };
+  return { id: row.id, filters, subscriptionIds, billingProjection };
 }
 
 async function snapshotTable(
@@ -290,7 +316,9 @@ export function createDeletionStore(
   client: DeletionClient,
   bucket: string,
   retireSubscriptions?: RetireSubscriptions,
+  billingFence: BillingFenceOptions = {},
 ): DeletionStore {
+  const closeProjection = billingFence.closeBillingProjection;
   return {
     async prepareRows(tables, user) {
       validateUser(user);
@@ -310,11 +338,38 @@ export function createDeletionStore(
       for (const table of new Set([subscriptionTable, ...tables])) {
         snapshots.set(table, await snapshotTable(client, table, user));
       }
-      const subscriptionIds = (snapshots.get(subscriptionTable) ?? []).flatMap(
-        ({ subscriptionIds }) => subscriptionIds,
+      const subscriptionRows = snapshots.get(subscriptionTable) ?? [];
+      if (
+        (closeProjection &&
+          (!retireSubscriptions || !tables.includes(subscriptionTable))) ||
+        (billingFence.requireBillingFenceForSubscriptions &&
+          subscriptionRows.length && !closeProjection)
+      ) {
+        throw new Error(
+          "Billing-linked deletion has no verified projection fence.",
+        );
+      }
+      const subscriptionIds = subscriptionRows.flatMap(({ subscriptionIds }) =>
+        subscriptionIds
       );
       return {
         subscriptionIds: [...new Set(subscriptionIds)],
+        ...(closeProjection && {
+          async closeBillingProjection() {
+            const rows = subscriptionRows.map(({ billingProjection }) => {
+              if (!billingProjection) {
+                throw new Error("Billing projection inventory was incomplete.");
+              }
+              return billingProjection;
+            });
+            const result = await closeProjection(user, rows);
+            if (result.error || result.data !== true) {
+              throw new Error(
+                "Billing projection fence could not be confirmed.",
+              );
+            }
+          },
+        }),
         async deleteRows(table) {
           const eligible = snapshots.get(table);
           if (!eligible || !tables.includes(table)) {

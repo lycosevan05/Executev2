@@ -31,12 +31,17 @@ Deno.serve(async (req) => {
       { limit: 1 },
     );
 
+    const ownershipMetadata = {
+      user_id: user.email || user.id,
+      execute_owner_uuid: user.id,
+    };
+
     let customerId = existingSubs?.[0]?.stripe_customer_id as string | undefined;
     if (!customerId) {
       const customer = await stripe.customers.create({
         email: user.email || undefined,
         name: user.user_metadata?.full_name || user.user_metadata?.name || user.email || undefined,
-        metadata: { user_id: user.email || user.id, app: 'execute' },
+        metadata: { ...ownershipMetadata, app: 'execute' },
       });
       customerId = customer.id;
     }
@@ -47,9 +52,9 @@ Deno.serve(async (req) => {
       line_items: [{ price: String(priceId), quantity: 1 }],
       success_url: `${appBaseUrl}/billing?success=true&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appBaseUrl}/billing?canceled=true`,
-      metadata: { user_id: user.email || user.id, app: 'execute' },
+      metadata: { ...ownershipMetadata, app: 'execute' },
       subscription_data: {
-        metadata: { user_id: user.email || user.id },
+        metadata: ownershipMetadata,
       },
       allow_promotion_codes: true,
     });
