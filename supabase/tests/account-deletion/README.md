@@ -549,3 +549,27 @@ does not stop already-admitted provider checkout sessions or cancel active
 App Store subscriptions. Verify immutable provider identities and entitlement
 reads, old purchase reassociation, provider-side renewal behavior and checkout
 drain before production activation.
+
+
+## E70 live Stripe Sandbox deletion
+
+The isolated Stripe deletion rehearsal used real local Supabase Auth,
+PostgREST and Storage with the baseline migrations and all nine staged guards.
+The test created one synthetic customer and card-free trial in Star Learning
+Sandbox. A temporary restricted test key had Customers and Subscriptions
+write and Prices read. The exact trial carried the target Auth UUID as
+`execute_owner_uuid` and the historical owner field.
+
+The staged application handler rejected an unrelated account. The exact
+owner's request returned a successful deletion receipt. Independent
+readbacks found the Sandbox subscription canceled and the target Auth
+identity, application rows, billing projection and guarded upload gone.
+The unrelated Auth identity, goal and guarded upload remained accessible.
+A late local write through the real billing projection RPC returned
+`23514`. The local projection was seeded for this case. The run exercised
+the live Stripe provider but did not rely on public webhook delivery.
+
+Both E70 temporary keys expired after use or exposure, and local fixture
+credentials and containers were removed. No hosted deletion function or
+production writer was changed. Managed-host rollout and Sign in with Apple
+acceptance require their own evidence.

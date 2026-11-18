@@ -41,8 +41,8 @@ reader lists `privacy@executelabs.ca` and `support@executelabs.ca`.
 The owner approved draft-only edits for Execute Native Dev. The iOS 1.0
 description, keywords, and Support URL were saved and read back after reload.
 App Store Connect still showed Prepare for Submission. The public listing
-decision remains open. Apple displayed an updated Developer Program License
-Agreement notice for the Account Holder to review before submission.
+decision remains open. The Account Holder accepted the updated Developer Program License
+Agreement during E70, and Apple Developer Identifiers reopened.
 
 ## Review notes draft
 
@@ -56,9 +56,13 @@ Agreement notice for the Account Holder to review before submission.
 Confirm these steps in the exact signed candidate before submission. Add the
 release build and final device/OS evidence. Once enabled and verified, add
 Profile → Delete Account to the review notes. Include a monitored review
-contact. The native app currently offers email one-time codes and Apple and
-Google sign-in. Provide a dedicated, functioning review account with an expired
-subscription and an independently usable sign-in route. If a secure reviewer
+contact. The native app offers email one-time codes and Apple and Google sign-in.
+E70 adds a build-gated App Review password route scoped to one hosted project,
+confirmed email, and Auth UUID. It uses a normal Supabase password grant. A
+dedicated synthetic account with an expired subscription still needs approval,
+provisioning and a clean-install test on the exact submission build. Set the
+review configuration only on that build and enter its credentials in the private
+App Review fields after verification. If a secure reviewer
 login is unavailable, Apple's rules allow a full demo mode with prior approval
 in applicable circumstances. Existing QA identities, one-time codes and
 personal accounts are unsuitable reviewer credentials.
@@ -89,12 +93,13 @@ or collected through the app. Record finalized labels only after owner review.
 [App Privacy publishing instructions](https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy/)
 
 Apple's Guideline 5.1.2(i) requires explicit permission and clear disclosure
-before sharing personal data with third-party AI. The current legal view
-describes AI processing generally. The deployed candidate still needs
-verification of named-provider disclosure and an explicit consent step before
-personal information or attachments leave the device. Relevant paths include
-photo analysis, PDF import and personalized coaching inputs. Account deletion
-wording also needs to match the enabled release route.
+before sharing personal data with third-party AI. The E70 native candidate
+names OpenAI and requires consent for each account before sending prompts,
+photos or PDFs. A user can decline or turn off sharing under Profile & Settings
+→ About → AI Data Sharing. Verify the prompt, decline, grant and revocation on
+the signed candidate. The legacy web and shared endpoint have their own consent
+and rollout work. Confirm the public policy and account deletion wording against
+the release configuration before completing App Privacy.
 [Apple's privacy guidelines](https://developer.apple.com/app-store/review/guidelines/#privacy)
 
 ## Screenshots and final attachment
