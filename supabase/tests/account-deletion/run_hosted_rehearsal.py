@@ -41,7 +41,7 @@ class HostedFixture:
         self.opener = build_opener(NoRedirects())
 
     def request(self, method, path, expected, *, token=None, admin=False,
-                payload=None, blob=None, headers=None):
+                payload=None, blob=None, headers=None, require_uncached=False):
         key = self.admin if admin else self.public
         if not key or not path.startswith("/") or path.startswith("//"):
             raise Stop("A valid API key and first-party API path are required.")
@@ -61,6 +61,9 @@ class HostedFixture:
             raise Stop("An API response was lost. Inspect the isolated fixture before retrying.") from error
         with response:
             status, body = response.code, response.read()
+            cache_status = response.headers.get("cf-cache-status", "").strip().upper()
+        if require_uncached and cache_status in {"HIT", "STALE", "UPDATING"}:
+            raise Stop("The exact-object response was cached, so origin absence is unverified.")
         if status not in expected:
             # Provider error bodies may contain private values.
             raise Stop(f"{method} {path.split('?')[0].split('/')[1]} returned HTTP {status}, expected {expected}.")
@@ -149,8 +152,9 @@ class HostedFixture:
         if missing:
             if files:
                 raise Stop("Storage still lists the target file.")
-            self.request("GET", f"/storage/v1/object/{BUCKET}/{path}",
-                         (400, 404), admin=True)
+            nonce = urlencode({"cacheNonce": uuid4().hex})
+            self.request("GET", f"/storage/v1/object/{BUCKET}/{path}?{nonce}",
+                         (400, 404), admin=True, require_uncached=True)
             return
         if len(files) != 1 or files[0]["name"] != path.split("/")[1]:
             raise Stop("Storage inventory did not contain the exact expected file.")
@@ -224,8 +228,18 @@ class HostedFixture:
         result = self.json("POST", STAGED_ROUTE, 200, token=target_token, payload={})
         if result.get("results", {}).get("storage") != "deleted 1":
             raise Stop("No confirmed deletion receipt for the exact target file.")
+        self.verify_committed(save)
+
+    def verify_committed(self, save):
+        if self.state.get("held_dispatch"):
+            raise Stop("A recorded held dispatch needs reconciliation.")
+        actors = self.state["actors"]
+        target, witness = actors["target"], actors["witness"]
         self.readback(target, missing=True)
         self.readback(witness)
+        if "replacement" in actors:
+            self.readback(actors["replacement"])
+            return
         replacement = self.create_actor("replacement", save)
         if replacement["id"] in {target["id"], witness["id"]}:
             raise Stop("Auth did not assign a fresh UUID to the replacement.")
@@ -328,7 +342,7 @@ def private_state(path, origin, prepare):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("prepare", "seed", "check-off", "check-cutover", "hold", "rehearse",
-                                          "readback-sql", "check-withdrawn", "check-restored", "cleanup"))
+                                          "verify-committed", "readback-sql", "check-withdrawn", "check-restored", "cleanup"))
     parser.add_argument("--approved-origin", required=True)
     parser.add_argument("--state", required=True, type=Path)
     parser.add_argument("--writers-isolated", action="store_true",
@@ -371,6 +385,8 @@ def main():
         fixture.hold(save)
     elif args.phase == "rehearse":
         fixture.exercise(save)
+    elif args.phase == "verify-committed":
+        fixture.verify_committed(save)
     elif args.phase == "readback-sql":
         fixture.sql_readback(args.include_guard_state)
         return
