@@ -10,6 +10,10 @@ export async function removeAccount(
     allowStripe: true,
   },
 ) {
+  const uploadsBucket = Deno.env.get("SUPABASE_UPLOAD_BUCKET") || "uploads";
+  if (options.requireUploadDrain && uploadsBucket !== "uploads") {
+    throw new Error("The configured bucket has no guarded upload cutover.");
+  }
   const service = createServiceClient();
   let stripe: Stripe | undefined;
   const billing = createDeletionBilling(() => {
@@ -31,7 +35,7 @@ export async function removeAccount(
     // SDK tables are ungenerated; adapter validates every response at runtime.
     createDeletionStore(
       service as unknown as DeletionClient,
-      Deno.env.get("SUPABASE_UPLOAD_BUCKET") || "uploads",
+      uploadsBucket,
       Deno.env.get("EXECUTE_STAGED_STRIPE_RETIREMENT") === "1"
         ? (account, rows) =>
           service.rpc("retire_account_stripe_subscription_rows", {
@@ -45,7 +49,7 @@ export async function removeAccount(
     options.requireUploadDrain
       ? async (ownerId) => {
         const reply = await service.rpc(
-          "close_and_list_account_upload_dispatches",
+          "close_and_list_guarded_account_upload_dispatches",
           { p_owner_id: ownerId },
         );
         if (reply.error || !Array.isArray(reply.data) || reply.data.length) {
