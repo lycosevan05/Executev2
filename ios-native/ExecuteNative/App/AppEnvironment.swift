@@ -108,6 +108,10 @@ final class AppEnvironment: ObservableObject {
                 client: client, configuration: configuration, ownerDefaults: .standard
             )
             let functions = SupabaseEdgeFunctionService(client: client)
+            let uploadClient = FunctionsClient(
+                url: configuration.supabaseURL.appendingPathComponent("functions/v1"),
+                headers: ["apikey": configuration.supabaseAnonKey]
+            )
             let subscriptionService = RevenueCatSubscriptionService(configuration: configuration)
             let environment = AppEnvironment(
                 configuration: configuration,
@@ -120,7 +124,9 @@ final class AppEnvironment: ObservableObject {
                 subscriptionReader: SupabaseSubscriptionReader(client: client),
                 dataService: SupabaseDataService(client: client),
                 realtimeService: SupabaseRealtimeService(client: client),
-                storageService: SupabaseStorageService(client: client, defaultBucket: configuration.uploadBucket),
+                storageService: SupabaseStorageService(
+                    client: client, uploadClient: uploadClient, defaultBucket: configuration.uploadBucket
+                ),
                 aiService: SupabaseAIService(functions: functions)
             )
             environment.recoveryRepositoryFactory = { SupabaseRecoveryRepository(client: client) }

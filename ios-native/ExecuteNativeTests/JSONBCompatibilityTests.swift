@@ -2444,6 +2444,103 @@ private final class AIServiceFixtureProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() { }
 }
 
+@MainActor
+final class GuardedStorageUploadTests: XCTestCase {
+    private func client() -> SupabaseClient {
+        let host = "\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AuthFixtureProtocol.self]
+        return SupabaseClient(supabaseURL: URL(string: "https://\(host)")!, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: AuthFixtureStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: URLSession(configuration: configuration))
+        ))
+    }
+
+    private func service(client: SupabaseClient, fetch: @escaping FunctionsClient.FetchHandler) -> SupabaseStorageService {
+        let functions = FunctionsClient(url: URL(string: "https://upload-fixture.invalid/functions/v1")!, fetch: fetch)
+        return SupabaseStorageService(client: client, uploadClient: functions, defaultBucket: "uploads")
+    }
+
+    func testSendsRawDataToGuardWithPinnedOwnerAndReturnsPublicURL() async throws {
+        let client = client()
+        let session = try await client.auth.signIn(email: "fixture@example.invalid", password: "fixture-only")
+        let owner = session.user.id.uuidString.lowercased()
+        let bytes = Data([0x25, 0x50, 0x44, 0x46, 0x00, 0xff])
+        let service = service(client: client) { request in
+            let url = try XCTUnwrap(request.url)
+            let query = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+            let path = try XCTUnwrap(query.first(where: { $0.name == "path" })?.value)
+            XCTAssertEqual(query.first(where: { $0.name == "bucket" })?.value, "uploads")
+            XCTAssertEqual(url.path, "/functions/v1/guardedStorageUpload")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(session.accessToken)")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/pdf")
+            XCTAssertEqual(request.httpBody, bytes)
+            XCTAssertTrue(path.hasPrefix("\(owner)/"))
+            XCTAssertTrue(path.hasSuffix("-plan_1.pdf"))
+            let reply = try JSONSerialization.data(withJSONObject: ["path": path])
+            return (reply, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+
+        let result = try await service.upload(data: bytes, filename: "plan 1.pdf", contentType: "application/pdf", userID: session.user.id)
+        XCTAssertEqual(result.bucket, "uploads")
+        XCTAssertEqual(result.publicURL.path, "/storage/v1/object/public/uploads/\(result.path)")
+    }
+
+    func testRejectsWrongOwnerBeforeSubmittingAnUpload() async throws {
+        let client = client()
+        _ = try await client.auth.signIn(email: "fixture@example.invalid", password: "fixture-only")
+        let service = service(client: client) { _ in
+            XCTFail("An upload for another owner must never be sent")
+            throw URLError(.badURL)
+        }
+
+        do {
+            _ = try await service.upload(data: Data([1]), filename: "file.txt", contentType: "text/plain", userID: UUID())
+            XCTFail("Expected owner mismatch to fail")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .userAuthenticationRequired)
+        }
+    }
+
+    func testRejectsAnUnexpectedUploadPath() async throws {
+        let client = client()
+        let session = try await client.auth.signIn(email: "fixture@example.invalid", password: "fixture-only")
+        let service = service(client: client) { request in
+            let url = try XCTUnwrap(request.url)
+            let reply = try JSONSerialization.data(withJSONObject: ["path": "\(session.user.id.uuidString.lowercased())/other.txt"])
+            return (reply, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+
+        do {
+            _ = try await service.upload(data: Data([1]), filename: "file.txt", contentType: "text/plain", userID: session.user.id)
+            XCTFail("Expected an unexpected object name to fail")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .badServerResponse)
+        }
+    }
+
+    func testRejectsUploadAcknowledgementAfterSignOut() async throws {
+        let client = client()
+        let session = try await client.auth.signIn(email: "fixture@example.invalid", password: "fixture-only")
+        let service = service(client: client) { request in
+            let url = try XCTUnwrap(request.url)
+            let query = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+            let path = try XCTUnwrap(query.first(where: { $0.name == "path" })?.value)
+            try await client.auth.signOut(scope: .local)
+            let reply = try JSONSerialization.data(withJSONObject: ["path": path])
+            return (reply, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+
+        do {
+            _ = try await service.upload(data: Data([1]), filename: "file.txt", contentType: "text/plain", userID: session.user.id)
+            XCTFail("Expected a stale upload acknowledgement to fail")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .userAuthenticationRequired)
+        }
+    }
+}
+
 /// Opt-in only. Uses disposable local GoTrue and PostgREST, plus the actual app service boundaries.
 @MainActor
 final class IsolatedNativeAuthTests: XCTestCase {
