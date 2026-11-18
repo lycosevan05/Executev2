@@ -188,8 +188,7 @@ function canServerFilter(key, value) {
   return value !== undefined && value !== null && !Array.isArray(value) && typeof value !== 'object';
 }
 
-async function currentSupabaseUser() {
-  const client = requireSupabase();
+async function currentSupabaseSession(client = requireSupabase()) {
   // getSession() reads the persisted session from local storage (no
   // /auth/v1/user network round-trip) and refreshes the token in the background
   // when needed. Every subsequent data request still carries the JWT and is
@@ -198,7 +197,11 @@ async function currentSupabaseUser() {
   // meServerValidated() instead.
   const { data, error } = await client.auth.getSession();
   if (error) throw toBackendError(error, 401);
-  return data?.session?.user || null;
+  return data?.session || null;
+}
+
+async function currentSupabaseUser() {
+  return (await currentSupabaseSession())?.user || null;
 }
 
 async function serverValidatedSupabaseUser() {
@@ -481,16 +484,37 @@ export const backend = {
         const { file, bucket = uploadBucket, path } = options;
         if (!file) throw new Error('UploadFile requires a file.');
         const client = requireSupabase();
-        const user = await currentSupabaseUser();
+        const session = await currentSupabaseSession(client);
+        if (!session?.user?.id || !session.access_token) {
+          throw toBackendError({ message: 'Authentication required', status: 401 }, 401);
+        }
         const safeName = file.name?.replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload';
-        const objectPath = path || `${user.id}/${globalThis.crypto?.randomUUID?.() || Date.now()}-${safeName}`;
-        const { error } = await client.storage
-          .from(bucket)
-          .upload(objectPath, file, {
-            contentType: file.type || 'application/octet-stream',
-            upsert: false,
+        const prefix = `${globalThis.crypto?.randomUUID?.() || Date.now()}-`;
+        const objectPath = path || `${session.user.id}/${prefix}${safeName.slice(0, 255 - prefix.length)}`;
+        const endpoint = new URL('/functions/v1/guardedStorageUpload', supabaseUrl);
+        endpoint.search = new URLSearchParams({ bucket, path: objectPath }).toString();
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': file.type || 'application/octet-stream',
+          },
+          body: file,
+        }).catch(error => {
+          throw toBackendError(error, 400);
+        });
+        const result = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw toBackendError({
+            message: result?.message || result?.error || 'Storage upload failed.',
+            status: response.status,
           });
-        if (error) throw toBackendError(error, 400);
+        }
+        if (result?.path !== objectPath) {
+          throw toBackendError({ message: 'Storage upload could not be confirmed.' }, 502);
+        }
 
         const publicUrl = client.storage.from(bucket).getPublicUrl(objectPath)?.data?.publicUrl;
         return {
