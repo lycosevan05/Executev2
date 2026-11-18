@@ -1028,6 +1028,8 @@ final class AppReviewLoginTests: XCTestCase {
             )
             XCTFail("A review grant was acknowledged without secure storage")
         } catch is AppError {}
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(fixture.host + ".user"), 1)
+        XCTAssertGreaterThan(fixture.storage.writeAttempts, 0)
         let restored = try await fixture.service.restoreSession()
         XCTAssertNil(restored)
         XCTAssertFalse(fixture.service.hasLocalSession(for: AuthFixtureProtocol.userID))
@@ -1528,7 +1530,8 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
         let claims = Data("{\"exp\":\(expiry)}".utf8).base64EncodedString().replacingOccurrences(of: "=", with: "")
         let ownerID = host.hasPrefix("wrong-owner.") ? Self.callbackUserID : Self.userID
         let user: [String: Any] = ["id": ownerID.uuidString, "aud": "authenticated", "role": "authenticated",
-            "email": Self.reviewEmail, "app_metadata": [:], "user_metadata": [:], "created_at": "2026-11-09T00:00:00Z"]
+            "email": Self.reviewEmail, "app_metadata": [:], "user_metadata": [:],
+            "created_at": "2026-11-09T00:00:00Z", "updated_at": "2026-11-09T00:00:00Z"]
         let body: [String: Any]
         let status: Int
         switch (request.httpMethod, url.path) {
