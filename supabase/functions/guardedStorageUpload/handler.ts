@@ -16,7 +16,9 @@ const uuidPattern =
 type Begin = { kind: "registered"; id: string; path: string } | {
   kind: "closed";
 };
-type Outcome = "stored" | "already-exists" | "unverified";
+type Outcome = "stored" | "already-exists" | "unverified" | {
+  readonly rejected: 413 | 415;
+};
 
 interface UploadWriter {
   begin(owner: string, path: string): Promise<Begin>;
@@ -141,6 +143,12 @@ export function createGuardedUploadHandler(
       await writer.finish(owner, admission.id);
       if (outcome === "already-exists") {
         return json({ error: "An upload already exists at that path." }, 409);
+      }
+      if (typeof outcome === "object") {
+        return json(
+          { error: "Storage rejected the upload." },
+          outcome.rejected,
+        );
       }
       return json({ path }, 201);
     } catch {

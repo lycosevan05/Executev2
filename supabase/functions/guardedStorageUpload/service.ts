@@ -28,13 +28,22 @@ export const guardedStorageUpload = createGuardedUploadHandler({
           upsert: false,
         });
         if (!error && data?.path === path) return "stored";
-        if (
-          error?.name === "StorageApiError" &&
-          (error.statusCode === "KeyAlreadyExists" ||
-            (error.statusCode === "409" &&
-              error.message === "The resource already exists"))
-        ) {
-          return "already-exists";
+        if (error?.name === "StorageApiError") {
+          const { statusCode, message } = error;
+          if (
+            statusCode === "KeyAlreadyExists" ||
+            (statusCode === "409" && message === "The resource already exists")
+          ) return "already-exists";
+          if (
+            statusCode === "InvalidMimeType" ||
+            (statusCode === "415" &&
+              message === `mime type ${contentType} is not supported`)
+          ) return { rejected: 415 };
+          if (
+            statusCode === "EntityTooLarge" ||
+            (statusCode === "413" &&
+              message === "The object exceeded the maximum allowed size")
+          ) return { rejected: 413 };
         }
         return "unverified";
       },

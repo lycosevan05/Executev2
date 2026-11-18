@@ -80,6 +80,8 @@ def run(credentials):
     # Supabase's direct Storage writer can no longer admit these operations.
     rest("POST", f"{BUCKET}/{target}", PAYLOAD, token=owner_token, expected=(400, 403))
     rest("PUT", f"{BUCKET}/{target}", PAYLOAD, token=owner_token, expected=(400, 403))
+    rest("POST", f"/storage/v1/object/upload/sign/uploads/{target}",
+         None, token=owner_token, expected=(400, 403))
 
     # An ordinary logged-in client keeps using the supported public object URL
     # and can delete its own file, even though the real service writer owns it.
@@ -92,6 +94,21 @@ def run(credentials):
     upload(target, owner_token, 409, body=b"duplicate must not overwrite")
     assert rest("GET", f"{BUCKET}/{target}", token=owner_token) == PAYLOAD
     assert pending_count() == "0"
+
+    # A stricter provider-side MIME policy is an acknowledged rejection rather
+    # than an unknown send. Change only the disposable bucket via its API.
+    bucket_path = "/storage/v1/bucket/uploads"
+    old_bucket = json.loads(rest("GET", bucket_path))
+    original_limits = {key: old_bucket[key] for key in
+                       ("public", "file_size_limit", "allowed_mime_types")}
+    try:
+        rest("PUT", bucket_path, {**original_limits, "allowed_mime_types": ["image/png"]})
+        refused = f"{owner}/provider-rejected.txt"
+        upload(refused, owner_token, 415)
+        assert pending_count() == "0"
+        rest("GET", f"{BUCKET}/{refused}", expected=(400, 404))
+    finally:
+        rest("PUT", bucket_path, original_limits)
 
     # Neither an ordinary caller nor a wrong prefix may create a dispatch.
     exact_args = {"p_owner_id": owner, "p_object_name": target}

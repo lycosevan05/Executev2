@@ -355,7 +355,8 @@ The response supplies the canonical lowercase UUID path. Supported file types
 and the 50 MiB ceiling match the bucket migration. The route registers the
 exact destination through the service-only `begin_exact_account_upload_dispatch`
 RPC before issuing a single non-overwriting Storage request. A matching Storage
-receipt or a verified duplicate completes that dispatch. A transport loss,
+receipt, verified duplicate, or explicit Storage MIME/size rejection completes
+that dispatch. A transport loss,
 unexpected Storage response, or uncertain database acknowledgment requires
 operator reconciliation. A subsequent upload cannot acknowledge an earlier
 dispatch. When the file is absent from a listing, its dispatch can still be
@@ -379,6 +380,8 @@ writers, signed-upload capabilities and resumable sessions for this bucket.
 Keep deletion admission disabled while pre-cutover writes are still unresolved.
 Verify that no outside service or S3 credential can send untracked writes and
 that previously issued capabilities and sessions are expired or retired.
+The pinned Storage implementation redeems existing signed upload capabilities
+under its service role. [Supabase Storage signed upload handler](https://github.com/supabase/storage/blob/v1.54.1/src/http/routes/object/uploadSignedObject.ts)
 Rehearse the exact project gateway and hosted Storage versions before relying
 on the policy cutover. A client rollback that restores a direct writer requires
 turning staged deletion off and resolving any outstanding dispatches before
@@ -394,7 +397,9 @@ python3 supabase/tests/account-deletion/test_canonical_storage_upload.py --stack
 ```
 
 The E65 fixture passed normal upload, exact-path and unauthorized checks,
-duplicate preservation, direct insert/update denial, public and owner reads,
-prefix-based owner deletion, admission closure, an unrelated account, and a
-same-email replacement UUID. The seven offline handler tests separately
+duplicate preservation, a terminal provider MIME rejection, direct insert and
+update denial, denial of new authenticated signed-upload URLs, public and
+owner reads, prefix-based owner deletion, admission closure, an unrelated
+account, and a same-email replacement UUID. The E64 in-flight upload fixture
+also passed with the canonical writer and cutover SQL installed. The seven offline handler tests separately
 exercise uncertain storage and acknowledgment outcomes.
