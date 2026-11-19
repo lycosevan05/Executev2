@@ -35,6 +35,7 @@ UNRELATED_EMAIL = "unrelated@example.invalid"
 
 REVERSE = (HERE / "reverse-staged-guards.sql").read_text()
 REVERSE_UPLOAD = (HERE / "reverse-storage-upload-preparation.sql").read_text()
+REVERSE_CUTOVER = (HERE / "reverse-storage-upload-writer-cutover.sql").read_text()
 CATALOG = (HERE / "staged-guard-schema.sql").read_text()
 
 
@@ -87,6 +88,55 @@ def reject_pending_reversal(db):
     reject_reversal(db, REVERSE, "pending deletion state requires reconciliation")
 
 
+def rehearse_upload_cutover(db):
+    preparation_schema = schema(db)
+    preparation_catalog = db.sql(CATALOG)
+    direct_path = f"{UNRELATED}/direct-preparation.txt"
+    # The synthetic Storage schema lacks the platform grants on the hosted table.
+    direct_write = (
+        "begin; grant usage on schema storage to authenticated; "
+        "grant insert, select on storage.objects to authenticated; "
+        + authenticated_as(UNRELATED, UNRELATED_EMAIL)
+        + f"insert into storage.objects(bucket_id, name) values ('uploads', '{direct_path}') returning name; "
+        "rollback;"
+    )
+    assert db.sql(direct_write) == direct_path
+    db.file(HERE / "storage-upload-writer-cutover.sql")
+    try:
+        db.sql(direct_write)
+    except AssertionError as error:
+        assert "violates row-level security policy" in str(error), error
+    else:
+        raise AssertionError("Cutover accepted an ordinary direct upload")
+
+    db.sql('alter policy "uploads require canonical writer for update" on storage.objects using (true);')
+    reject_reversal(db, REVERSE_CUTOVER, "canonical upload cutover schema changed")
+    db.sql('alter policy "uploads require canonical writer for update" on storage.objects using (bucket_id <> \'uploads\');')
+
+    canonical_path = f"{WRITER_FIRST}/cutover.txt"
+    begin_upload = (
+        "set role service_role; select dispatch_id "
+        f"from public.begin_exact_account_upload_dispatch('{WRITER_FIRST}', '{canonical_path}');"
+    )
+    dispatch = db.sql(begin_upload)
+    reject_reversal(db, REVERSE_CUTOVER, "pending upload state requires reconciliation")
+    # The fixture registered a dispatch but sent no bytes.
+    db.sql(f"set role service_role; select public.finish_account_upload_dispatch('{WRITER_FIRST}', '{dispatch}');")
+    db.sql(f"set role service_role; select public.close_account_upload_admission('{WRITER_FIRST}');")
+    reject_reversal(db, REVERSE_CUTOVER, "pending upload state requires reconciliation")
+    db.sql(f"delete from auth.users where id = '{WRITER_FIRST}';"
+           f"insert into auth.users (id,email) values ('{WRITER_FIRST}', '{WRITER_EMAIL}');")
+
+    db.sql(REVERSE_CUTOVER)
+    assert schema(db) == preparation_schema
+    assert db.sql(CATALOG) == preparation_catalog
+    assert db.sql(direct_write) == direct_path
+    dispatch = db.sql(begin_upload)
+    assert db.sql("select object_name from execute_storage_deletion_guard.pending_upload_dispatch") == canonical_path
+    db.sql(f"set role service_role; select public.finish_account_upload_dispatch('{WRITER_FIRST}', '{dispatch}');")
+    print("PASS cutover reversal restores the preparation catalog, direct writes and canonical registrations")
+
+
 def rehearse_upload_preparation(db, baseline, baseline_catalog):
     for name in GUARDS[4:7]:
         db.file(HERE / name)
@@ -100,6 +150,7 @@ def rehearse_upload_preparation(db, baseline, baseline_catalog):
     reject_reversal(db, REVERSE_UPLOAD, "pending upload state requires reconciliation")
     db.sql(f"delete from auth.users where id = '{WRITER_FIRST}';"
            f"insert into auth.users (id,email) values ('{WRITER_FIRST}', '{WRITER_EMAIL}');")
+    rehearse_upload_cutover(db)
     db.sql(REVERSE_UPLOAD)
     assert schema(db) == baseline
     assert db.sql(CATALOG) == baseline_catalog
@@ -130,7 +181,7 @@ def rehearse(db):
         "select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects' "
         "and policyname like 'uploads require canonical writer for %' and permissive = 'RESTRICTIVE'"
     ) == "2"
-    reject_reversal(db, REVERSE_UPLOAD, "writer cutover requires the full staged reversal")
+    reject_reversal(db, REVERSE_UPLOAD, "reverse the writer cutover before upload preparation")
     probe_existing_authenticated_client(db)
     probe_existing_provider(db)
     db.sql(REVERSE)

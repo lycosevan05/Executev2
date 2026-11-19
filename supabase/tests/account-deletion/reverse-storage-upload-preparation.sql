@@ -16,7 +16,7 @@ begin
       where schemaname = 'storage' and tablename = 'objects'
         and policyname in ('uploads require canonical writer for insert', 'uploads require canonical writer for update')
     ) then
-    raise exception 'writer cutover requires the full staged reversal';
+    raise exception 'reverse the writer cutover before upload preparation';
   end if;
   if exists (select from execute_storage_deletion_guard.closed_upload_admission)
     or exists (select from execute_storage_deletion_guard.pending_upload_dispatch) then

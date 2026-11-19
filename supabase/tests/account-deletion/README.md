@@ -396,8 +396,11 @@ Before reversing preparation, withdraw the canonical endpoint and verify
 that every upload dispatch has an acknowledged outcome. Apply
 `reverse-storage-upload-preparation.sql` and compare the catalog with the
 preparation baseline. The reversal rejects any pending dispatch, closed
-admission, or installed writer cutover. Use the full staged reversal after
-writer cutover.
+admission, or installed writer cutover. To reverse just the writer cutover,
+use `reverse-storage-upload-writer-cutover.sql` after disabling deletion and
+resolving all admitted work. Compare the result to the preparation catalog.
+The [production rollout checklist](../../../docs/w09-production-rollout.md)
+covers writer inventory and recovery.
 
 E71 applied this preparation to Executev2 with owner approval and deployed
 the JWT-verified canonical upload function. The signed synthetic reviewer
