@@ -1,9 +1,12 @@
 import { deepEqual, equal, rejects } from "node:assert/strict";
 import type { AppleDeletionUser } from "../deleteUserData-staged/appleRevocation.ts";
+import { createStagedDeletionHandler } from "../deleteUserData-staged/handler.ts";
+import { deleteAccount } from "../deleteUserData/deletion.ts";
 import {
   type AppleGrantSettings,
   type AppleGrantVault,
   captureAppleGrant,
+  type ProviderRequest,
   readAppleGrantSettings,
   revokeCapturedAppleAuthorization,
   type StoredAppleGrant,
@@ -19,13 +22,14 @@ const settings: AppleGrantSettings = {
   activeKeyId: "v1",
   keys: new Map([["v1", "2a".repeat(32)]]),
 };
+const appleIdentity = {
+  provider: "apple",
+  user_id: ownerId,
+  identity_data: { sub: subject },
+};
 const user: AppleDeletionUser = {
   id: ownerId,
-  identities: [{
-    provider: "apple",
-    user_id: ownerId,
-    identity_data: { sub: subject },
-  }],
+  identities: [appleIdentity],
 };
 
 function memoryVault() {
@@ -411,4 +415,171 @@ Deno.test("legacy Apple and other Auth accounts receive the appropriate outcome 
     undefined,
   );
   equal(provider.requests.length, 0);
+});
+
+function stagedDeletionFixture(
+  authenticatedUser: AppleDeletionUser,
+  vault: AppleGrantVault,
+  requestApple: ProviderRequest,
+  deletionSettings = settings,
+) {
+  const retained = { upload: true, profile: true, auth: true };
+  const handle = createStagedDeletionHandler({
+    readSettings: () => ({
+      mode: "disposable-account",
+      actualProjectUrl: settings.origin,
+      approvedProjectUrl: settings.origin,
+      disposableOwnerId: ownerId,
+    }),
+    getUser(req) {
+      equal(req.headers.get("authorization"), "Bearer synthetic-session");
+      return Promise.resolve(authenticatedUser);
+    },
+    remove(owner: AppleDeletionUser) {
+      return deleteAccount(
+        owner,
+        ["profile"],
+        {
+          prepareRows(tables, verifiedOwner) {
+            deepEqual(tables, ["profile"]);
+            equal(verifiedOwner, authenticatedUser);
+            return Promise.resolve({
+              subscriptionIds: [],
+              deleteRows(table) {
+                equal(table, "profile");
+                retained.profile = false;
+                return Promise.resolve(1);
+              },
+            });
+          },
+          listUploads(prefix) {
+            equal(prefix, ownerId);
+            return Promise.resolve(
+              retained.upload ? [{ name: "photo.jpeg", id: "stored" }] : [],
+            );
+          },
+          removeUploads(paths) {
+            deepEqual(paths, [`${ownerId}/photo.jpeg`]);
+            retained.upload = false;
+            return Promise.resolve();
+          },
+          assertRowsAbsent(table, verifiedOwner) {
+            equal(table, "profile");
+            equal(verifiedOwner, authenticatedUser);
+            equal(retained.profile, false);
+            return Promise.resolve();
+          },
+          deleteAuthentication(id) {
+            equal(id, ownerId);
+            deepEqual(retained, { upload: false, profile: false, auth: true });
+            retained.auth = false;
+            return Promise.resolve();
+          },
+        },
+        {
+          verifyOwner() {
+            throw new Error("Unexpected billing verification");
+          },
+          cancel() {
+            throw new Error("Unexpected billing cancellation");
+          },
+        },
+        () => Promise.resolve(),
+        () =>
+          revokeCapturedAppleAuthorization(
+            owner,
+            deletionSettings,
+            vault,
+            requestApple,
+          ),
+      );
+    },
+  });
+  return {
+    retained,
+    delete: () =>
+      handle(
+        new Request(`${settings.origin}/functions/v1/deleteUserData-staged`, {
+          method: "POST",
+          headers: { authorization: "Bearer synthetic-session" },
+        }),
+      ),
+  };
+}
+
+Deno.test("staged deletion completes with manual Apple guidance for existing linked owners without a captured grant", async () => {
+  const googleIdentity = { provider: "google", user_id: ownerId };
+  const provider = await providerFixture();
+  const owners: [AppleDeletionUser, string | null][] = [
+    [user, subject],
+    [{
+      id: ownerId,
+      identities: [googleIdentity, appleIdentity],
+      app_metadata: { provider: "google", providers: ["google", "apple"] },
+    }, subject],
+    [{ id: ownerId, identities: [googleIdentity] }, null],
+  ];
+  for (const [authenticatedUser, appleSubject] of owners) {
+    const { vault, closes } = memoryVault();
+    const fixture = stagedDeletionFixture(
+      authenticatedUser,
+      vault,
+      provider.request,
+    );
+    const response = await fixture.delete();
+    equal(response.status, 200);
+    deepEqual(await response.json(), {
+      success: true,
+      results: {
+        storage: "deleted 1",
+        profile: "deleted 1",
+        authentication: "deleted",
+      },
+      ...(appleSubject && { apple_revocation: "manual_required" }),
+    });
+    deepEqual(closes, [[ownerId, appleSubject, settings.clientId]]);
+    deepEqual(fixture.retained, { upload: false, profile: false, auth: false });
+  }
+  deepEqual(provider.requests, []);
+});
+
+Deno.test("staged deletion keeps Auth and emits no receipt when Apple grant custody or revocation fails", async () => {
+  const provider = await providerFixture();
+  const { vault, grants } = memoryVault();
+  const token = "synthetic-refresh-token";
+  await captureAppleGrant(user, token, settings, vault, provider.request);
+
+  const rotatedWithoutOldKey = {
+    ...settings,
+    activeKeyId: "v2",
+    keys: new Map([["v2", "3b".repeat(32)]]),
+  };
+  const unreachableVault = stagedDeletionFixture(user, {
+    ...vault,
+    close: () => Promise.reject(new Error("Vault read failed")),
+  }, provider.request);
+  const brokenConfig = stagedDeletionFixture(
+    user,
+    vault,
+    provider.request,
+    rotatedWithoutOldKey,
+  );
+  const retry = stagedDeletionFixture(user, vault, provider.request);
+  provider.failOn(token);
+  for (const fixture of [unreachableVault, brokenConfig, retry]) {
+    const response = await fixture.delete();
+    equal(response.status, 500);
+    deepEqual(Object.keys(await response.json()), ["error"]);
+    deepEqual(fixture.retained, { upload: true, profile: true, auth: true });
+    equal(grants.length, 1);
+  }
+  // Only the attempt with a usable key can call Apple's revoke endpoint.
+  deepEqual(provider.requests, ["/auth/token", "/auth/keys", "/auth/revoke"]);
+
+  provider.failOn();
+  const response = await retry.delete();
+  equal(response.status, 200);
+  equal((await response.json()).apple_revocation, "revoked");
+  deepEqual(retry.retained, { upload: false, profile: false, auth: false });
+  equal(grants.length, 0);
 });
