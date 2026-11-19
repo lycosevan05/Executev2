@@ -325,6 +325,93 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
         throw SandboxFixtureError.unexpectedAppleTransaction
     }
 
+    func testReadApprovedSandboxGraceTransition() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["EXECUTE_LIVE_SANDBOX_GRACE"] == "1" else {
+            throw XCTSkip("Requires the separately authorized Sandbox grace purchase")
+        }
+        guard let phase = env["EXECUTE_LIVE_GRACE_PHASE"].flatMap(GracePhase.init(rawValue:)),
+              let floor = env["EXECUTE_LIVE_GRACE_FRESH_AFTER"].flatMap(Double.init),
+              floor.isFinite, floor > 0,
+              let customer = env["EXECUTE_HOSTED_APPLE_REFUND_CUSTOMER"],
+              EmailOTPInput.email(customer) == customer else {
+            throw SandboxFixtureError.invalidInputs
+        }
+        let freshAfter = Date(timeIntervalSince1970: floor)
+        guard freshAfter <= .now, Date.now.timeIntervalSince(freshAfter) <= 6 * 60 * 60 else {
+            throw SandboxFixtureError.invalidInputs
+        }
+        let expectedOriginal = env["EXECUTE_LIVE_GRACE_ORIGINAL_ID"].flatMap(UInt64.init)
+        let previousTransaction = env["EXECUTE_LIVE_GRACE_PREVIOUS_TRANSACTION_ID"].flatMap(UInt64.init)
+        guard (phase == .purchase || expectedOriginal.map { $0 > 0 } == true),
+              (phase != .recovered || previousTransaction.map { $0 > 0 } == true) else {
+            throw SandboxFixtureError.invalidInputs
+        }
+        let config = try AppConfiguration.load()
+        guard Bundle.main.bundleIdentifier == "com.executelabs.execute.native-dev",
+              config.revenueCatAPIKey.hasPrefix("appl_"),
+              config.revenueCatMonthlyProductID == "execute_native_dev_premium_month" else {
+            throw SandboxFixtureError.unexpectedAppConfiguration
+        }
+        try await waitForCustomer(customer)
+        let products = try await Product.products(for: [config.revenueCatMonthlyProductID])
+        let product = try XCTUnwrap(products.first { $0.id == config.revenueCatMonthlyProductID })
+        let subscription = try XCTUnwrap(product.subscription)
+        let (status, transaction, renewal) = try await readGraceStatus(
+            subscription, productID: product.id, phase: phase, freshAfter: freshAfter,
+            expectedOriginal: expectedOriginal, customer: customer
+        )
+        let expiry = try XCTUnwrap(transaction.expirationDate)
+        let grace = renewal.gracePeriodExpirationDate
+        // Keep identifier evidence in the private fixture log. Emit it even on a state mismatch.
+        print("SANDBOX_GRACE_WITNESS phase=\(phase.rawValue) transaction=\(transaction.id) original=\(transaction.originalID) state=\(status.state) expiration=\(expiry.ISO8601Format()) grace=\(grace?.ISO8601Format() ?? "none")")
+        switch phase {
+        case .purchase, .recovered:
+            XCTAssertEqual(status.state, .subscribed)
+            XCTAssertGreaterThan(expiry, .now)
+            XCTAssertFalse(renewal.isInBillingRetry)
+            if phase == .recovered { XCTAssertNotEqual(transaction.id, previousTransaction) }
+        case .grace:
+            XCTAssertEqual(status.state, .inGracePeriod)
+            XCTAssertTrue(renewal.isInBillingRetry)
+            XCTAssertLessThanOrEqual(expiry, .now)
+            XCTAssertGreaterThan(try XCTUnwrap(grace), .now)
+        }
+        let info = try await Purchases.shared.customerInfo(fetchPolicy: .fetchCurrent)
+        guard Purchases.shared.appUserID == customer else { throw SandboxFixtureError.unexpectedCustomer }
+        let entitlement = info.entitlements.active[config.revenueCatEntitlementID]
+        XCTAssertEqual(entitlement?.productIdentifier, product.id)
+        XCTAssertEqual(entitlement?.store, .appStore)
+        XCTAssertEqual(entitlement?.isSandbox, true)
+    }
+
+    private enum GracePhase: String { case purchase, grace, recovered }
+    private typealias SignedStatus = (Product.SubscriptionInfo.Status, Transaction, Product.SubscriptionInfo.RenewalInfo)
+
+    private func readGraceStatus(_ subscription: Product.SubscriptionInfo, productID: String, phase: GracePhase,
+                                 freshAfter: Date, expectedOriginal: UInt64?, customer: String) async throws -> SignedStatus {
+        let deadline = Date.now.addingTimeInterval(phase == .grace ? 7 * 60 : 0)
+        while true {
+            guard Purchases.shared.appUserID == customer else { throw SandboxFixtureError.unexpectedCustomer }
+            let candidates = try await subscription.status.compactMap { status -> SignedStatus? in
+                guard case .verified(let transaction) = status.transaction,
+                      case .verified(let renewal) = status.renewalInfo,
+                      transaction.productID == productID, transaction.productType == .autoRenewable,
+                      transaction.environment == .sandbox, transaction.ownershipType == .purchased,
+                      !transaction.isUpgraded, transaction.revocationDate == nil,
+                      transaction.purchaseDate >= freshAfter,
+                      renewal.originalTransactionID == transaction.originalID,
+                      expectedOriginal.map({ $0 == transaction.originalID }) ?? true else { return nil }
+                return (status, transaction, renewal)
+            }
+            guard candidates.count == 1, let match = candidates.first else {
+                throw SandboxFixtureError.unexpectedAppleTransaction
+            }
+            if phase != .grace || match.0.state != .subscribed || Date.now >= deadline { return match }
+            try await Task.sleep(for: .seconds(5))
+        }
+    }
+
     private func loadFixture(
         enableFlag: String = "EXECUTE_HOSTED_APPLE_SANDBOX_REFUND"
     ) async throws -> (String, UInt64, UInt64, String, AppConfiguration) {
@@ -348,6 +435,11 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
             throw SandboxFixtureError.unexpectedAppConfiguration
         }
 
+        try await waitForCustomer(customer)
+        return (productID, transactionID, originalID, customer, config)
+    }
+
+    private func waitForCustomer(_ customer: String) async throws {
         // The normal app host restores its saved session and configures the SDK.
         for _ in 0..<50 {
             if Purchases.isConfigured, !Purchases.shared.isAnonymous, Purchases.shared.appUserID == customer { break }
@@ -356,7 +448,6 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
         guard Purchases.isConfigured, !Purchases.shared.isAnonymous, Purchases.shared.appUserID == customer else {
             throw SandboxFixtureError.unexpectedCustomer
         }
-        return (productID, transactionID, originalID, customer, config)
     }
 
     private enum SandboxFixtureError: Error {
