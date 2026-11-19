@@ -474,3 +474,30 @@ The approved helper is active and final verification passed; another rollback is
 
 ### Live limitation and date follow-up — 2026-11-09
 The normal authenticated app created one explicitly synthetic QA limitation, then archived it using the app control. Switching Nov9 → Nov8 showed an unsaved default check-in rather than the saved day's guidance; returning to Nov9 restored saved guidance and the archived limitation. Independent SELECT confirms one limitation record with is_active=false and the synthetic note. This is date reload coverage, not another full relaunch test. Planned task completion still requires a real saved plan; changed-input editing and full Plan/device/release acceptance remain open. Evidence: chat workspace work/live-native-20261109/limitation-date-result.json and limitation-after-date-reload-db.json. Canonical Execute Progress Log is verified through row95.
+
+## E72 signed Sandbox grace — 2026-11-19
+
+The owner confirmed one no-charge Native Dev monthly Sandbox purchase after
+the 24-hour setting window, then turned renewals off on the disposable Apple
+tester. The purchase renewed the approved existing Sandbox lineage. Receipt
+times below are UTC.
+
+- The ordinary period ended at 08:47:53. RevenueCat recorded the billing issue
+  at 08:48:02 and reported a grace expiration of 08:52:53. The exact
+  Executev2 projection remained Premium and active after ordinary expiry.
+- After reconnecting by USB and unlocking the paired iPhone, the signed
+  read-only XCTest passed at 08:50:42. Verified Apple transaction and renewal
+  information reported `.inGracePeriod`, a past ordinary expiry, and the same
+  future grace expiration. The exact RevenueCat SDK entitlement remained active
+  for the monthly App Store Sandbox product. The owner's Billing screen
+  showed Premium during grace.
+- The owner turned Allow Purchases & Renewals back on. Apple issued a new
+  signed transaction on the same lineage, and RevenueCat briefly cleared the
+  billing issue. The next cycle entered billing retry again, with no new
+  grace expiration and a Free/canceled Executev2 projection at final readback.
+  The signed pass applies to the first grace retention case. Repeat-renewal
+  recovery and live refund reversal remain open.
+- The signed E71 Release app was reinstalled and launched on the test iPhone.
+  With the owner's explicit approval for Apple's combined switch, the
+  temporary Sandbox grace setting was turned off. App Store Connect returned
+  to Set Up Billing Grace Period.
