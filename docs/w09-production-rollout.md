@@ -67,6 +67,8 @@ active recipients. Require a verified owner-bound identity or explicit
 reassociation and rehearse the active App Store, late webhook, same-email
 registration, and unrelated subscriber cases in Sandbox. A RevenueCat customer
 deletion cannot cancel a StoreKit subscription.
+Follow the [subscriber deletion and UUID migration runbook](w09-revenuecat-subscriber-deletion.md)
+for the rehearsal and rollout gates.
 
 The native confirmation explains that Apple billing continues until canceled
 and links directly to Apple's subscription management. The link is available
