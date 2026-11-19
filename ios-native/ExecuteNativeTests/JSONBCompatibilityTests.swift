@@ -916,19 +916,30 @@ final class StartupStateTests: XCTestCase {
         guard case .missing = cached else { return XCTFail("Deleted account cache should be removed") }
     }
 
-    func testSuccessfulAppleDeletionShowsDismissibleManualRevocationGuidance() async throws {
+    func testSuccessfulAppleDeletionRetainsDismissibleGuidanceAfterRelaunch() async throws {
         let user = ExecuteUser(id: UUID(), email: "apple-delete@example.invalid", displayName: "Fixture")
+        let defaults = isolatedAuthOwnerDefaults()
         let state = makeState(
             authService: MockAuthService(restoredUser: user),
-            accountService: MockAccountService(outcome: .manualAppleRevocation)
+            accountService: MockAccountService(outcome: .manualAppleRevocation),
+            deletionNoticeDefaults: defaults
         )
         await state.start()
         XCTAssertFalse(state.appleRevocationInstructionsPending)
         try await state.deleteAccount(confirmation: state.deletionConfirmationForTest())
         XCTAssertEqual(state.launchState, .signedOut)
         XCTAssertTrue(state.appleRevocationInstructionsPending)
-        state.dismissAppleRevocationInstructions()
-        XCTAssertFalse(state.appleRevocationInstructionsPending)
+
+        let relaunched = makeState(authService: MockAuthService(), deletionNoticeDefaults: defaults)
+        await relaunched.start()
+        XCTAssertEqual(relaunched.launchState, .signedOut)
+        XCTAssertTrue(relaunched.appleRevocationInstructionsPending)
+        relaunched.dismissAppleRevocationInstructions()
+        XCTAssertFalse(relaunched.appleRevocationInstructionsPending)
+
+        let dismissed = makeState(authService: MockAuthService(), deletionNoticeDefaults: defaults)
+        await dismissed.start()
+        XCTAssertFalse(dismissed.appleRevocationInstructionsPending)
     }
 
     func testFailedAccountDeletionKeepsAuthenticatedSession() async {
@@ -958,6 +969,7 @@ final class StartupStateTests: XCTestCase {
         cache: UserScopedCacheStore = UserScopedCacheStore(),
         subscriptionService: SubscriptionServicing = MockSubscriptionService(),
         configurationError: AppError? = nil,
+        deletionNoticeDefaults: UserDefaults? = nil,
         timeoutNanoseconds: UInt64 = 100_000_000
     ) -> AppState {
         AppState(
@@ -967,6 +979,7 @@ final class StartupStateTests: XCTestCase {
             router: AppRouter(),
             subscriptionService: subscriptionService,
             configurationError: configurationError,
+            deletionNoticeDefaults: deletionNoticeDefaults,
             sessionRestoreTimeoutNanoseconds: timeoutNanoseconds
         )
     }
@@ -2319,7 +2332,8 @@ extension AppState {
         for payload: JSONValue in [
             .object(["success": .bool(true), "results": .object(completeResults)]),
             acknowledgment(completeResults, version: 2),
-            acknowledgment(completeResults, ownerID: UUID())
+            acknowledgment(completeResults, ownerID: UUID()),
+            acknowledgment(completeResults, apple: "failed")
         ] {
             let fixture = DeletionFunctionFixture(payload)
             let service = SupabaseAccountService(functions: fixture, readiness: ready)

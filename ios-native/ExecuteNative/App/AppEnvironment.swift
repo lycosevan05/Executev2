@@ -61,7 +61,8 @@ final class AppEnvironment: ObservableObject {
             router: router,
             subscriptionService: subscriptionService,
             subscriptionReader: subscriptionReader,
-            configurationError: configurationError
+            configurationError: configurationError,
+            deletionNoticeDefaults: configuration == nil ? nil : .standard
         )
     }
 

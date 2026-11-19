@@ -136,7 +136,10 @@ final class SupabaseAccountService: AccountServicing {
         }
         switch response.appleRevocation {
         case nil, "revoked": return .complete
-        default: return .manualAppleRevocation
+        case "manual_required": return .manualAppleRevocation
+        default:
+            guard !requiresBinding else { throw Self.unconfirmedDeletion }
+            return .manualAppleRevocation
         }
     }
 

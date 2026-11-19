@@ -23,6 +23,8 @@ struct AccountDeletionConfirmation: Identifiable, Equatable, Sendable {
 
 @MainActor
 final class AppState: ObservableObject {
+    private static let pendingAppleRevocationKey = "Execute.Account.PendingAppleRevocationInstructions"
+
     @Published private(set) var launchState: AppLaunchState = .launching
     @Published private(set) var premiumState = PremiumState.free
     @Published private(set) var appleRevocationInstructionsPending = false
@@ -30,6 +32,7 @@ final class AppState: ObservableObject {
     private let authService: AuthServicing
     private let accountService: AccountServicing
     private let cache: UserScopedCacheStore
+    private let deletionNoticeDefaults: UserDefaults?
     let router: AppRouter
     let billing: BillingStore
     private let configurationError: AppError?
@@ -61,6 +64,7 @@ final class AppState: ObservableObject {
         subscriptionService: SubscriptionServicing,
         subscriptionReader: SubscriptionReading = EmptySubscriptionReader(),
         configurationError: AppError?,
+        deletionNoticeDefaults: UserDefaults? = nil,
         sessionRestoreTimeoutNanoseconds: UInt64 = 10_000_000_000
     ) {
         self.authService = authService
@@ -69,7 +73,9 @@ final class AppState: ObservableObject {
         self.router = router
         self.billing = BillingStore(service: subscriptionService, reader: subscriptionReader)
         self.configurationError = configurationError
+        self.deletionNoticeDefaults = deletionNoticeDefaults
         self.sessionRestoreTimeoutNanoseconds = sessionRestoreTimeoutNanoseconds
+        appleRevocationInstructionsPending = deletionNoticeDefaults?.bool(forKey: Self.pendingAppleRevocationKey) ?? false
         billing.onPremiumStateChanged = { [weak self] state in self?.premiumState = state }
     }
 
@@ -281,15 +287,21 @@ final class AppState: ObservableObject {
             return
         }
         authenticationGeneration = UUID()
+        if outcome == .manualAppleRevocation {
+            // Persist only the generic completion notice, with no account identifiers.
+            deletionNoticeDefaults?.set(true, forKey: Self.pendingAppleRevocationKey)
+            appleRevocationInstructionsPending = true
+        }
         try? await authService.signOut()
         guard sessionGeneration == session else { return }
         sessionGeneration = UUID()
         router.reset()
-        appleRevocationInstructionsPending = outcome == .manualAppleRevocation
         launchState = .signedOut
     }
 
     func dismissAppleRevocationInstructions() {
+        guard appleRevocationInstructionsPending else { return }
+        deletionNoticeDefaults?.removeObject(forKey: Self.pendingAppleRevocationKey)
         appleRevocationInstructionsPending = false
     }
 
