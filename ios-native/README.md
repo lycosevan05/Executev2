@@ -12,7 +12,7 @@ The native target is iOS 16.0. This enables Swift Charts for the existing insigh
 
 1. Copy `Configuration/Local.xcconfig.example` to `Configuration/Local.xcconfig`.
 2. Fill in `SUPABASE_URL` and `SUPABASE_ANON_KEY` from the existing client configuration. Set `REVENUECAT_API_KEY` to the public iOS SDK key for the intended native bundle; see RevenueCat development setup below.
-3. Keep `AUTH_CALLBACK_SCHEME = com.executelabs.execute.native-dev` for this temporary bundle identifier.
+3. Keep `AUTH_CALLBACK_SCHEME = com.executelabs.execute.native-dev` for the selected first public Swift build.
 4. Add `com.executelabs.execute.native-dev://login-callback` to Supabase Auth redirect URLs before testing OAuth.
 
 `Local.xcconfig` is ignored. It may contain public mobile client keys, never Supabase service-role, OpenAI, Stripe secret, webhook secret, or private backend keys.
@@ -80,7 +80,7 @@ Current acceptance and remaining cases are in the authoritative checklist W19–
 
 ## RevenueCat development setup
 
-The temporary bundle identifier `com.executelabs.execute.native-dev` requires a matching App Store Connect app and RevenueCat app/public SDK key. Do not assume production products attach to the temporary app automatically. On 2026-10-16, ignored `Local.xcconfig` was prepared from this checkout's existing public Supabase client configuration. Its public RevenueCat iOS SDK key now belongs to the verified native-dev app `appf70a718df8` in project `7415d2f3`; the value stays in the ignored local file. A new checkout still needs the copy/configuration steps above.
+The owner selected `com.executelabs.execute.native-dev` for the first public Swift build in E71. Use the matching App Store Connect record, RevenueCat app and public SDK key. On 2026-10-16, ignored `Local.xcconfig` was prepared from this checkout's existing public Supabase client configuration. Its public RevenueCat iOS SDK key belongs to the verified Native Dev app `appf70a718df8` in project `7415d2f3`. The value stays in the ignored local file. A new checkout still needs the copy/configuration steps above.
 
 Read-only RevenueCat API checks using the existing web client iOS key confirmed these identifiers on 2026-10-15:
 

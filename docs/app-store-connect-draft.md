@@ -1,14 +1,14 @@
 # Execute App Store Connect draft
 
-The E68 Swift project builds `com.executelabs.execute.native-dev`. The matching
+The Swift project builds `com.executelabs.execute.native-dev`. The matching
 [Execute Native Dev record](https://appstoreconnect.apple.com/apps/6823713820/distribution/info)
 has Apple ID `6823713820`, SKU `execute-native-dev`, and English (U.S.) as its
 primary language. Monthly and annual products for this record use
 `execute_native_dev_premium_month` and `execute_native_dev_premium_annual`.
 The original Execute app, `com.executelabs.execute`, is a separate record with
-its own products. Confirm the intended public listing and signed build identity
-with the owner before finalizing which record will be submitted. The repository
-records the native identity as temporary. [Native setup and product mapping](../ios-native/README.md#resolve-the-native-dev-configuration)
+its own products. In E71, the owner selected Execute Native Dev for the first
+public Swift build. Verify the exact archive identity and subscription products
+against that listing before submission. [Native setup and product mapping](../ios-native/README.md#resolve-the-native-dev-configuration)
 
 ## Listing copy
 
@@ -40,9 +40,9 @@ reader lists `privacy@executelabs.ca` and `support@executelabs.ca`.
 
 The owner approved draft-only edits for Execute Native Dev. The iOS 1.0
 description, keywords, and Support URL were saved and read back after reload.
-App Store Connect still showed Prepare for Submission. The public listing
-decision remains open. The Account Holder accepted the updated Developer Program License
-Agreement during E70, and Apple Developer Identifiers reopened.
+App Store Connect showed Prepare for Submission after that edit. The Account
+Holder accepted the updated Developer Program License Agreement during E70,
+and Apple Developer Identifiers reopened.
 
 ## Review notes draft
 
