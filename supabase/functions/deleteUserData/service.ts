@@ -7,6 +7,10 @@ import {
 } from "./deletion.ts";
 import { createDeletionStore, type DeletionClient } from "./store.ts";
 import { createDeletionBilling } from "./billing.ts";
+import {
+  createStripeCheckoutLedger,
+  drainGuardedStripeCheckouts,
+} from "../_shared/stripeCheckoutGuard.ts";
 
 export async function removeAccount(
   user: DeletionUser,
@@ -33,8 +37,10 @@ export async function removeAccount(
     throw new Error("The staged billing deletion safeguards are unavailable.");
   }
   const service = createServiceClient();
+  const checkoutGuard = options.enableStagedBilling === true &&
+    Deno.env.get("EXECUTE_STRIPE_CHECKOUT_GUARD") === "1";
   let stripe: Stripe | undefined;
-  const billing = createDeletionBilling(() => {
+  const getStripe = () => {
     if (!options.allowStripe && !options.enableStagedBilling) {
       throw new Error("Stripe access is unavailable in this rehearsal.");
     }
@@ -44,9 +50,13 @@ export async function removeAccount(
     // Preserve the local pre-change request API version; deployed baseline has no Stripe path.
     stripe = new Stripe(key, {
       apiVersion: "2024-04-10" as Stripe.LatestApiVersion,
+      ...(checkoutGuard ? { timeout: 8_000, maxNetworkRetries: 0 } : {}),
     });
     return stripe;
-  }, { requireOwnerUUID: options.requireUploadDrain === true });
+  };
+  const billing = createDeletionBilling(getStripe, {
+    requireOwnerUUID: options.requireUploadDrain === true,
+  });
   return await deleteAccount(
     user,
     ENTITY_TABLES,
@@ -65,6 +75,7 @@ export async function removeAccount(
       {
         requireBillingFenceForSubscriptions:
           options.requireUploadDrain === true,
+        requireStripeOnly: options.enableStagedBilling === true,
         closeBillingProjection: options.enableStagedBilling
           ? (account, rows) =>
             service.rpc("close_account_billing_projection", {
@@ -88,5 +99,13 @@ export async function removeAccount(
       }
       : undefined,
     options.revokeAppleAuthorization,
+    checkoutGuard
+      ? () =>
+        drainGuardedStripeCheckouts(
+          createStripeCheckoutLedger((name, args) => service.rpc(name, args)),
+          () => getStripe().checkout.sessions,
+          user,
+        )
+      : undefined,
   );
 }

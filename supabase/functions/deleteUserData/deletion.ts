@@ -1,4 +1,5 @@
 /** Local, dependency-free orchestration. No credentials, network or deployment on import. */
+import type { CheckoutDrainPlan } from "../_shared/stripeCheckoutGuard.ts";
 export interface DeletionUser {
   id: string;
   email?: string | null;
@@ -24,7 +25,11 @@ export interface DeletionStore {
   deleteAuthentication(id: string): Promise<void>;
 }
 export interface DeletionBilling {
-  verifyOwner(id: string, user: DeletionUser): Promise<void>;
+  verifyOwner(
+    id: string,
+    user: DeletionUser,
+    options?: { requireExisting?: boolean },
+  ): Promise<void>;
   cancel(id: string): Promise<void>;
 }
 export type AppleRevocationOutcome = "revoked" | "manual_required";
@@ -92,6 +97,7 @@ export async function deleteAccount(
   billing: DeletionBilling,
   closeAndDrainUploads?: (ownerId: string) => Promise<void>,
   revokeAppleAuthorization?: () => Promise<AppleRevocationOutcome | undefined>,
+  closeAndDrainCheckout?: () => Promise<CheckoutDrainPlan>,
 ) {
   validateUser(user);
   // Complete read-only enumeration before the first irreversible/provider operation.
@@ -107,6 +113,25 @@ export async function deleteAccount(
     // Files that finished before their dispatch was acknowledged can be newer
     // than the read-only preflight. Inventory them after the upload drain.
     uploads = await collectUploads(store, user.id);
+  }
+  let checkout: CheckoutDrainPlan | undefined;
+  if (closeAndDrainCheckout) {
+    if (!plan.closeBillingProjection) {
+      throw new Error(
+        "Checkout drain requires a verified billing projection fence.",
+      );
+    }
+    checkout = await closeAndDrainCheckout();
+    const discovered = [...new Set(checkout.subscriptionIds)];
+    if (discovered.some((id) => !/^sub_[A-Za-z0-9_]+$/.test(id))) {
+      throw new Error("Invalid subscription reference from Stripe checkout.");
+    }
+    for (const id of discovered) {
+      // Checkout is direct provider evidence. A missing subscription cannot
+      // be treated as a stale billing-row reference.
+      await billing.verifyOwner(id, user, { requireExisting: true });
+    }
+    ids.push(...discovered.filter((id) => !ids.includes(id)));
   }
   await plan.closeBillingProjection?.();
   const appleRevocation = await revokeAppleAuthorization?.();
@@ -125,6 +150,7 @@ export async function deleteAccount(
   for (const table of tables) await store.assertRowsAbsent(table, user);
   // Detect uploads made during database cleanup before removing the retry path.
   await assertUploadsAbsent(store, user.id);
+  await checkout?.finish();
   // Retain authentication on any earlier partial failure so the account can retry.
   await store.deleteAuthentication(user.id);
   results.authentication = "deleted";

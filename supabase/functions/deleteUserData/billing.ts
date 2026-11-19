@@ -17,12 +17,16 @@ export function createDeletionBilling(
     return (error as { code?: string })?.code === "resource_missing";
   }
   return {
-    async verifyOwner(id: string, user: DeletionUser) {
+    async verifyOwner(
+      id: string,
+      user: DeletionUser,
+      { requireExisting } = {},
+    ) {
       let subscription;
       try {
         subscription = await getStripe().subscriptions.retrieve(id);
       } catch (error) {
-        if (missing(error)) {
+        if (missing(error) && !requireExisting) {
           verified.add(id);
           noCancellationNeeded.add(id);
           return;
