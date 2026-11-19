@@ -34,6 +34,7 @@ STRIPE_ID = "sub_fixture_rollback"
 UNRELATED_EMAIL = "unrelated@example.invalid"
 
 REVERSE = (HERE / "reverse-staged-guards.sql").read_text()
+REVERSE_UPLOAD = (HERE / "reverse-storage-upload-preparation.sql").read_text()
 CATALOG = (HERE / "staged-guard-schema.sql").read_text()
 
 
@@ -71,15 +72,38 @@ def probe_existing_provider(db):
     ) == "1\n1"
 
 
-def reject_pending_reversal(db):
+def reject_reversal(db, sql, message):
     before = schema(db)
     try:
-        db.sql(REVERSE)
+        db.sql(sql)
     except AssertionError as error:
-        assert "pending deletion state requires reconciliation" in str(error), error
+        assert message in str(error), error
     else:
-        raise AssertionError("Structural reversal opened a pending deletion")
+        raise AssertionError("Unsafe structural reversal succeeded")
     assert schema(db) == before
+
+
+def reject_pending_reversal(db):
+    reject_reversal(db, REVERSE, "pending deletion state requires reconciliation")
+
+
+def rehearse_upload_preparation(db, baseline, baseline_catalog):
+    for name in GUARDS[4:7]:
+        db.file(HERE / name)
+    dispatch = db.sql(
+        "set role service_role; select dispatch_id "
+        f"from public.begin_exact_account_upload_dispatch('{WRITER_FIRST}', '{WRITER_FIRST}/preparation.txt');"
+    )
+    reject_reversal(db, REVERSE_UPLOAD, "pending upload state requires reconciliation")
+    db.sql(f"set role service_role; select public.finish_account_upload_dispatch('{WRITER_FIRST}', '{dispatch}');")
+    db.sql(f"set role service_role; select public.close_account_upload_admission('{WRITER_FIRST}');")
+    reject_reversal(db, REVERSE_UPLOAD, "pending upload state requires reconciliation")
+    db.sql(f"delete from auth.users where id = '{WRITER_FIRST}';"
+           f"insert into auth.users (id,email) values ('{WRITER_FIRST}', '{WRITER_EMAIL}');")
+    db.sql(REVERSE_UPLOAD)
+    assert schema(db) == baseline
+    assert db.sql(CATALOG) == baseline_catalog
+    print("PASS upload preparation reverses before cutover and retains pending dispatches and admission closures")
 
 
 def rehearse(db):
@@ -94,6 +118,7 @@ def rehearse(db):
     baseline_catalog = db.sql(CATALOG)
     probe_existing_authenticated_client(db)
     probe_existing_provider(db)
+    rehearse_upload_preparation(db, baseline, baseline_catalog)
 
     install(db)
     assert schema(db) != baseline
@@ -105,6 +130,7 @@ def rehearse(db):
         "select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects' "
         "and policyname like 'uploads require canonical writer for %' and permissive = 'RESTRICTIVE'"
     ) == "2"
+    reject_reversal(db, REVERSE_UPLOAD, "writer cutover requires the full staged reversal")
     probe_existing_authenticated_client(db)
     probe_existing_provider(db)
     db.sql(REVERSE)

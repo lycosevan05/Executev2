@@ -388,6 +388,17 @@ on the policy cutover. A client rollback that restores a direct writer requires
 turning staged deletion off and resolving any outstanding dispatches before
 reopening direct writes.
 
+The preparation phase installs only `storage-upload-admission-guard.sql`,
+`storage-upload-dispatch-guard.sql`, and `storage-upload-exact-dispatch.sql`,
+in that order. It supports canonical uploads alongside the existing
+authenticated writer. Keep upload closure and deletion disabled in this phase.
+Before reversing preparation, withdraw the canonical endpoint and verify
+that every upload dispatch has an acknowledged outcome. Apply
+`reverse-storage-upload-preparation.sql` and compare the catalog with the
+preparation baseline. The reversal rejects any pending dispatch, closed
+admission, or installed writer cutover. Use the full staged reversal after
+writer cutover.
+
 From a fresh verified W04 loopback stack, the following fixture installs the
 four optional Storage candidates and exercises the production handler through
 a loopback Deno HTTP listener with real Auth, PostgREST and Storage.
