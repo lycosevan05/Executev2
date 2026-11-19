@@ -20,7 +20,7 @@ Storage route. Mark artifacts that lack a deployment record as local evidence.
 
 | Writer | Evidence and next check |
 | --- | --- |
-| Browser | The E72 local production build routes food photo and barcode uploads through `guardedStorageUpload`. The retained Developer Vite bundle calls the direct Storage SDK. Ask the owner for the hosted app origin and latest deployment or asset manifest. Compare the served `UploadFile` implementation and exercise the candidate's photo and barcode actions with a synthetic account in the isolated environment. The `executelabs.ca` legal and support site is a separate repository. |
+| Browser | The E72 local production build routes food photo and barcode uploads through `guardedStorageUpload`. The retained Developer Vite bundle calls the direct Storage SDK. The owner recalls browser prototypes and has no confirmed live origin. GitHub returned an empty deployments list and no accessible Pages record. If a deployment is found, identify its owner, hosting configuration and client activity before replacing or retiring it. Compare the served `UploadFile` implementation and exercise the candidate's photo and barcode actions with a synthetic account in the isolated environment. The `executelabs.ca` legal and support site is a separate repository. |
 | Capacitor | The retained Developer app resource bundle calls the direct Storage SDK. Installed Capacitor apps receive their packaged web assets with a new app build. Inspect the history of the original Execute app in App Store Connect and TestFlight, and trace each still-supported build to its packaged bundle or an approved synthetic-device test. |
 | Native Swift | The E71 Native Dev candidate configures the guarded Storage service. Keep its exact signed bundle and release backend paired in acceptance. Check whether any other build or feature uses Storage separately. |
 | Managed Storage | On the exact hosted project, inventory direct upload requests, signed-upload issuance and redemption, resumable sessions and in-flight writes. Use read-only Storage settings and route-level aggregate logs where available. Record the coverage interval, then establish provider-backed expiry or explicit retirement of older capabilities and sessions. An empty canonical ledger covers only requests registered by the canonical path. |
@@ -34,12 +34,44 @@ added to this migration. Builds 16 and 18 remained Ready to Submit. Keep
 direct writes open for supported legacy clients until the team verifies their
 replacement or retirement.
 
+The 24-hour Executev2 API gateway count included both known E71 Storage
+write fixtures. It returned zero other writes matching the direct uploads,
+signed, resumable or S3 route prefixes. The sample establishes recent
+observations only. It does not identify every deployed client, prove
+capability expiry or cover unlogged privileged requests. The Edge Function
+inventory showed only the guarded upload, legacy deletion, RevenueCat webhook
+and AI invocation. The web Stripe functions in source were absent from this
+project's deployed list.
+
 The next deployable phase is the guarded browser and Capacitor client builds
 while direct writes remain available. Rebuild and exercise both against an
 isolated hosted project first, including upload error handling and owner
 switching. Obtain separate release approval for the confirmed client channels.
 Retain E71 preparation until supported old writers have migrated or have an
 approved retirement plan, and the last admitted write is accounted for.
+
+## Billing-linked owners
+
+The E72 read-only subscription inventory found eight RevenueCat-linked stored
+rows and zero Stripe-linked rows. A stored row is historical projection data,
+not an authoritative provider inventory or proof of an active subscription.
+The staged Stripe-only rehearsal refuses RevenueCat projection rows. Keep
+that scope for the rehearsal.
+
+Native Premium currently combines server state with the RevenueCat SDK and
+uses the owner's email as the RevenueCat customer ID. Before broad deletion,
+prove that delayed renewal and transfer events cannot recreate the retired
+owner and that a new Auth UUID reusing the email cannot inherit the old
+customer's purchases implicitly. Preserve legitimate transfers to verified
+active recipients. Require a verified owner-bound identity or explicit
+reassociation and rehearse the active App Store, late webhook, same-email
+registration, and unrelated subscriber cases in Sandbox. A RevenueCat customer
+deletion cannot cancel a StoreKit subscription.
+
+The native confirmation explains that Apple billing continues until canceled
+and links directly to Apple's subscription management. The link is available
+independently of the in-app account deletion confirmation.
+[Apple account deletion guidance](https://developer.apple.com/help/app-review/guideline-reference/5-1-1-account-deletion)
 
 ## Cutover and recovery
 

@@ -590,10 +590,19 @@ private struct DeleteAccountSheet: View {
                         .foregroundStyle(ExecuteColor.olive)
                         .multilineTextAlignment(.center)
 
-                    Text("App Store subscriptions cannot be cancelled by Execute. Cancel separately in iOS Settings under Apple ID > Subscriptions.")
-                        .font(ExecuteTypography.caption(10))
-                        .foregroundStyle(ExecuteColor.mist)
-                        .multilineTextAlignment(.center)
+                    VStack(spacing: ExecuteSpacing.xs) {
+                        Text("If you subscribed through the App Store, Apple will keep billing you until you cancel. Please cancel your subscription before deleting your Execute account.")
+                            .font(ExecuteTypography.body(13))
+                            .foregroundStyle(ExecuteColor.olive)
+                            .multilineTextAlignment(.center)
+
+                        Link(destination: URL(string: "https://apps.apple.com/account/subscriptions/")!) {
+                            Text("Manage Apple Subscription")
+                                .font(ExecuteTypography.label(13).weight(.semibold))
+                                .foregroundStyle(ExecuteColor.olive)
+                                .frame(minHeight: 44)
+                        }
+                    }
 
                     if !model.canConfirmDeletion(confirmedSession) && !model.isDeletingAccount {
                         Text("Account deletion is temporarily unavailable. Contact support@executelabs.ca for help.")

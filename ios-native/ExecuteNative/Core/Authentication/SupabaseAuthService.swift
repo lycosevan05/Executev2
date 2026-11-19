@@ -67,7 +67,7 @@ final class SupabaseAuthService: AuthServicing {
         }
         // Keep this read cancellable by AppState's startup timeout. Only calls
         // that explicitly replace/remove the SDK session enter the queue.
-        try await restoredUser()
+        return try await restoredUser()
     }
 
     func monitorSessionLoss(onLoss: @escaping @MainActor () async -> Void) async {

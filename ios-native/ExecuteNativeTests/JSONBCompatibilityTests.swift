@@ -2429,7 +2429,9 @@ extension AppState {
 
     func testUnavailableRolloutPreservesSessionCacheNavigationAndDraftPermissions() async throws {
         let fixture = DeletionFunctionFixture(success)
-        try await verifyPreservedState(SupabaseAccountService(functions: fixture), expectedAvailable: false)
+        try await verifyPreservedState(expectedAvailable: false) { _ in
+            SupabaseAccountService(functions: fixture)
+        }
         XCTAssertEqual(fixture.calls, 0)
     }
 
@@ -2437,22 +2439,35 @@ extension AppState {
         let fixture = DeletionFunctionFixture(acknowledgment([
             "authentication": .string("deleted"), "storage": .string("deleted 0")
         ]))
-        try await verifyPreservedState(SupabaseAccountService(functions: fixture, readiness: ready), expectedAvailable: true)
+        try await verifyPreservedState(expectedAvailable: true) { current in
+            SupabaseAccountService(functions: fixture, readiness: .verifiedGuardedRollout(current: current))
+        }
         XCTAssertEqual(fixture.calls, 1)
     }
 
-    private func verifyPreservedState(_ account: AccountServicing, expectedAvailable: Bool) async throws {
-        let user = ExecuteUser(id: UUID(), email: "delete-contract@example.invalid", displayName: "Fixture")
+    private func verifyPreservedState(
+        expectedAvailable: Bool,
+        makeAccount: (@escaping @MainActor () -> AccountDeletionConfirmation?) -> AccountServicing
+    ) async throws {
+        let user = ExecuteUser(id: owner, email: "delete-contract@example.invalid", displayName: "Fixture")
         let suite = "DeletionContract.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)); defer { defaults.removePersistentDomain(forName: suite) }
         let cache = UserScopedCacheStore(suiteName: suite), router = AppRouter()
         let auth = MockAuthService(restoredUser: user)
+        weak var activeState: AppState?
+        let account = makeAccount { activeState?.currentDeletionSession() }
         let state = AppState(authService: auth, accountService: account, cache: cache, router: router, subscriptionService: MockSubscriptionService(), configurationError: nil)
+        activeState = state
         await state.start(); try await cache.write("keep", for: CacheKey("fixture", "retained"))
         router.navigate(to: .profile(section: nil))
         let profile = ProfileViewModel(dataService: nil, appState: state, router: router, cache: cache, defaults: defaults)
         XCTAssertEqual(profile.canDeleteAccount, expectedAvailable)
-        do { try await state.deleteAccount(confirmation: state.deletionConfirmationForTest()); XCTFail("Expected deletion to remain unconfirmed") } catch {}
+        do {
+            try await state.deleteAccount(confirmation: state.deletionConfirmationForTest())
+            XCTFail("Expected deletion to remain unconfirmed")
+        } catch let error as AppError {
+            XCTAssertEqual(error.title, expectedAvailable ? "Account deletion not confirmed" : "Account deletion unavailable")
+        }
         XCTAssertEqual(state.launchState, .signedIn(user)); XCTAssertEqual(auth.restoredUser, user)
         XCTAssertTrue(state.allowsDraftWrites(for: user.id))
         XCTAssertEqual(router.pathBinding(for: .home).wrappedValue, [.profile(section: nil)])

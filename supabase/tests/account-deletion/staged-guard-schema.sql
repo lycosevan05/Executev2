@@ -3,7 +3,10 @@
 with namespaces as (
   select oid, nspname, nspowner, nspacl
   from pg_catalog.pg_namespace
-  where nspname in ('execute_deletion_guard', 'execute_deletion_private', 'execute_storage_deletion_guard')
+  where nspname in (
+    'execute_apple_grant_private', 'execute_checkout_private', 'execute_deletion_guard',
+    'execute_deletion_private', 'execute_storage_deletion_guard'
+  )
 ), relations as (
   select c.oid, n.nspname, c.relname, c.relowner, c.relacl, c.relrowsecurity, c.relforcerowsecurity
   from pg_catalog.pg_class c
@@ -66,7 +69,16 @@ with namespaces as (
       'finish_account_upload_dispatch',
       'close_and_list_account_upload_dispatches',
       'begin_exact_account_upload_dispatch',
-      'close_and_list_guarded_account_upload_dispatches'
+      'close_and_list_guarded_account_upload_dispatches',
+      'close_account_billing_projection',
+      'begin_guarded_stripe_checkout',
+      'acknowledge_guarded_stripe_checkout',
+      'close_and_list_guarded_stripe_checkouts',
+      'finish_guarded_stripe_checkout_drain',
+      'execute_has_apple_grant',
+      'execute_capture_apple_grant',
+      'execute_close_apple_grants',
+      'execute_confirm_apple_grant_revoked'
     )))
 )
 select coalesce(jsonb_agg(to_jsonb(catalog) order by object_type, object_name), '[]'::jsonb) as guard_schema
