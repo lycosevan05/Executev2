@@ -903,7 +903,7 @@ final class StartupStateTests: XCTestCase {
 
         await state.start()
         try await cache.write("private", for: CacheKey("test", "private"))
-        try await state.deleteAccount()
+        try await state.deleteAccount(confirmation: state.deletionConfirmationForTest())
 
         XCTAssertEqual(accountService.deletionCount, 1)
         XCTAssertEqual(state.launchState, .signedOut)
@@ -924,7 +924,7 @@ final class StartupStateTests: XCTestCase {
         )
         await state.start()
         XCTAssertFalse(state.appleRevocationInstructionsPending)
-        try await state.deleteAccount()
+        try await state.deleteAccount(confirmation: state.deletionConfirmationForTest())
         XCTAssertEqual(state.launchState, .signedOut)
         XCTAssertTrue(state.appleRevocationInstructionsPending)
         state.dismissAppleRevocationInstructions()
@@ -942,7 +942,7 @@ final class StartupStateTests: XCTestCase {
 
         await state.start()
         do {
-            try await state.deleteAccount()
+            try await state.deleteAccount(confirmation: state.deletionConfirmationForTest())
             XCTFail("Expected deletion to fail")
         } catch {
             XCTAssertEqual(error as? AppError, deletionError)
@@ -1777,10 +1777,10 @@ extension StartupStateTests {
             XCTAssertFalse(state.allowsDraftWrites(for: user.id))
             throw AppError(title: "Fixture unavailable", message: "Deletion did not commit")
         }
-        do { try await state.deleteAccount(); XCTFail("Expected failure") } catch { }
+        do { try await state.deleteAccount(confirmation: state.deletionConfirmationForTest()); XCTFail("Expected failure") } catch { }
         XCTAssertTrue(state.allowsDraftWrites(for: user.id))
         account.operation = { XCTAssertFalse(state.allowsDraftWrites(for: user.id)) }
-        try await state.deleteAccount()
+        try await state.deleteAccount(confirmation: state.deletionConfirmationForTest())
         XCTAssertFalse(state.allowsDraftWrites(for: user.id))
     }
 }
@@ -2199,7 +2199,22 @@ final class DailyActivityChecklistTests: XCTestCase {
     }
 }
 
+@MainActor
+extension AppState {
+    func deletionConfirmationForTest() throws -> AccountDeletionConfirmation {
+        guard case .signedIn(let user) = launchState else { throw CancellationError() }
+        return try XCTUnwrap(makeDeletionConfirmation(displayedOwner: user.id))
+    }
+}
+
 @MainActor final class AccountDeletionContractTests: XCTestCase {
+    private let owner = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
+    private var ready: AccountDeletionReadiness {
+        let confirmation = AccountDeletionConfirmation(owner: owner, session: UUID(), authentication: UUID())
+        return .verifiedGuardedRollout { confirmation }
+    }
+
     private var completeResults: [String: JSONValue] {
         var results = Dictionary(uniqueKeysWithValues: EntityTable.allCases.map { ($0.rawValue, JSONValue.string("deleted 0")) })
         results["authentication"] = .string("deleted")
@@ -2210,8 +2225,16 @@ final class DailyActivityChecklistTests: XCTestCase {
 
     private var success: JSONValue { acknowledgment(completeResults) }
 
-    private func acknowledgment(_ results: [String: JSONValue]) -> JSONValue {
-        .object(["success": .bool(true), "results": .object(results)])
+    private func acknowledgment(_ results: [String: JSONValue], version: Int = 1,
+                                ownerID: UUID? = nil, apple: String? = nil, error: String? = nil) -> JSONValue {
+        var fields: [String: JSONValue] = [
+            "success": .bool(true), "results": .object(results),
+            "receipt_version": .number(Double(version)),
+            "owner_id": .string((ownerID ?? owner).uuidString.lowercased())
+        ]
+        if let apple { fields["apple_revocation"] = .string(apple) }
+        if let error { fields["error"] = .string(error) }
+        return .object(fields)
     }
 
     func testUnverifiedRolloutCannotInvokeMutatingLegacyEndpoint() async {
@@ -2224,10 +2247,33 @@ final class DailyActivityChecklistTests: XCTestCase {
         XCTAssertEqual(fixture.calls, 0)
     }
 
-    func testLegacySuccessWithoutCompleteCleanupAcknowledgmentIsRejected() async {
-        for payload: JSONValue in [.object(["success": .bool(true)]), .object(["success": .bool(true), "results": .object(["goals": .string("deleted 3")])])] {
+    func testGuardedRouteRequiresMatchingOriginAndCurrentOwner() async {
+        let approved = URL(string: "https://verified-project.supabase.co")!
+        XCTAssertTrue(AppConfiguration.allowsGuardedDeletion(approvedOrigin: approved.absoluteString, supabaseURL: approved))
+        XCTAssertFalse(AppConfiguration.allowsGuardedDeletion(approvedOrigin: "", supabaseURL: approved))
+        XCTAssertFalse(AppConfiguration.allowsGuardedDeletion(approvedOrigin: "https://foreign.supabase.co", supabaseURL: approved))
+        for raw in ["https://verified-project.supabase.co/path", "https://verified-project.supabase.co:443",
+                    "https://user@verified-project.supabase.co", "https://nested.verified-project.supabase.co",
+                    "http://127.0.0.1:54321"] {
+            XCTAssertFalse(AppConfiguration.allowsGuardedDeletion(approvedOrigin: raw, supabaseURL: URL(string: raw)!))
+        }
+        let fixture = DeletionFunctionFixture()
+        let service = SupabaseAccountService(functions: fixture, readiness: .verifiedGuardedRollout { nil })
+        XCTAssertFalse(service.deletionAvailable)
+        do { try await service.deleteAccount(); XCTFail("A signed-out owner cannot submit deletion") }
+        catch let error as AppError { XCTAssertEqual(error.title, "Account deletion unavailable") }
+        catch { XCTFail("Expected local readiness error") }
+        XCTAssertEqual(fixture.calls, 0)
+    }
+
+    func testLegacyOrMismatchedReceiptCannotConfirmGuardedDeletion() async {
+        for payload: JSONValue in [
+            .object(["success": .bool(true), "results": .object(completeResults)]),
+            acknowledgment(completeResults, version: 2),
+            acknowledgment(completeResults, ownerID: UUID())
+        ] {
             let fixture = DeletionFunctionFixture(payload)
-            let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+            let service = SupabaseAccountService(functions: fixture, readiness: ready)
             do { try await service.deleteAccount(); XCTFail("Legacy response is not full deletion") }
             catch let error as AppError { XCTAssertEqual(error.title, "Account deletion not confirmed") }
             catch { XCTFail("Expected safe acknowledgment rejection") }
@@ -2248,7 +2294,7 @@ final class DailyActivityChecklistTests: XCTestCase {
         ]
         let variants: [JSONValue] = [
             .object(["success": .bool(false), "error": .string("private-fixture-provider-detail")]),
-            .object(["success": .bool(true), "error": .string("private-fixture-provider-detail"), "results": .object(completeResults)]),
+            acknowledgment(completeResults, error: "private-fixture-provider-detail"),
             acknowledgment(missingStorage)
         ] + invalidStatuses.map { key, status in
             var results = completeResults
@@ -2256,7 +2302,7 @@ final class DailyActivityChecklistTests: XCTestCase {
             return acknowledgment(results)
         }
         for payload in variants {
-            let service = SupabaseAccountService(functions: DeletionFunctionFixture(payload), readiness: .verifiedServerRollout)
+            let service = SupabaseAccountService(functions: DeletionFunctionFixture(payload), readiness: ready)
             do { try await service.deleteAccount(); XCTFail("Incomplete cleanup accepted") }
             catch let error as AppError {
                 XCTAssertEqual(error.title, "Account deletion not confirmed")
@@ -2270,7 +2316,7 @@ final class DailyActivityChecklistTests: XCTestCase {
             var results = completeResults
             results.removeValue(forKey: table.rawValue)
             let fixture = DeletionFunctionFixture(acknowledgment(results))
-            let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+            let service = SupabaseAccountService(functions: fixture, readiness: ready)
             do {
                 try await service.deleteAccount()
                 XCTFail("Accepted an acknowledgment missing \(table.rawValue)")
@@ -2283,26 +2329,25 @@ final class DailyActivityChecklistTests: XCTestCase {
         }
     }
 
-    func testVerifiedRolloutWithCompleteAcknowledgmentAcceptsEmptyBodyRequest() async throws {
+    func testVerifiedRolloutUsesOnlyGuardedRouteAndBindsExactOwner() async throws {
         let fixture = DeletionFunctionFixture(success)
-        let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+        let service = SupabaseAccountService(functions: fixture, readiness: ready)
         XCTAssertTrue(service.deletionAvailable)
         try await service.deleteAccount()
-        XCTAssertEqual(fixture.calls, 1); XCTAssertEqual(fixture.requestName, "deleteUserData")
-        XCTAssertEqual(fixture.requestBody, .object([:]))
+        XCTAssertEqual(fixture.calls, 1)
+        XCTAssertEqual(fixture.requestName, "deleteUserData-guarded")
+        XCTAssertEqual(fixture.requestBody, .object([
+            "receipt_version": .number(1), "expected_owner": .string(owner.uuidString.lowercased())
+        ]))
     }
 
     func testAppleRevocationOutcomeRequiresCompleteDeletionReceipt() async throws {
-        let complete = DeletionFunctionFixture(.object([
-            "success": .bool(true), "results": .object(completeResults), "apple_revocation": .string("manual_required")
-        ]))
-        let service = SupabaseAccountService(functions: complete, readiness: .verifiedServerRollout)
+        let complete = DeletionFunctionFixture(acknowledgment(completeResults, apple: "manual_required"))
+        let service = SupabaseAccountService(functions: complete, readiness: ready)
         let outcome = try await service.deleteAccount()
         XCTAssertEqual(outcome, .manualAppleRevocation)
 
-        complete.payload = .object([
-            "success": .bool(true), "results": .object(completeResults), "apple_revocation": .string("revoked")
-        ])
+        complete.payload = acknowledgment(completeResults, apple: "revoked")
         let revoked = try await service.deleteAccount()
         XCTAssertEqual(revoked, .complete)
 
@@ -2314,7 +2359,7 @@ final class DailyActivityChecklistTests: XCTestCase {
     func testTransportFailureNeverBecomesSuccessfulDeletion() async {
         for failure in [URLError(.notConnectedToInternet) as Error, NSError(domain: "FixtureProvider", code: 500, userInfo: [NSLocalizedDescriptionKey: "private-fixture-provider-detail"])] {
             let fixture = DeletionFunctionFixture(success); fixture.failure = failure
-            let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+            let service = SupabaseAccountService(functions: fixture, readiness: ready)
             do { try await service.deleteAccount(); XCTFail("Expected safe transport error") }
             catch let error as AppError {
                 XCTAssertEqual(error.title, "Account deletion not confirmed")
@@ -2325,7 +2370,7 @@ final class DailyActivityChecklistTests: XCTestCase {
 
     func testMalformedAcknowledgmentDecodingFailsSafely() async {
         let fixture = DeletionFunctionFixture(.object(["success": .string("private-fixture-provider-detail")]))
-        let service = SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout)
+        let service = SupabaseAccountService(functions: fixture, readiness: ready)
         do { try await service.deleteAccount(); XCTFail("Expected safe decoding error") }
         catch let error as AppError {
             XCTAssertEqual(error.title, "Account deletion not confirmed")
@@ -2343,7 +2388,7 @@ final class DailyActivityChecklistTests: XCTestCase {
         let fixture = DeletionFunctionFixture(acknowledgment([
             "authentication": .string("deleted"), "storage": .string("deleted 0")
         ]))
-        try await verifyPreservedState(SupabaseAccountService(functions: fixture, readiness: .verifiedServerRollout), expectedAvailable: true)
+        try await verifyPreservedState(SupabaseAccountService(functions: fixture, readiness: ready), expectedAvailable: true)
         XCTAssertEqual(fixture.calls, 1)
     }
 
@@ -2358,7 +2403,7 @@ final class DailyActivityChecklistTests: XCTestCase {
         router.navigate(to: .profile(section: nil))
         let profile = ProfileViewModel(dataService: nil, appState: state, router: router, cache: cache, defaults: defaults)
         XCTAssertEqual(profile.canDeleteAccount, expectedAvailable)
-        do { try await state.deleteAccount(); XCTFail("Expected deletion to remain unconfirmed") } catch {}
+        do { try await state.deleteAccount(confirmation: state.deletionConfirmationForTest()); XCTFail("Expected deletion to remain unconfirmed") } catch {}
         XCTAssertEqual(state.launchState, .signedIn(user)); XCTAssertEqual(auth.restoredUser, user)
         XCTAssertTrue(state.allowsDraftWrites(for: user.id))
         XCTAssertEqual(router.pathBinding(for: .home).wrappedValue, [.profile(section: nil)])

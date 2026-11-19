@@ -11,6 +11,7 @@ struct AppConfiguration: Equatable {
     var revenueCatMonthlyProductID = "execute_premium_month"
     var revenueCatAnnualProductID = "execute_premium_annual"
     var appReviewLogin: AppReviewLogin? = nil
+    var guardedDeletionEnabled = false
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
     var stagedDeletionOwnerID: UUID? = nil
 #endif
@@ -71,6 +72,9 @@ struct AppConfiguration: Equatable {
             origin: value("AppReviewSupabaseURL"),
             supabaseURL: supabaseURL
         )
+        configuration.guardedDeletionEnabled = Self.allowsGuardedDeletion(
+            approvedOrigin: value("GuardedDeletionProjectURL"), supabaseURL: supabaseURL
+        )
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
         configuration.stagedDeletionOwnerID = stagedDeletionOwnerID
 #endif
@@ -84,6 +88,16 @@ struct AppConfiguration: Equatable {
         configuration.revenueCatMonthlyProductID = identifier("RevenueCatMonthlyProductID", fallback: configuration.revenueCatMonthlyProductID)
         configuration.revenueCatAnnualProductID = identifier("RevenueCatAnnualProductID", fallback: configuration.revenueCatAnnualProductID)
         return configuration
+    }
+
+    static func allowsGuardedDeletion(approvedOrigin: String, supabaseURL: URL) -> Bool {
+        guard approvedOrigin == supabaseURL.absoluteString,
+              let origin = URLComponents(url: supabaseURL, resolvingAgainstBaseURL: false),
+              origin.scheme == "https",
+              origin.host?.range(of: #"^[a-z0-9-]+\.supabase\.co$"#, options: .regularExpression) != nil,
+              origin.path.isEmpty, origin.port == nil, origin.user == nil,
+              origin.password == nil, origin.query == nil, origin.fragment == nil else { return false }
+        return true
     }
 
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE

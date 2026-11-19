@@ -26,6 +26,14 @@ Storage route. Mark artifacts that lack a deployment record as local evidence.
 | Managed Storage | On the exact hosted project, inventory direct upload requests, signed-upload issuance and redemption, resumable sessions and in-flight writes. Use read-only Storage settings and route-level aggregate logs where available. Record the coverage interval, then establish provider-backed expiry or explicit retirement of older capabilities and sessions. An empty canonical ledger covers only requests registered by the canonical path. |
 | Privileged writers | Inventory job, Edge Function, integration and S3 writer owners against the actual project. Verify which uses of service or S3 access can write the `uploads` bucket. Move relevant writers onto coordinated admission or explicitly retire them. Record status and scope without exporting key values. |
 
+E72 checked the original Execute Performance record in App Store Connect. Its
+iOS 1.0 version is in Prepare for Submission. The separate TestFlight list
+showed original bundle `com.executelabs.execute`, build 17, in internal
+Testing. Apple recorded upload on August 28, before the canonical writer was
+added to this migration. Builds 16 and 18 remained Ready to Submit. Keep
+direct writes open for supported legacy clients until the team verifies their
+replacement or retirement.
+
 The next deployable phase is the guarded browser and Capacitor client builds
 while direct writes remain available. Rebuild and exercise both against an
 isolated hosted project first, including upload error handling and owner

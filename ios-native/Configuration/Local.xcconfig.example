@@ -11,6 +11,8 @@ REVENUECAT_MONTHLY_PRODUCT_ID = execute_premium_month
 REVENUECAT_ANNUAL_PRODUCT_ID = execute_premium_annual
 SUPABASE_UPLOAD_BUCKET = uploads
 AUTH_CALLBACK_SCHEME = com.executelabs.execute.native-dev
+// Set to the exact Supabase origin only after the guarded deletion rollout is verified.
+GUARDED_DELETION_PROJECT_URL =
 // Optional App Review login for one preprovisioned synthetic Auth account.
 // Set all three together for the intended submission environment, or leave blank.
 // Give the password to App Review privately. Never set it in build configuration.

@@ -118,12 +118,21 @@ final class ProfileViewModel: ObservableObject {
 
     var canDeleteAccount: Bool { appState.accountDeletionAvailable }
 
+    func makeDeletionConfirmation() -> AccountDeletionConfirmation? {
+        guard let user else { return nil }
+        return appState.makeDeletionConfirmation(displayedOwner: user.id)
+    }
+
+    func canConfirmDeletion(_ confirmation: AccountDeletionConfirmation) -> Bool {
+        canDeleteAccount && appState.isDeletionConfirmationCurrent(confirmation)
+    }
+
     func signOut() async { await appState.signOut() }
-    func deleteAccount() async -> Bool {
+    func deleteAccount(confirmation: AccountDeletionConfirmation) async -> Bool {
         guard !isDeletingAccount else { return false }
         isDeletingAccount = true; error = nil
         defer { isDeletingAccount = false }
-        do { try await appState.deleteAccount(); return true }
+        do { try await appState.deleteAccount(confirmation: confirmation); return true }
         catch { self.error = AppError.from(error, title: "Account deletion failed"); return false }
     }
     func openBilling() { router.navigate(to: .billing) }

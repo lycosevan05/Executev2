@@ -39,6 +39,8 @@
     <string>$(SUPABASE_ANON_KEY)</string>
     <key>SupabaseUploadBucket</key>
     <string>$(SUPABASE_UPLOAD_BUCKET)</string>
+    <key>GuardedDeletionProjectURL</key>
+    <string>$(GUARDED_DELETION_PROJECT_URL)</string>
     <key>AppReviewAccountEmail</key>
     <string>$(APP_REVIEW_ACCOUNT_EMAIL)</string>
     <key>AppReviewAccountID</key>

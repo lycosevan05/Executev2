@@ -54,7 +54,7 @@ struct ProfileDashboardView: View {
     @Environment(\.openURL) private var openURL
     @State private var isLimitationsPresented = false
     @State private var isNameEditorPresented = false
-    @State private var isDeletePresented = false
+    @State private var deletionConfirmation: AccountDeletionConfirmation?
     @State private var isSignOutPresented = false
     @State private var preferenceSection: ProfilePreferenceSection?
     @State private var confirmDiscardIdentity = false
@@ -146,7 +146,7 @@ struct ProfileDashboardView: View {
                             subtitle: "Permanently remove your account and cloud data",
                             tint: ExecuteColor.destructive,
                             isDestructive: true,
-                            action: { isDeletePresented = true }
+                            action: { deletionConfirmation = model.makeDeletionConfirmation() }
                         )
                     }
                 }
@@ -166,8 +166,8 @@ struct ProfileDashboardView: View {
         .sheet(isPresented: $isNameEditorPresented) {
             ProfileNameEditor(model: model)
         }
-        .sheet(isPresented: $isDeletePresented) {
-            DeleteAccountSheet(model: model)
+        .sheet(item: $deletionConfirmation) { confirmedSession in
+            DeleteAccountSheet(model: model, confirmedSession: confirmedSession)
         }
         .sheet(isPresented: $isLimitationsPresented) {
             NavigationStack {
@@ -566,6 +566,7 @@ private struct ProfileNameEditor: View {
 
 private struct DeleteAccountSheet: View {
     @ObservedObject var model: ProfileViewModel
+    let confirmedSession: AccountDeletionConfirmation
     @Environment(\.dismiss) private var dismiss
     @State private var confirmation = ""
 
@@ -594,7 +595,7 @@ private struct DeleteAccountSheet: View {
                         .foregroundStyle(ExecuteColor.mist)
                         .multilineTextAlignment(.center)
 
-                    if !model.canDeleteAccount {
+                    if !model.canConfirmDeletion(confirmedSession) && !model.isDeletingAccount {
                         Text("Account deletion is temporarily unavailable. Contact support@executelabs.ca for help.")
                             .font(ExecuteTypography.body(13))
                             .foregroundStyle(ExecuteColor.olive)
@@ -607,7 +608,7 @@ private struct DeleteAccountSheet: View {
                             .tracking(0.6)
                             .foregroundStyle(ExecuteColor.mist)
                         TextField("DELETE", text: $confirmation)
-                            .disabled(!model.canDeleteAccount)
+                            .disabled(!model.canConfirmDeletion(confirmedSession))
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled()
                             .font(ExecuteTypography.body(16))
@@ -655,14 +656,14 @@ private struct DeleteAccountSheet: View {
     }
 
     private var canDelete: Bool {
-        model.canDeleteAccount
+        model.canConfirmDeletion(confirmedSession)
             && confirmation.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "DELETE"
             && !model.isDeletingAccount
     }
 
     private func deleteAccount() {
         Task {
-            if await model.deleteAccount() { dismiss() }
+            if await model.deleteAccount(confirmation: confirmedSession) { dismiss() }
         }
     }
 }

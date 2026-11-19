@@ -116,23 +116,34 @@ final class AppEnvironment: ObservableObject {
                 headers: ["apikey": configuration.supabaseAnonKey]
             )
             let subscriptionService = RevenueCatSubscriptionService(configuration: configuration)
-            let accountService: SupabaseAccountService
+            weak var appState: AppState?
+            let currentDeletionSession: @MainActor @Sendable () -> AccountDeletionConfirmation? = {
+                appState?.currentDeletionSession()
+            }
+            var accountService = SupabaseAccountService(functions: functions)
+            if configuration.guardedDeletionEnabled {
+                accountService = SupabaseAccountService(
+                    functions: PinnedDeletionFunctionService(
+                        client: client, functions: uploadClient, route: .guarded, currentSession: currentDeletionSession
+                    ),
+                    readiness: .verifiedGuardedRollout(current: currentDeletionSession)
+                )
+            }
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
             if let ownerID = configuration.stagedDeletionOwnerID {
-                let stagedFunctions = StagedDeletionFunctionService(
-                    client: client, functions: uploadClient, authService: authService, ownerID: ownerID
+                let fixtureSession: @MainActor @Sendable () -> AccountDeletionConfirmation? = {
+                    guard let session = currentDeletionSession(), session.owner == ownerID else { return nil }
+                    return session
+                }
+                let stagedFunctions = PinnedDeletionFunctionService(
+                    client: client, functions: uploadClient, route: .staged, currentSession: fixtureSession
                 )
                 accountService = SupabaseAccountService(
                     functions: stagedFunctions,
-                    readiness: .stagedAcceptance { authService.hasLocalSession(for: ownerID) }
+                    readiness: .stagedAcceptance(current: fixtureSession)
                 )
-            } else {
-                accountService = SupabaseAccountService(functions: functions)
             }
-#else
-            accountService = SupabaseAccountService(functions: functions)
 #endif
-            weak var appState: AppState?
             let consent = AISharingConsent { appState?.allowsDraftWrites(for: $0) == true }
             let aiFunctions = ConsentedAIRequestInvoker(functions: uploadClient, consent: consent) {
                 try await client.auth.session

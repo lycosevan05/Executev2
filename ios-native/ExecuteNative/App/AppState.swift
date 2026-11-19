@@ -14,6 +14,13 @@ enum AppLaunchState: Equatable {
     case failed(AppError)
 }
 
+struct AccountDeletionConfirmation: Identifiable, Equatable, Sendable {
+    let owner: UUID
+    let session: UUID
+    let authentication: UUID
+    var id: UUID { session }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var launchState: AppLaunchState = .launching
@@ -235,15 +242,34 @@ final class AppState: ObservableObject {
         }
     }
 
-    func deleteAccount() async throws {
+    func makeDeletionConfirmation(displayedOwner: UUID) -> AccountDeletionConfirmation? {
+        guard let confirmation = currentDeletionSession(), confirmation.owner == displayedOwner else { return nil }
+        return confirmation
+    }
+
+    func currentDeletionSession() -> AccountDeletionConfirmation? {
+        guard let owner = signedInUserID, !authenticationRequestsInFlight.contains(sessionGeneration),
+              authService.hasLocalSession(for: owner) else { return nil }
+        return AccountDeletionConfirmation(owner: owner, session: sessionGeneration, authentication: authenticationGeneration)
+    }
+
+    func isDeletionConfirmationCurrent(_ confirmation: AccountDeletionConfirmation) -> Bool {
+        currentDeletionSession() == confirmation
+            && !deletingUserIDs.contains(confirmation.owner)
+    }
+
+    func deleteAccount(confirmation: AccountDeletionConfirmation) async throws {
+        guard isDeletionConfirmationCurrent(confirmation), !Task.isCancelled else {
+            throw AppError(title: "Account changed", message: "Return to Profile & Settings before confirming account deletion.")
+        }
         let session = sessionGeneration
         let authentication = authenticationGeneration
-        let userID = signedInUserID
-        if let userID { deletingUserIDs.insert(userID) }
-        defer { if let userID { deletingUserIDs.remove(userID) } }
+        let userID = confirmation.owner
+        deletingUserIDs.insert(userID)
+        defer { deletingUserIDs.remove(userID) }
         subscriptionRefreshTask?.cancel()
-        let outcome = try await accountService.deleteAccount()
-        if let userID { await cache.purge(userID: userID) }
+        let outcome = try await accountService.deleteAccount(confirmation: confirmation)
+        await cache.purge(userID: userID)
         guard sessionGeneration == session else { return }
         billing.deactivate()
         // A new sign-in may be awaiting the SDK even before activate runs.

@@ -1003,7 +1003,7 @@ final class BillingLifecycleTests: XCTestCase {
         await state.start()
         await state.billing.load()
         XCTAssertTrue(state.premiumState.isPremium)
-        try await state.deleteAccount()
+        try await state.deleteAccount(confirmation: state.deletionConfirmationForTest())
         XCTAssertEqual(state.launchState, .signedOut)
         XCTAssertFalse(state.premiumState.isPremium)
         await state.billing.restorePurchases()
@@ -1016,7 +1016,7 @@ final class BillingLifecycleTests: XCTestCase {
         let state = makeState(client: client, account: MockAccountService(deletionError: offline))
         await state.start()
         await state.billing.load()
-        do { try await state.deleteAccount(); XCTFail("Expected deletion failure") } catch {}
+        do { try await state.deleteAccount(confirmation: state.deletionConfirmationForTest()); XCTFail("Expected deletion failure") } catch {}
         XCTAssertEqual(state.launchState, .signedIn(billingUserA))
         XCTAssertTrue(state.premiumState.isPremium)
     }
@@ -1248,6 +1248,24 @@ final class BillingAuthenticationRaceTests: XCTestCase {
         XCTAssertEqual(value, "B")
     }
 
+    func testConfirmationFromPreviousAccountCannotDeleteTheCurrentAccount() async throws {
+        let auth = DelayedBillingAuth()
+        let account = MockAccountService()
+        let state = makeState(auth: auth, account: account)
+        await state.start()
+        let previous = try state.deletionConfirmationForTest()
+        try await state.verifyEmailOTP(email: billingUserB.email, token: "123456")
+        XCTAssertFalse(state.isDeletionConfirmationCurrent(previous))
+        do {
+            try await state.deleteAccount(confirmation: previous)
+            XCTFail("A stale confirmation deleted a different account")
+        } catch let error as AppError {
+            XCTAssertEqual(error.title, "Account changed")
+        }
+        XCTAssertEqual(account.deletionCount, 0)
+        XCTAssertEqual(state.launchState, .signedIn(billingUserB))
+    }
+
     func testLateDeletionPurgesOnlyDeletedAccountsCache() async throws {
         let auth = DelayedBillingAuth()
         let account = DelayedBillingDeletion()
@@ -1256,7 +1274,8 @@ final class BillingAuthenticationRaceTests: XCTestCase {
         let state = makeState(auth: auth, cache: cache, account: account)
         await state.start()
         try await cache.write("A", for: key)
-        let deletion = Task { try await state.deleteAccount() }
+        let confirmation = try state.deletionConfirmationForTest()
+        let deletion = Task { try await state.deleteAccount(confirmation: confirmation) }
         await account.gate.waitUntilEntered()
         try await state.verifyEmailOTP(email: billingUserB.email, token: "123456")
         try await cache.write("B", for: key)
@@ -1292,7 +1311,8 @@ final class BillingAuthenticationRaceTests: XCTestCase {
         let account = DelayedBillingDeletion()
         let state = makeState(auth: auth, account: account)
         await state.start()
-        let deletion = Task { try await state.deleteAccount() }
+        let confirmation = try state.deletionConfirmationForTest()
+        let deletion = Task { try await state.deleteAccount(confirmation: confirmation) }
         await account.gate.waitUntilEntered()
         let gate = BillingGate()
         auth.verifyGate = gate

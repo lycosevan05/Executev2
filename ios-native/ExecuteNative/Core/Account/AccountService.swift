@@ -1,27 +1,45 @@
 import Foundation
-#if EXECUTE_STAGED_DELETION_ACCEPTANCE
 import Supabase
-#endif
 
-private struct DeleteAccountRequest: Encodable, Sendable {}
+private struct DeleteAccountRequest: Encodable, Sendable {
+    let receiptVersion: Int?
+    let expectedOwner: String?
+    let session: AccountDeletionConfirmation
+
+    enum CodingKeys: String, CodingKey {
+        case receiptVersion = "receipt_version"
+        case expectedOwner = "expected_owner"
+    }
+}
 
 private struct DeleteAccountResponse: Decodable, Sendable {
     let success: Bool
     let error: String?
     let results: [String: JSONValue]?
     let appleRevocation: String?
+    let receiptVersion: Int?
+    let owner: UUID?
 
     enum CodingKeys: String, CodingKey {
         case success, error, results
         case appleRevocation = "apple_revocation"
+        case receiptVersion = "receipt_version"
+        case owner = "owner_id"
     }
+}
+
+enum AccountDeletionRoute: String, Sendable {
+    case guarded = "deleteUserData-guarded"
+#if EXECUTE_STAGED_DELETION_ACCEPTANCE
+    case staged = "deleteUserData-staged"
+#endif
 }
 
 enum AccountDeletionReadiness: Sendable {
     case awaitingServerVerification
-    case verifiedServerRollout
+    case verifiedGuardedRollout(current: @MainActor @Sendable () -> AccountDeletionConfirmation?)
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
-    case stagedAcceptance(ownerIsCurrent: @MainActor @Sendable () -> Bool)
+    case stagedAcceptance(current: @MainActor @Sendable () -> AccountDeletionConfirmation?)
 #endif
 }
 
@@ -35,10 +53,15 @@ protocol AccountServicing: AnyObject {
     var deletionAvailable: Bool { get }
     @discardableResult
     func deleteAccount() async throws -> AccountDeletionOutcome
+    @discardableResult
+    func deleteAccount(confirmation: AccountDeletionConfirmation) async throws -> AccountDeletionOutcome
 }
 
 extension AccountServicing {
     var deletionAvailable: Bool { false }
+    func deleteAccount(confirmation: AccountDeletionConfirmation) async throws -> AccountDeletionOutcome {
+        try await deleteAccount()
+    }
 }
 
 @MainActor
@@ -46,15 +69,17 @@ final class SupabaseAccountService: AccountServicing {
     private let functions: EdgeFunctionInvoking
     private let readiness: AccountDeletionReadiness
 
-    var deletionAvailable: Bool {
+    private var selection: (route: AccountDeletionRoute, session: AccountDeletionConfirmation)? {
         switch readiness {
-        case .awaitingServerVerification: return false
-        case .verifiedServerRollout: return true
+        case .awaitingServerVerification: return nil
+        case .verifiedGuardedRollout(let current): return current().map { (.guarded, $0) }
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
-        case .stagedAcceptance(let ownerIsCurrent): return ownerIsCurrent()
+        case .stagedAcceptance(let current): return current().map { (.staged, $0) }
 #endif
         }
     }
+
+    var deletionAvailable: Bool { selection != nil }
 
     init(functions: EdgeFunctionInvoking, readiness: AccountDeletionReadiness = .awaitingServerVerification) {
         self.functions = functions
@@ -63,30 +88,35 @@ final class SupabaseAccountService: AccountServicing {
 
     @discardableResult
     func deleteAccount() async throws -> AccountDeletionOutcome {
-        // The currently deployed legacy handler mutates records even for a capability probe.
-        // Never invoke it until its full deletion rollout has been independently verified.
-        guard deletionAvailable else {
-            throw AppError(title: "Account deletion unavailable", message: "Account deletion is temporarily unavailable. Contact support@executelabs.ca for help.")
+        guard let selection else { throw Self.unavailableDeletion }
+        return try await deleteAccount(confirmation: selection.session)
+    }
+
+    @discardableResult
+    func deleteAccount(confirmation: AccountDeletionConfirmation) async throws -> AccountDeletionOutcome {
+        guard let (route, session) = selection, session == confirmation, !Task.isCancelled else {
+            throw Self.unavailableDeletion
         }
-        let functionName: String
-#if EXECUTE_STAGED_DELETION_ACCEPTANCE
-        if case .stagedAcceptance = readiness {
-            functionName = "deleteUserData-staged"
-        } else {
-            functionName = "deleteUserData"
-        }
-#else
-        functionName = "deleteUserData"
-#endif
+        let requiresBinding = route == .guarded
+        let request = DeleteAccountRequest(
+            receiptVersion: requiresBinding ? 1 : nil,
+            expectedOwner: requiresBinding ? session.owner.uuidString.lowercased() : nil,
+            session: session
+        )
         let response: DeleteAccountResponse
         do {
             response = try await functions.invoke(
-                functionName,
-                request: DeleteAccountRequest(),
+                route.rawValue,
+                request: request,
                 response: DeleteAccountResponse.self
             )
         } catch {
             throw Self.unconfirmedDeletion
+        }
+        if requiresBinding {
+            guard response.receiptVersion == request.receiptVersion, response.owner == session.owner else {
+                throw Self.unconfirmedDeletion
+            }
         }
         guard response.success, response.error == nil,
               let results = response.results,
@@ -113,24 +143,29 @@ final class SupabaseAccountService: AccountServicing {
     private static var unconfirmedDeletion: AppError {
         AppError(title: "Account deletion not confirmed", message: "Execute could not confirm that account deletion finished. Some data may already have been removed. Contact support@executelabs.ca before trying again.")
     }
+
+    private static var unavailableDeletion: AppError {
+        AppError(title: "Account deletion unavailable", message: "Account deletion is temporarily unavailable. Contact support@executelabs.ca for help.")
+    }
 }
 
-#if EXECUTE_STAGED_DELETION_ACCEPTANCE
 @MainActor
-struct StagedDeletionFunctionService: EdgeFunctionInvoking {
+struct PinnedDeletionFunctionService: EdgeFunctionInvoking {
     let client: SupabaseClient
     let functions: FunctionsClient
-    let authService: SupabaseAuthService
-    let ownerID: UUID
+    let route: AccountDeletionRoute
+    let currentSession: @MainActor @Sendable () -> AccountDeletionConfirmation?
 
     func invoke<Request: Encodable & Sendable, Response: Decodable & Sendable>(
         _ name: String, request: Request, response: Response.Type
     ) async throws -> Response {
-        guard name == "deleteUserData-staged", authService.hasLocalSession(for: ownerID) else {
+        guard name == route.rawValue, let body = request as? DeleteAccountRequest,
+              currentSession() == body.session else {
             throw CancellationError()
         }
         let session = try await client.auth.session
-        guard session.user.id == ownerID, authService.hasLocalSession(for: ownerID) else {
+        try Task.checkCancellation()
+        guard session.user.id == body.session.owner, currentSession() == body.session else {
             throw CancellationError()
         }
         // A separate transport pins the checked bearer even if the shared client changes accounts.
@@ -139,7 +174,6 @@ struct StagedDeletionFunctionService: EdgeFunctionInvoking {
         ), decoder: .execute)
     }
 }
-#endif
 
 @MainActor
 final class MockAccountService: AccountServicing {
