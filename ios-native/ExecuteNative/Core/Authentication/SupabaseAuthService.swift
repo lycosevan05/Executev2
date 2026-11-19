@@ -3,12 +3,15 @@ import Supabase
 
 @MainActor
 final class SupabaseAuthService: AuthServicing {
+    typealias AppleGrantCapturing = @MainActor (String, String) async throws -> Void
+
     private let client: SupabaseClient
     private let configuration: AppConfiguration
     private let operations = AuthOperationQueue()
     private let ownerDefaults: UserDefaults
     private let ownerKey: String
     private let reviewTransport: URLSession?
+    private let captureAppleGrant: AppleGrantCapturing?
     private var authEpoch = UUID()
 
     private enum AcknowledgedOwner: Equatable {
@@ -26,21 +29,42 @@ final class SupabaseAuthService: AuthServicing {
         let userID: UUID
         let digest: String
     }
-    private var pendingCallbacks: [String: SessionAcknowledgment] = [:]
+    private struct PendingCallback {
+        let acknowledgment: SessionAcknowledgment
+        let appleRefreshToken: String?
+    }
+    private var pendingCallbacks: [String: PendingCallback] = [:]
     private var callbackOrder: [String] = []
     private var completedCallbacks: Set<String> = []
 
     init(client: SupabaseClient, configuration: AppConfiguration, ownerDefaults: UserDefaults,
-         reviewTransport: URLSession? = nil) {
+         reviewTransport: URLSession? = nil, captureAppleGrant: AppleGrantCapturing? = nil) {
         self.client = client
         self.configuration = configuration
         self.ownerDefaults = ownerDefaults
         self.reviewTransport = reviewTransport
+        if let captureAppleGrant {
+            self.captureAppleGrant = captureAppleGrant
+        } else if let handoff = AppleGrantHandoff(configuration: configuration) {
+            self.captureAppleGrant = { token, bearer in try await handoff.capture(token, bearer: bearer) }
+        } else {
+            self.captureAppleGrant = nil
+        }
         let urlDigest = AuthCallbackInput.digest(configuration.supabaseURL.absoluteString)
         self.ownerKey = "execute.auth.acknowledgedOwner.\(urlDigest)"
     }
 
     func restoreSession() async throws -> ExecuteUser? {
+        // Retry a captured Apple callback using its already exchanged session.
+        // The one-use Supabase code and Apple credential never go to disk here.
+        if let identity = callbackOrder.last, pendingCallbacks[identity]?.appleRefreshToken != nil {
+            return try await operations.enqueue {
+                guard self.pendingCallbacks[identity]?.appleRefreshToken != nil else {
+                    return try await self.restoredUser()
+                }
+                return try await self.completeCallback(identity)
+            }
+        }
         // Keep this read cancellable by AppState's startup timeout. Only calls
         // that explicitly replace/remove the SDK session enter the queue.
         try await restoredUser()
@@ -178,7 +202,11 @@ final class SupabaseAuthService: AuthServicing {
         return try await operations.enqueue {
             self.fencePendingCallbacks()
             // The SDK writes its PKCE verifier here. Do not let an older exchange clear a newer verifier.
-            return try self.client.auth.getOAuthSignInURL(provider: supabaseProvider, redirectTo: self.configuration.callbackURL)
+            let url = try self.client.auth.getOAuthSignInURL(provider: supabaseProvider, redirectTo: self.configuration.callbackURL)
+            if provider == .apple && self.captureAppleGrant != nil {
+                self.ownerDefaults.set(true, forKey: self.applePKCEKey)
+            }
+            return url
         }
     }
 
@@ -190,8 +218,18 @@ final class SupabaseAuthService: AuthServicing {
                 guard !self.completedCallbacks.contains(identity) else { return nil }
                 self.authEpoch = UUID()
                 if self.pendingCallbacks[identity] == nil {
+                    let isAppleAttempt = self.captureAppleGrant != nil && self.ownerDefaults.bool(forKey: self.applePKCEKey)
+                    if isAppleAttempt && self.client.auth.currentSession == nil { self.recordSignedOut() }
                     let session = try await self.client.auth.exchangeCodeForSession(authCode: code)
-                    self.pendingCallbacks[identity] = Self.acknowledgment(session)
+                    self.ownerDefaults.removeObject(forKey: self.applePKCEKey)
+                    let appleToken = isAppleAttempt ? session.providerRefreshToken : nil
+                    if appleToken != nil {
+                        // Fence cold restoration until the captured grant has reached the server.
+                        self.recordSignedOut()
+                    }
+                    self.pendingCallbacks[identity] = PendingCallback(
+                        acknowledgment: Self.acknowledgment(session), appleRefreshToken: appleToken
+                    )
                     self.callbackOrder.append(identity)
                     if self.callbackOrder.count > 32 {
                         let expired = self.callbackOrder.removeFirst()
@@ -199,13 +237,7 @@ final class SupabaseAuthService: AuthServicing {
                         self.completedCallbacks.remove(expired)
                     }
                 }
-                // A returned Session is not proof that the SDK stored it. A retry verifies the
-                // same acknowledgment without exchanging the one-use code a second time.
-                let user = try await self.acknowledgedUser(matching: self.pendingCallbacks[identity]!)
-                self.rememberOwner(user.id)
-                self.pendingCallbacks[identity] = nil
-                self.completedCallbacks.insert(identity)
-                return user
+                return try await self.completeCallback(identity)
             }
         } catch let error as AppError {
             throw error
@@ -217,6 +249,31 @@ final class SupabaseAuthService: AuthServicing {
 
     func callbackIdentity(_ url: URL) throws -> String? {
         try AuthCallbackInput.identity(url, expected: configuration.callbackURL)
+    }
+
+    private var applePKCEKey: String { "\(ownerKey).applePKCE" }
+
+    private func completeCallback(_ identity: String) async throws -> ExecuteUser? {
+        guard let pending = pendingCallbacks[identity] else { return nil }
+        // The retry uses the same acknowledged SDK session and one-use code result.
+        let user = try await acknowledgedUser(matching: pending.acknowledgment)
+        if let refreshToken = pending.appleRefreshToken, let captureAppleGrant {
+            guard let persisted = client.auth.currentSession, Self.acknowledgment(persisted).digest == pending.acknowledgment.digest else {
+                throw AppError(title: "Sign-in changed", message: "Start sign-in again to finish connecting your Apple account.")
+            }
+            do {
+                try await captureAppleGrant(refreshToken, persisted.accessToken)
+            } catch {
+                throw AppError(title: "Apple sign-in could not finish", message: "The secure account connection could not be confirmed. Retry to complete sign-in.")
+            }
+            guard client.auth.currentSession?.user.id == user.id else {
+                throw AppError(title: "Sign-in changed", message: "Start sign-in again to finish connecting your Apple account.")
+            }
+        }
+        rememberOwner(user.id)
+        pendingCallbacks[identity] = nil
+        completedCallbacks.insert(identity)
+        return user
     }
 
     private static func acknowledgment(_ session: Session) -> SessionAcknowledgment {
@@ -249,6 +306,7 @@ final class SupabaseAuthService: AuthServicing {
     private func fencePendingCallbacks() {
         completedCallbacks.formUnion(pendingCallbacks.keys)
         pendingCallbacks.removeAll()
+        ownerDefaults.removeObject(forKey: applePKCEKey)
     }
 
     private static func user(from user: User) -> ExecuteUser {
@@ -258,6 +316,46 @@ final class SupabaseAuthService: AuthServicing {
             ?? user.email
             ?? "Execute member"
         return ExecuteUser(id: user.id, email: user.email ?? "", displayName: name)
+    }
+}
+
+private struct AppleGrantHandoff {
+    let endpoint: URL
+    let publicAPIKey: String
+
+    init?(configuration: AppConfiguration) {
+        guard Self.isApprovedOrigin(configuration.supabaseURL.absoluteString) else { return nil }
+        endpoint = configuration.supabaseURL.appendingPathComponent("functions/v1/appleGrantCapture")
+        publicAPIKey = configuration.supabaseAnonKey
+    }
+
+    static func isApprovedOrigin(_ value: String) -> Bool {
+        guard Bundle.main.object(forInfoDictionaryKey: "AppleGrantProjectURL") as? String == value,
+              let parts = URLComponents(string: value), parts.scheme == "https",
+              let host = parts.host, host.range(of: #"^[a-z0-9]+\.supabase\.co$"#, options: .regularExpression) != nil else { return false }
+        return value == "https://\(host)"
+    }
+
+    func capture(_ refreshToken: String, bearer: String) async throws {
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        request.setValue(publicAPIKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["refreshToken": refreshToken])
+        let transport = URLSession(configuration: .ephemeral, delegate: AppleGrantNoRedirects(), delegateQueue: nil)
+        defer { transport.finishTasksAndInvalidate() }
+        let (_, response) = try await transport.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 204, response.url == endpoint else {
+            throw URLError(.badServerResponse)
+        }
+    }
+}
+
+private final class AppleGrantNoRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 
@@ -273,17 +371,20 @@ final class SupabaseAuthStorage: AuthLocalStorage, @unchecked Sendable {
     private let backing: any AuthLocalStorage
     private let defaults: UserDefaults
     private let lock = NSLock()
+    private let stripsOAuthTokens: Bool
 
     init(backing: any AuthLocalStorage = AuthClient.Configuration.defaultLocalStorage,
-         defaults: UserDefaults = .standard) {
+         defaults: UserDefaults = .standard, stripsOAuthTokens: Bool? = nil) {
         self.backing = backing
         self.defaults = defaults
+        let origin = Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String ?? ""
+        self.stripsOAuthTokens = stripsOAuthTokens ?? AppleGrantHandoff.isApprovedOrigin(origin)
     }
 
     func store(key: String, value: Data) throws {
         lock.lock()
         defer { lock.unlock() }
-        try backing.store(key: key, value: value)
+        try backing.store(key: key, value: stripsOAuthTokens ? Self.withoutOAuthTokens(value) : value)
         defaults.removeObject(forKey: suppressionKey(key))
     }
 
@@ -291,7 +392,11 @@ final class SupabaseAuthStorage: AuthLocalStorage, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard !defaults.bool(forKey: suppressionKey(key)) else { return nil }
-        return try backing.retrieve(key: key)
+        guard let stored = try backing.retrieve(key: key) else { return nil }
+        guard stripsOAuthTokens else { return stored }
+        let scrubbed = try Self.withoutOAuthTokens(stored)
+        if scrubbed != stored { try backing.store(key: key, value: scrubbed) }
+        return scrubbed
     }
 
     func remove(key: String) throws {
@@ -309,6 +414,23 @@ final class SupabaseAuthStorage: AuthLocalStorage, @unchecked Sendable {
 
     private func suppressionKey(_ key: String) -> String {
         "execute.auth.storage.removalFailed.\(key)"
+    }
+
+    private static func withoutOAuthTokens(_ data: Data) throws -> Data {
+        guard var outer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return data }
+        let keys = ["providerToken", "providerRefreshToken", "provider_token", "provider_refresh_token"]
+        func removeTokens(from object: inout [String: Any]) -> Bool {
+            var changed = false
+            for key in keys where object.removeValue(forKey: key) != nil { changed = true }
+            return changed
+        }
+        var changed = removeTokens(from: &outer)
+        if var legacy = outer["session"] as? [String: Any], removeTokens(from: &legacy) {
+            outer["session"] = legacy
+            changed = true
+        }
+        // The SDK also stores a PKCE verifier with this adapter. Preserve its encoding.
+        return changed ? try JSONSerialization.data(withJSONObject: outer) : data
     }
 }
 

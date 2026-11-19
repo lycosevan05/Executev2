@@ -104,3 +104,74 @@ The temporary staged function and its four secrets were withdrawn. The
 isolated database guard catalog matched the original snapshot after reversal.
 The existing production OAuth client and callback serve the release path.
 The E70 verification applies to the QA OAuth client and hosted rehearsal.
+
+## E72 capture and custody candidate
+
+`appleGrantCapture` accepts a single Apple refresh token over the
+authenticated connection to the exact configured Supabase project. The
+server reads the Apple subject from the authenticated Supabase user and
+rechecks it in Auth under the database owner lock. The Apple refresh call
+must return a signed ID token with the expected issuer, service audience,
+subject and expiry. The endpoint confirms storage with HTTP 204.
+
+The native opt-in uses the refresh token returned by the first Supabase PKCE
+exchange. It hands that credential to the configured HTTPS endpoint from
+memory and strips provider tokens from SDK session persistence. The native
+retry uses the original acknowledged Supabase session and code-exchange result.
+An Apple callback with an available token finishes sign-in after custody is
+confirmed. A change of account invalidates the pending callback. A cold
+relaunch after a failed handoff requires a fresh Apple sign-in. Apple accounts
+where Supabase supplies no token retain the documented manual fallback.
+
+The vault encrypts each token with AES-256-GCM and additional authenticated
+data linking the project, owner UUID, Apple subject, client ID, grant ID and
+key ID. HKDF derives separate encryption and fingerprint keys. A keyed
+fingerprint recognizes a previously verified token without another Apple
+refresh request. Each distinct verified grant remains available for
+revocation. Database table access is private and the scoped RPCs require the
+service role.
+
+Deletion closes capture under the Auth owner lock before issuing the Apple
+requests. It authenticates all encrypted records before contacting Apple.
+Each accepted revoke removes that grant's ciphertext. A durable completion
+marker remains until Auth cleanup, so a later deletion retry can return the
+same Apple outcome. A failed provider response or database acknowledgment
+retains the corresponding ciphertext. An Apple 200 also covers an already
+invalidated token according to Apple's revocation contract.
+
+### Scoped configuration and acceptance
+
+Apply `supabase/tests/account-deletion/apple-grant-custody.sql` only on the
+approved test project. The staged delete endpoint can consume captured
+grants when custody is enabled. Its existing operator-provisioned E70 mode
+remains available with custody disabled. Provide these settings privately:
+
+- `EXECUTE_APPLE_GRANT_MODE=enabled` and `EXECUTE_APPLE_GRANT_PROJECT_URL`
+  equal to the exact server `SUPABASE_URL`.
+- `EXECUTE_APPLE_GRANT_CLIENT_ID` and `EXECUTE_APPLE_GRANT_CLIENT_SECRET`
+  for the single registered Apple service used by the project's OAuth flow.
+- `EXECUTE_APPLE_GRANT_KEY_ID` naming the active key and
+  `EXECUTE_APPLE_GRANT_KEYS`, a JSON object whose values are 32-byte random
+  keys encoded as hexadecimal. Retain previous key versions while grants
+  encrypted with them remain. Rotation keeps the old ID and value available
+  and changes the active ID for new records.
+- Build the native QA app with `APPLE_GRANT_PROJECT_URL` set to the same
+  public origin. The build default leaves custody disabled.
+
+The server route must be verified before enabling the native flag. The
+isolated acceptance needs one clean Apple authorization, one account with
+no available grant, a same-owner retry after a forced cleanup failure, and
+an independently observed successful revocation with the unrelated owner
+preserved. Capture closure blocks fresh vault writes. Verify concurrent
+re-authorization through the released client and any older OAuth entry point
+before production cutover. The legacy deletion endpoint must be blocked or
+replaced by the compatible guarded route before enabling production capture.
+The pending-grant Auth foreign key prevents discarding captured credentials.
+
+Disable capture and withdraw the staged deletion endpoint before rollback.
+`reverse-apple-grant-custody.sql` refuses to drop retained grants or active
+closure records. Plan a separately reviewed handoff while the older keys
+are available if either table has records.
+
+- [Apple's token verification guidance](https://developer.apple.com/documentation/signinwithapple/verifying-a-user)
+- [Apple's token revocation response contract](https://developer.apple.com/documentation/signinwithapplerestapi/revoke-tokens)

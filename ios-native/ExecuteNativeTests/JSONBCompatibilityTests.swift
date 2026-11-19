@@ -1107,7 +1107,9 @@ final class AuthPersistenceTests: XCTestCase {
     }
 
     private func fixture(storage: any AuthLocalStorage, host: String,
-                         ownerDefaults: UserDefaults? = nil) -> (client: SupabaseClient, service: SupabaseAuthService) {
+                         ownerDefaults: UserDefaults? = nil,
+                         captureAppleGrant: SupabaseAuthService.AppleGrantCapturing? = nil)
+        -> (client: SupabaseClient, service: SupabaseAuthService) {
         let url = URL(string: "https://\(host)")!
         let transport = URLSessionConfiguration.ephemeral
         transport.protocolClasses = [AuthFixtureProtocol.self]
@@ -1116,7 +1118,51 @@ final class AuthPersistenceTests: XCTestCase {
             global: .init(session: URLSession(configuration: transport))))
         let configuration = AppConfiguration(supabaseURL: url, supabaseAnonKey: "public-fixture-only", revenueCatAPIKey: "", uploadBucket: "uploads", callbackScheme: "fixture")
         return (client, SupabaseAuthService(client: client, configuration: configuration,
-                                            ownerDefaults: ownerDefaults ?? isolatedAuthOwnerDefaults()))
+                                            ownerDefaults: ownerDefaults ?? isolatedAuthOwnerDefaults(),
+                                            captureAppleGrant: captureAppleGrant))
+    }
+
+    func testAppleGrantRetryUsesSameAcknowledgedCallbackWithoutPersistingProviderToken() async throws {
+        let host = "apple-grant.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let backing = AuthFixtureStorage()
+        let defaults = isolatedAuthOwnerDefaults()
+        let storage = SupabaseAuthStorage(backing: backing, defaults: defaults, stripsOAuthTokens: true)
+        var captured: [String] = []
+        let (client, service) = fixture(storage: storage, host: host, ownerDefaults: defaults) { token, bearer in
+            XCTAssertEqual(bearer, "fixture-oauth-access-not-real")
+            captured.append(token)
+            if captured.count == 1 { throw URLError(.notConnectedToInternet) }
+        }
+
+        _ = try await service.authorizationURL(for: .apple)
+        let callback = try XCTUnwrap(URL(string: "fixture://login-callback?code=fixture-apple-code"))
+        do {
+            _ = try await service.handleCallbackURL(callback)
+            XCTFail("A failed grant handoff must wait for retry")
+        } catch let error as AppError {
+            XCTAssertEqual(error.title, "Apple sign-in could not finish")
+        }
+        XCTAssertNil(client.auth.currentSession?.providerRefreshToken)
+        let stored = try XCTUnwrap(backing.retrieve(key: "native-auth-fixture"))
+        XCTAssertFalse(String(decoding: stored, as: UTF8.self).contains("fixture-provider-refresh-not-real"))
+        XCTAssertFalse(service.hasLocalSession(for: AuthFixtureProtocol.callbackUserID))
+
+        let restored = try await service.restoreSession()
+        XCTAssertEqual(restored?.id, AuthFixtureProtocol.callbackUserID)
+        XCTAssertTrue(service.hasLocalSession(for: AuthFixtureProtocol.callbackUserID))
+        XCTAssertEqual(AuthFixtureProtocol.traffic.count(host), 1)
+        XCTAssertEqual(captured, Array(repeating: "fixture-provider-refresh-not-real", count: 2))
+    }
+
+    func testGooglePKCEProviderGrantDoesNotUseAppleCustody() async throws {
+        let host = "apple-grant.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let (_, service) = fixture(storage: AuthFixtureStorage(), host: host) { _, _ in
+            XCTFail("A Google provider credential must stay outside Apple custody")
+        }
+        _ = try await service.authorizationURL(for: .google)
+        let callback = try XCTUnwrap(URL(string: "fixture://login-callback?code=fixture-google-code"))
+        let user = try await service.handleCallbackURL(callback)
+        XCTAssertEqual(user?.id, AuthFixtureProtocol.callbackUserID)
     }
 
     func testLateSDKRefreshClosesUIWhenStoredOwnerNoLongerMatches() async throws {
@@ -1564,10 +1610,13 @@ private final class AuthFixtureProtocol: URLProtocol, @unchecked Sendable {
         let user: [String: Any] = ["id": id.uuidString, "aud": "authenticated", "role": "authenticated",
             "email": "fixture@example.invalid", "app_metadata": [:], "user_metadata": [:],
             "created_at": "2026-11-09T00:00:00Z", "updated_at": "2026-11-09T00:00:00Z"]
-        let session: [String: Any] = [
+        var session: [String: Any] = [
             "access_token": isCallback ? "fixture-oauth-access-not-real" : "fixture-access-\(verifyNumber)-not-real",
             "refresh_token": isCallback ? "fixture-oauth-refresh-not-real" : "fixture-refresh-\(verifyNumber)-not-real",
             "token_type": "bearer", "expires_in": 3600, "expires_at": Int(Date().timeIntervalSince1970) + 3600, "user": user]
+        if grant == "pkce" && url.host!.hasPrefix("apple-grant.") {
+            session["provider_refresh_token"] = "fixture-provider-refresh-not-real"
+        }
         let body: [String: Any] = revoked ? ["code": "refresh_token_not_found", "message": "Fixture session revoked"]
             : terminalExpiry ? ["code": "session_expired", "message": "Fixture session time-box expired"]
             : failed ? ["error": "invalid_grant", "error_description": "private-fixture-response-must-not-escape"]

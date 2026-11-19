@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.guardedStorageUpload]
 verify_jwt = true
+
+[functions.appleGrantCapture]
+verify_jwt = true

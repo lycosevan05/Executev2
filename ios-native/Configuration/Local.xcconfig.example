@@ -19,3 +19,6 @@ GUARDED_DELETION_PROJECT_URL =
 APP_REVIEW_ACCOUNT_EMAIL =
 APP_REVIEW_ACCOUNT_ID =
 APP_REVIEW_SUPABASE_URL =
+// Enable only after the exact hosted project's Apple grant custody is verified.
+// Use the public project origin and keep Apple credentials on the server.
+APPLE_GRANT_PROJECT_URL =

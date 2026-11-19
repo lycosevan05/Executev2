@@ -18,7 +18,7 @@ export interface AppleDeletionUser extends DeletionUser {
   };
 }
 
-interface StagedAppleGrant {
+export interface StagedAppleGrant {
   ownerId: string;
   subject: string;
   clientId: string;
@@ -150,13 +150,7 @@ export async function revokeStagedAppleAuthorization(
   readTrustedGrant: () => string | undefined,
   request: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ): Promise<AppleRevocationOutcome | undefined> {
-  const appleIdentities =
-    user.identities?.filter((identity) => identity.provider === "apple") ?? [];
-  const hasAppleIdentity = appleIdentities.length > 0 ||
-    user.app_metadata?.provider === "apple" ||
-    (Array.isArray(user.app_metadata?.providers) &&
-      user.app_metadata.providers.includes("apple"));
-  if (!hasAppleIdentity) return;
+  if (!hasAppleAuthorization(user)) return;
 
   // Apple TN3194 permits deletion when no credential exists. Give the user
   // manual revocation guidance after the deletion receipt is validated.
@@ -164,14 +158,40 @@ export async function revokeStagedAppleAuthorization(
   if (!raw) return "manual_required";
 
   const grant = loadGrant(raw);
-  const [identity] = appleIdentities;
   if (
-    appleIdentities.length !== 1 || identity.user_id !== user.id ||
-    identity.identity_data?.sub !== grant.subject || grant.ownerId !== user.id
+    appleAuthorizationSubject(user) !== grant.subject ||
+    grant.ownerId !== user.id
   ) {
     throw new Error("Apple deletion credentials could not be verified.");
   }
+  return await revokeVerifiedAppleGrant(grant, request);
+}
 
+export function hasAppleAuthorization(user: AppleDeletionUser): boolean {
+  return user.identities?.some((identity) => identity.provider === "apple") ||
+    user.app_metadata?.provider === "apple" ||
+    (Array.isArray(user.app_metadata?.providers) &&
+      user.app_metadata.providers.includes("apple"));
+}
+
+export function appleAuthorizationSubject(
+  user: AppleDeletionUser,
+): string | undefined {
+  const identities =
+    user.identities?.filter((identity) => identity.provider === "apple") ?? [];
+  const [identity] = identities;
+  const subject = identity?.identity_data?.sub;
+  if (
+    identities.length === 1 && identity.user_id === user.id &&
+    typeof subject === "string" && subject.length && subject.length <= 512
+  ) return subject;
+}
+
+/** Send only a grant already bound to its verified Auth owner. */
+export async function revokeVerifiedAppleGrant(
+  grant: StagedAppleGrant,
+  request: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<"revoked"> {
   let response: Response;
   try {
     response = await request(revokeEndpoint, {
