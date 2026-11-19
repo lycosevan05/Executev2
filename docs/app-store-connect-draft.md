@@ -116,6 +116,21 @@ and rollout work. Confirm the public policy and account deletion wording
 against the release configuration before completing App Privacy.
 [Apple's privacy guidelines](https://developer.apple.com/app-store/review/guidelines/#privacy)
 
+E72 inspected the existing signed E71 archive. The app manifest declares
+UserDefaults access. The packaged RevenueCat manifest declares purchase history
+and UserDefaults access. The Swift Crypto manifest declares no collected data.
+Use these alongside the app's observed backend and vendor behavior when
+reviewing the privacy answers.
+[Apple's app privacy details](https://developer.apple.com/app-store/app-privacy-details/)
+
+## Export compliance
+
+The signed E71 iPhone-only archive is 1.0 (1), targets iOS 16.0 or later and
+does not include `ITSAppUsesNonExemptEncryption`. Apple's questionnaire will
+be required for this package. Review HTTPS, authentication, linked packages
+and selected distribution regions before answering it.
+[Apple's export compliance instructions](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance/)
+
 ## Screenshots and final attachment
 
 The two subscription-review screenshots were historically saved on the monthly
