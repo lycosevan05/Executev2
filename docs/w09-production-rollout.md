@@ -102,3 +102,30 @@ confirmed both write paths at the SQL boundary. The cutover rollback refused a
 changed policy, a pending dispatch, and an active upload closure. The fixture
 uses synthetic Auth and Storage schemas. Hosted Storage byte and endpoint
 verification remain part of the next isolated rollout rehearsal.
+
+## Restore the E71 catalog after a deletion rollout
+
+Capture the E71 preparation catalog and endpoint revisions before changes.
+Withdraw the new deletion, Checkout and Apple-grant capture routes and wait for
+admitted work to reach verified outcomes. Preserve any active billing or Apple
+records for reconciliation. If enabled, reverse
+[Stripe Checkout admission](../supabase/tests/account-deletion/reverse-stripe-checkout-admission.sql),
+[Apple grant custody](../supabase/tests/account-deletion/reverse-apple-grant-custody.sql)
+and the [billing projection fence](../supabase/tests/account-deletion/reverse-billing-projection-fence.sql).
+Reverse the writer cutover and confirm the direct and canonical upload paths
+are available. Schedule a brief window without new canonical dispatches for the
+remaining schema reversal.
+
+Apply the [scoped deletion guard reversal](../supabase/tests/account-deletion/reverse-deletion-guards-to-upload-preparation.sql)
+when Stripe retirement markers, upload closures and pending upload dispatches
+have been reconciled. It removes the four entity and Stripe retirement guards
+while retaining the three E71 upload preparation files. A nonempty ledger or
+unexpected database dependency stops the transaction. Keep closed identities
+and retirement markers in place if a provider event can still recreate a
+retired projection. Obtain an approved reconciliation plan in that case.
+
+Compare the resulting catalog and endpoint revisions to the captured baseline.
+Verify both upload routes and ordinary entity and billing writes with approved
+synthetic fixtures. The [local rollback fixture](../supabase/tests/account-deletion/test_staged_schema_reversal.py)
+compares the schema before and after both supported reversal sequences. Any
+prior data changes require their own recovery assessment.
