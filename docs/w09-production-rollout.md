@@ -73,6 +73,21 @@ and links directly to Apple's subscription management. The link is available
 independently of the in-app account deletion confirmation.
 [Apple account deletion guidance](https://developer.apple.com/help/app-review/guideline-reference/5-1-1-account-deletion)
 
+## Sign in with Apple
+
+An Apple-linked owner with an authenticated Execute session and no usable
+Apple credential can complete account deletion and receive manual Apple
+revocation instructions. Detect that case from the verified Auth identity and
+a healthy credential lookup. Retain the generic instructions locally through
+relaunch until dismissed, with no account identifier. Provider errors and
+unreadable custody records cannot serve as revocation evidence.
+[Apple token revocation guidance](https://developer.apple.com/documentation/technotes/tn3194-handling-account-deletions-and-revoking-tokens-for-sign-in-with-apple)
+
+Keep automatic custody gated until a signed hosted callback proves that the
+refresh grant arrives, and an Apple-only owner can resume partial deletion
+after their Execute session expires. Reconcile a newly issued grant through
+that retry and verify which provider authorization the receipt covers.
+
 ## Cutover and recovery
 
 1. Capture the production preparation catalog and exact endpoint revisions.
