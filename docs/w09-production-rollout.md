@@ -53,10 +53,14 @@ approved retirement plan, and the last admitted write is accounted for.
 ## Billing-linked owners
 
 The E72 read-only subscription inventory found eight RevenueCat-linked stored
-rows and zero Stripe-linked rows. A stored row is historical projection data,
-not an authoritative provider inventory or proof of an active subscription.
-The staged Stripe-only rehearsal refuses RevenueCat projection rows. Keep
-that scope for the rehearsal.
+rows and zero Stripe-linked rows. All eight reported email customer IDs
+and lacked a stored Auth UUID owner. Each email currently matches one Auth
+record. That match alone gives no evidence of historic ownership or provider
+authorization. [Aggregate inventory SQL](../supabase/tests/account-deletion/revenuecat-owner-inventory.sql)
+
+A stored row is historical projection data and cannot establish active
+subscription status. Keep RevenueCat projection rows out of the staged
+Stripe-only rehearsal.
 
 Native Premium currently combines server state with the RevenueCat SDK and
 uses the owner's email as the RevenueCat customer ID. Before broad deletion,

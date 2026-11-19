@@ -44,6 +44,14 @@ App Store Connect showed Prepare for Submission after that edit. The Account
 Holder accepted the updated Developer Program License Agreement during E70,
 and Apple Developer Identifiers reopened.
 
+E72 readback still showed Prepare for Submission. The iPhone preview panel
+contained zero App Screenshots, and Build still prompted for an upload.
+App Privacy still showed Get Started and Publish was disabled. App
+Information showed Set Up Age Ratings and Set Up Content Rights
+Information. Complete those draft fields with the release owner before
+requesting approval to submit. Review the privacy worksheet below against
+the final archive and deployed configuration.
+
 ## Review notes draft
 
 > Execute is a fitness and performance app for organizing training, nutrition
