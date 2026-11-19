@@ -399,6 +399,13 @@ preparation baseline. The reversal rejects any pending dispatch, closed
 admission, or installed writer cutover. Use the full staged reversal after
 writer cutover.
 
+E71 applied this preparation to Executev2 with owner approval and deployed
+the JWT-verified canonical upload function. The signed synthetic reviewer
+fixture uploaded through the existing authenticated Storage path and the
+canonical route, verified both payloads, and removed both files. Writer
+cutover, provider custody and the production deletion route are separate
+rollout steps.
+
 From a fresh verified W04 loopback stack, the following fixture installs the
 four optional Storage candidates and exercises the production handler through
 a loopback Deno HTTP listener with real Auth, PostgREST and Storage.

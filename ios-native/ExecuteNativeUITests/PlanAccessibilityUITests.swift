@@ -1,6 +1,44 @@
 import XCTest
 
 @MainActor
+final class HostedAIConsentSettingsUITests: XCTestCase {
+    func testSignedReviewerCanDeclineAllowAndTurnOffAISharing() throws {
+        guard let email = ProcessInfo.processInfo.environment["EXECUTE_AI_CONSENT_REVIEWER_EMAIL"],
+              email == "app-review-ios-1-0@executelabs.ca" else {
+            throw XCTSkip("Requires the approved synthetic reviewer session")
+        }
+
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        let profile = app.buttons["Profile"].firstMatch
+        XCTAssertTrue(profile.waitForExistence(timeout: 15))
+        profile.tap()
+        XCTAssertTrue(app.staticTexts[email].firstMatch.waitForExistence(timeout: 10))
+
+        let sharing = app.buttons["profile.ai-data-sharing"]
+        for _ in 0..<6 where !sharing.isHittable { app.swipeUp() }
+        XCTAssertTrue(sharing.isHittable)
+        XCTAssertTrue(sharing.label.contains("Sharing with OpenAI is off"))
+
+        sharing.tap()
+        let disclosure = app.alerts["Allow AI Data Sharing?"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
+        let openAIDisclosure = disclosure.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "OpenAI")).firstMatch
+        XCTAssertTrue(openAIDisclosure.exists)
+        disclosure.buttons["Don't Allow"].tap()
+        XCTAssertTrue(sharing.label.contains("Sharing with OpenAI is off"))
+
+        sharing.tap()
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
+        disclosure.buttons["Allow Sharing"].tap()
+        XCTAssertTrue(sharing.label.contains("Turn Off AI Data Sharing"))
+        sharing.tap()
+        XCTAssertTrue(sharing.label.contains("Sharing with OpenAI is off"))
+    }
+}
+
+@MainActor
 final class PlanAccessibilityUITests: XCTestCase {
     func testLargestTextLetsPlanHeaderScrollAndBlueprintOpen() {
         let app = launchLargestTextPreview("-execute-plan-preview")

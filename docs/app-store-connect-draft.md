@@ -47,8 +47,10 @@ and Apple Developer Identifiers reopened.
 ## Review notes draft
 
 > Execute is a fitness and performance app for organizing training, nutrition
-> and recovery. The Home, Train, Track, Nutrition and Plan tabs let reviewers
-> navigate the app. An optional Execute Premium subscription is available
+> and recovery. On the welcome screen, tap App Review sign-in and enter the
+> demo credentials provided in App Review Information. The Home, Train,
+> Track, Nutrition and Plan tabs are available after sign-in. An optional
+> Execute Premium subscription is available
 > through Profile → Premium & Billing. Open that screen from the supplied
 > demo account to view the monthly and annual plans and the Restore Purchases
 > action.
@@ -58,11 +60,14 @@ release build and final device/OS evidence. Once enabled and verified, add
 Profile → Delete Account to the review notes. Include a monitored review
 contact. The native app offers email one-time codes and Apple and Google sign-in.
 E70 adds a build-gated App Review password route scoped to one hosted project,
-confirmed email, and Auth UUID. It uses a normal Supabase password grant. A
-dedicated synthetic account with an expired subscription still needs approval,
-provisioning and a clean-install test on the exact submission build. Set the
-review configuration only on that build and enter its credentials in the private
-App Review fields after verification. If a secure reviewer
+confirmed email, and Auth UUID. It uses a normal Supabase password grant.
+The owner provisioned the designated synthetic account in E71. The signed
+Release simulator passed private password sign-in on a clean install,
+confirmed the exact Profile and retained the session after a cold relaunch.
+The Apple Distribution-signed iPhone export carries the same reviewer gate.
+Before submission, verify access on the final build, prepare the expired
+subscription state Apple requests and enter the credentials privately in
+App Review Information. If a secure reviewer
 login is unavailable, Apple's rules allow a full demo mode with prior approval
 in applicable circumstances. Existing QA identities, one-time codes and
 personal accounts are unsuitable reviewer credentials.
@@ -96,10 +101,11 @@ Apple's Guideline 5.1.2(i) requires explicit permission and clear disclosure
 before sharing personal data with third-party AI. The E70 native candidate
 names OpenAI and requires consent for each account before sending prompts,
 photos or PDFs. A user can decline or turn off sharing under Profile & Settings
-→ About → AI Data Sharing. Verify the prompt, decline, grant and revocation on
-the signed candidate. The legacy web and shared endpoint have their own consent
-and rollout work. Confirm the public policy and account deletion wording against
-the release configuration before completing App Privacy.
+→ About → AI Data Sharing. E71 exercised the OpenAI disclosure, decline,
+grant and revocation on the signed Release simulator with the synthetic
+reviewer account. The legacy web and shared endpoint have their own consent
+and rollout work. Confirm the public policy and account deletion wording
+against the release configuration before completing App Privacy.
 [Apple's privacy guidelines](https://developer.apple.com/app-store/review/guidelines/#privacy)
 
 ## Screenshots and final attachment

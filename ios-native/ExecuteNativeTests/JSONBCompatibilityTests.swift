@@ -3,6 +3,68 @@ import XCTest
 import Supabase
 @testable import ExecuteNative
 
+@MainActor
+final class HostedUploadPreparationTests: XCTestCase {
+    private enum FixtureError: Error { case configuration, owner, existingObject, upload, readback, cleanup }
+
+    func testLegacyAndGuardedUploadsBeforeCutover() async throws {
+        guard ProcessInfo.processInfo.environment["EXECUTE_HOSTED_UPLOAD_PREPARATION"] == "1" else {
+            throw XCTSkip("Requires approved hosted upload preparation")
+        }
+        let config = try AppConfiguration.load()
+        guard config.supabaseURL.absoluteString == "https://shoflbdwlmvttidoolvd.supabase.co",
+              config.uploadBucket == "uploads",
+              let reviewer = config.appReviewLogin,
+              reviewer.email == "app-review-ios-1-0@executelabs.ca" else { throw FixtureError.configuration }
+        let client = SupabaseClient(
+            supabaseURL: config.supabaseURL, supabaseKey: config.supabaseAnonKey,
+            options: .init(auth: .init(storage: SupabaseAuthStorage(), autoRefreshToken: false))
+        )
+        let session = try await client.auth.session
+        let verified = try await client.auth.user(jwt: session.accessToken)
+        guard verified.id == reviewer.accountID, let email = verified.email, reviewer.permits(email: email) else {
+            throw FixtureError.owner
+        }
+        let owner = reviewer.accountID.uuidString.lowercased()
+        let legacyName = "e71-legacy-preparation.txt"
+        let canonicalName = "e71-canonical-preparation.txt"
+        let names = [legacyName, canonicalName]
+        let paths = names.map { "\(owner)/\($0)" }
+        let bucket = client.storage.from("uploads")
+        func fixtureObjects() async throws -> [String] {
+            try await bucket.list(path: owner).map(\.name).filter { names.contains($0) }
+        }
+        guard try await fixtureObjects().isEmpty else { throw FixtureError.existingObject }
+
+        let bytes = Data("Execute E71 synthetic upload acceptance".utf8)
+        do {
+            _ = try await bucket.upload(paths[0], data: bytes, options: .init(contentType: "text/plain", upsert: false))
+            let functions = FunctionsClient(
+                url: config.supabaseURL.appendingPathComponent("functions/v1"),
+                headers: ["apikey": config.supabaseAnonKey]
+            )
+            struct Receipt: Decodable { let path: String }
+            let receipt: Receipt = try await functions.invoke(
+                "guardedStorageUpload", options: .init(
+                    query: [.init(name: "bucket", value: "uploads"), .init(name: "path", value: paths[1])],
+                    headers: ["Authorization": "Bearer \(session.accessToken)", "Content-Type": "text/plain"],
+                    body: bytes
+                )
+            )
+            guard receipt.path == paths[1] else { throw FixtureError.upload }
+            for path in paths {
+                guard try await bucket.download(path: path) == bytes else { throw FixtureError.readback }
+            }
+        } catch {
+            // Both filenames were proved absent before the first send.
+            _ = try? await bucket.remove(paths: paths)
+            throw FixtureError.upload
+        }
+        _ = try await bucket.remove(paths: paths)
+        guard try await fixtureObjects().isEmpty else { throw FixtureError.cleanup }
+    }
+}
+
 final class EmailOTPInputTests: XCTestCase {
     func testSameNormalizedMailboxAndSixDigitCodeAreUsedForVerification() {
         XCTAssertEqual(EmailOTPInput.email("  Profile.QA+one@example.invalid\n"), "Profile.QA+one@example.invalid")
