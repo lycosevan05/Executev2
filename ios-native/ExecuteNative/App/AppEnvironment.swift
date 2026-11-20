@@ -178,7 +178,7 @@ final class AppEnvironment: ObservableObject {
                 dataService: SupabaseDataService(client: client),
                 realtimeService: SupabaseRealtimeService(client: client),
                 storageService: SupabaseStorageService(
-                    client: client, uploadClient: uploadClient, defaultBucket: configuration.uploadBucket
+                    client: client, uploadClient: pinnedFunctions, defaultBucket: configuration.uploadBucket
                 ),
                 aiService: SupabaseAIService(functions: aiFunctions),
                 aiSharingConsent: consent

@@ -551,3 +551,19 @@ after a dispute. No supported Sandbox control to trigger that event was
 identified. The staged reconciliation fixtures cover refund reversal.
 [Sandbox refund testing](https://developer.apple.com/documentation/storekit/testing-refund-requests.md)
 · [Apple notification types](https://developer.apple.com/documentation/appstoreservernotifications/notificationtype.md)
+
+## E74 Sandbox expiry follow-up — 2026-11-19
+
+The existing Executev2 webhook URL returned HTTP 200 to a preflight with
+no credentials or event body. This checks the route's reachability from the
+test client. The previously observed RevenueCat expiration delivery gap
+remains unresolved.
+
+The verified-only RevenueCat writer independently checks the app, product,
+provider environment, immutable owner and expected row revision. The
+offline expiry cases confirm that replaying an expiration while fresh
+provider data shows a later paid period keeps Premium, and an actually
+elapsed current period projects Free. The E73 native guard continues to
+apply on refresh for an elapsed App Store projection. The historical
+physical receipt probe remains pending.
+[RevenueCat delivery and retry behavior](https://www.revenuecat.com/docs/integrations/webhooks)

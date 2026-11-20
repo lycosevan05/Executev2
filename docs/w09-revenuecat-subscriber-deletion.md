@@ -160,3 +160,52 @@ and event references in private evidence, outcome matrix, and rollback state.
 Before a production expansion, confirm any RevenueCat records that remain
 associated with deleted owners have an approved retention or erasure
 disposition. Keep the rehearsal and production gates separate.
+
+## E74 isolated verified billing stage
+
+The iOS app, RevenueCat webhook and Stripe webhook now have a verified-only
+path for an explicitly activated cohort. This stage is for an isolated
+Supabase project and dedicated webhook configuration. Schedule the legacy
+client and webhook cutover separately before enabling a shared destination.
+
+1. Install the billing projection fence and E73 identity ledger, then
+   [verified billing SQL](../supabase/tests/account-deletion/verified-revenuecat-billing.sql).
+   Enroll a disposable Auth UUID through the service-only ledger function.
+   Use the opaque returned RevenueCat ID. Confirm the exact owner has no
+   legacy billing assets or aliases that require migration, then activate
+   the owner for the one tested provider environment. The SQL rejects
+   activation when an existing legacy row overlaps the owner or current
+   email. Client and webhook requests cannot activate a cohort.
+2. Establish the exact isolated Supabase URL, RevenueCat project, RevenueCat
+   app and App Store products. Configure `EXECUTE_VERIFIED_BILLING_PROJECT`,
+   `EXECUTE_VERIFIED_BILLING_SUPABASE_URL`,
+   `EXECUTE_VERIFIED_BILLING_ENVIRONMENT`,
+   `EXECUTE_VERIFIED_REVENUECAT_APP_ID`, and
+   `EXECUTE_VERIFIED_REVENUECAT_PRODUCTS` for the dedicated writers.
+   Set `REVENUECAT_IDENTITY_PROJECT_URL` to that same Supabase URL in the
+   signed native candidate. The authenticated `revenuecatIdentity` endpoint
+   returns the current owner's opaque ID and a minimal subscription snapshot.
+   It never allocates an identity or falls back to email.
+3. Verify that both writers can project current provider state into the
+   same exact Auth UUID row. Confirm that the RPC rejects a stale revision,
+   wrong owner or provider environment and a write that loses a race with
+   deletion closure. Verify that an authenticated device cannot alter the
+   provider-backed row. The legacy writers continue to operate in their
+   default configuration. When installed, the SQL prevents a legacy
+   write from creating an overlapping row for an activated owner.
+4. Start with an App Store-only fixture. Verify initial purchase, failed
+   renewal, renewal recovery, expiry and same-lineage delayed delivery.
+   Separately exercise Stripe and existing App Store asset migration
+   before broader enrollment. Stripe Checkout and customer portal entry
+   points, legacy browser reads, and transfers without a verifiable
+   provider environment still need their own acceptance.
+5. Use [the verified billing reversal](../supabase/tests/account-deletion/reverse-verified-revenuecat-billing.sql)
+   to restore an empty installation before reversing the E73 ledger and
+   billing fence. The reversal refuses to drop enrolled owners or
+   verified projections. Retain retirement markers until reconciliation
+   and provider handling have been verified.
+
+The isolated PostgreSQL fixture covers activation, authenticated access,
+atomic two-owner writes, stale revision rejection, closure ordering and
+catalog rollback. See
+[`test_verified_billing_projection.py`](../supabase/tests/account-deletion/test_verified_billing_projection.py).

@@ -734,6 +734,15 @@ Deno.test("verified reconciliation rejects wrong provider scope, a foreign origi
   }
 });
 
+Deno.test("verified reconciliation requires the App Store field in a paid provider snapshot", async () => {
+  const f = verifiedFixture();
+  const body = await verifiedSnapshot(customerB).json();
+  delete body.subscriber.subscriptions.native_month.store;
+  f.providers.set(customerB, Response.json(body));
+  equal((await f.deliver()).status, 503);
+  deepEqual(f.batches, []);
+});
+
 Deno.test("verified delayed expiry uses fresh renewal truth and a truly elapsed period returns Free", async () => {
   for (const [expiration, plan] of [[end, "premium"], [now, "free"]]) {
     const f = verifiedFixture();

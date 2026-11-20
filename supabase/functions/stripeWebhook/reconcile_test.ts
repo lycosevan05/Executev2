@@ -394,8 +394,12 @@ Deno.test("both webhook handlers retain exactly one row through either mixed-pro
     f.rows.clear();
     const handleStripe = createStripeHandler(f.deps);
     const handleRevenueCat = createRevenueCatHandler({
-      ...f.deps,
       webhookSecret: "rc-webhook-fixture",
+      stripeKey: f.deps.stripeKey,
+      revenueCatKey: f.deps.revenueCatKey,
+      fetch: f.deps.fetch,
+      read: f.deps.read,
+      apply: f.deps.apply,
     });
     const stripeEvent = async (type: string, id: string) => {
       f.event.type = type;

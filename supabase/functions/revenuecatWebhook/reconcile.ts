@@ -427,7 +427,8 @@ async function reconcileVerified(
         {},
         false,
       );
-      const original = providerId(object(body.subscriber).original_app_user_id);
+      const subscriber = object(body.subscriber);
+      const original = providerId(subscriber.original_app_user_id);
       if (original !== subject.customer_id) {
         const identity = await resolve(original);
         if (
@@ -439,7 +440,9 @@ async function reconcileVerified(
       const product = projection.revenuecat_product_id;
       if (
         product !== null && (typeof product !== "string" ||
-          !verified.products.has(product) || projection.store !== "app_store" ||
+          !verified.products.has(product) ||
+          object(object(subscriber.subscriptions)[product]).store !==
+            "app_store" ||
           (projection.revenuecat_plan === "premium" &&
             projection.revenuecat_environment !== verified.environment) ||
           (projection.revenuecat_environment !== null &&
