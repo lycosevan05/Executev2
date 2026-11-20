@@ -82,7 +82,10 @@ with namespaces as (
       'ensure_revenuecat_customer_id',
       'attach_verified_revenuecat_alias',
       'resolve_revenuecat_identity',
-      'retire_revenuecat_identity'
+      'retire_revenuecat_identity',
+      'activate_verified_billing_owner',
+      'read_verified_billing_subject',
+      'apply_verified_billing_projections'
     )))
 )
 select coalesce(jsonb_agg(to_jsonb(catalog) order by object_type, object_name), '[]'::jsonb) as guard_schema

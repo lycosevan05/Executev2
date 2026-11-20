@@ -26,3 +26,6 @@ verify_jwt = true
 
 [functions.appleGrantCapture]
 verify_jwt = true
+
+[functions.revenuecatIdentity]
+verify_jwt = true
