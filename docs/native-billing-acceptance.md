@@ -520,3 +520,34 @@ the second beginning at the first expiration, within two seconds. It reads
 StoreKit history and the app's existing customer identity. It prints
 period timestamps only. Match those timestamps independently against the
 provider and the projected billing row. [StoreKit transaction history](https://developer.apple.com/documentation/storekit/transaction/all)
+
+## E73 recovered Sandbox renewals and expiry delivery — 2026-11-19
+
+RevenueCat's exact Native Dev monthly Sandbox history showed successful
+renewal 19 at 08:58:15 UTC after the E72 retry, followed by renewal 20 at
+09:03:15 UTC. Both retained the original transaction lineage and delivered
+their webhooks with HTTP 200. Regular renewal continued through 09:45:42 UTC.
+The Executev2 QA row recorded a later successful renewal. A bounded,
+read-only signed StoreKit history probe is ready for the next USB session.
+The QA iPhone was unavailable for independent receipt history verification.
+
+The subscription expired at 09:50:42 UTC after auto-renew was disabled.
+RevenueCat showed the expiration webhook failed all six automatic attempts
+with no response. The one owner-approved retry still showed failure.
+Executev2's sampled function logs showed successful billing invocations up
+to 09:44:57 UTC and no matching later invocation. The exact QA subscription
+row still projected App Store Premium even though its period had elapsed.
+The cause of the delivery failure remains unconfirmed.
+
+On refresh, the native candidate now stops treating an elapsed dated
+App Store projection as current access. A current live RevenueCat
+entitlement can still grant access through grace. The date guard is scoped to the
+App Store projection. Twenty-nine focused Release simulator tests passed,
+including the stale projection and active live grace cases.
+
+Apple documents approved, declined, and prorated Sandbox refunds. The
+Apple-origin refund reversal event follows reversal of an earlier refund
+after a dispute. No supported Sandbox control to trigger that event was
+identified. The staged reconciliation fixtures cover refund reversal.
+[Sandbox refund testing](https://developer.apple.com/documentation/storekit/testing-refund-requests.md)
+· [Apple notification types](https://developer.apple.com/documentation/appstoreservernotifications/notificationtype.md)

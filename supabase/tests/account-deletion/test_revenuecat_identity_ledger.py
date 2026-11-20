@@ -83,9 +83,18 @@ def test_ledger(db):
     for migration in sorted(MIGRATIONS.glob("*.sql")):
         db.file(migration)
     db.file(HERE / "billing-projection-fence.sql")
+    catalog_query = (HERE / "staged-guard-schema.sql").read_text()
+    baseline_catalog = db.sql(catalog_query)
     db.file(INSTALL)
+    installed_catalog = db.sql(catalog_query)
+    assert all(name in installed_catalog for name in (
+        "execute_revenuecat_private.accounts", "execute_revenuecat_private.identifiers",
+        "public.ensure_revenuecat_customer_id", "public.attach_verified_revenuecat_alias",
+        "public.resolve_revenuecat_identity", "public.retire_revenuecat_identity",
+    ))
     expect_failure(lambda: db.file(HERE / "reverse-billing-projection-fence.sql"), "2BP01")
     db.file(REVERSE)
+    assert db.sql(catalog_query) == baseline_catalog
     assert db.sql("select to_regnamespace('execute_revenuecat_private') is null") == "t"
     assert db.sql("select to_regprocedure('public.close_account_billing_projection(uuid,text,jsonb)') is not null") == "t"
     db.file(INSTALL)
