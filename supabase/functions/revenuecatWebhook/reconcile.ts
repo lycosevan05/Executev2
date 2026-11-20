@@ -424,7 +424,7 @@ async function reconcileVerified(
           encodeURIComponent(subject.customer_id)
         }`,
         deps.revenueCatKey!,
-        {},
+        verified.environment === "SANDBOX" ? { "X-Is-Sandbox": "true" } : {},
         false,
       );
       const subscriber = object(body.subscriber);

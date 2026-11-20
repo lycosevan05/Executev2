@@ -362,6 +362,90 @@ Deno.test("verified Stripe accepts paid RevenueCat only for an explicitly scoped
   deepEqual(foreignRow.projects, []);
 });
 
+Deno.test("both verified writers use the same owner and revision through overlapping access and expiry", async () => {
+  const f = verifiedFixture();
+  f.subject.subscription = null;
+  let revision = 0;
+  const apply = (
+    changes: (Omit<VerifiedStripeChange, "expected_email"> & {
+      expected_email: string | null;
+    })[],
+  ) => {
+    equal(changes.length, 1);
+    const [change] = changes;
+    const prior = f.subject.subscription as { updated_date: string } | null;
+    equal(change.owner_id, owner);
+    equal(change.customer_id, canonicalCustomer);
+    equal(change.expected_email, email);
+    equal(change.expected_updated_date, prior?.updated_date ?? null);
+    revision++;
+    f.subject.subscription = {
+      data: { ...change.data, user_id: owner },
+      updated_date: "2026-11-19T09:50:0" + revision + "Z",
+    };
+    return Promise.resolve();
+  };
+  if (!f.deps.verified) throw new Error("Missing verified Stripe fixture");
+  f.deps.verified.apply = apply;
+
+  const handleRevenueCat = createRevenueCatHandler({
+    webhookSecret: "rc-webhook-fixture",
+    stripeKey: f.deps.stripeKey,
+    revenueCatKey: f.deps.revenueCatKey,
+    fetch: f.deps.fetch,
+    read: f.deps.read,
+    apply: f.deps.apply,
+    verified: {
+      appId: "fixture-app",
+      environment: "SANDBOX",
+      products: new Set(["native_month"]),
+      resolve: (id) => {
+        equal(id, canonicalCustomer);
+        return Promise.resolve(f.subject);
+      },
+      apply,
+    },
+  });
+  const projected = () =>
+    (f.subject.subscription as { data: Data } | null)?.data;
+
+  f.subscriptions.set("sub_current", { ...f.owned, status: "trialing" });
+  f.setProvider(revenueCat(false));
+  equal((await f.handle()).status, 200);
+  equal(projected()?.store, "stripe");
+
+  f.subscriptions.set("sub_current", f.owned);
+  f.setProvider(revenueCat(true));
+  equal((await f.handle()).status, 200);
+  equal(projected()?.store, "app_store");
+  equal(projected()?.plan, "premium");
+
+  f.setProvider(revenueCat(false));
+  const expiration = await handleRevenueCat(
+    new Request(
+      "https://fixture.invalid/revenuecat",
+      {
+        method: "POST",
+        headers: { authorization: "Bearer rc-webhook-fixture" },
+        body: JSON.stringify({
+          event: {
+            type: "EXPIRATION",
+            app_user_id: canonicalCustomer,
+            app_id: "fixture-app",
+            environment: "SANDBOX",
+          },
+        }),
+      },
+    ),
+  );
+  equal(expiration.status, 200);
+  equal(revision, 3);
+  equal(projected()?.user_id, owner);
+  equal(projected()?.plan, "free");
+  deepEqual(f.reads, []);
+  deepEqual(f.batches, []);
+});
+
 Deno.test("verified Stripe never falls back to email when mode is incomplete or provider ownership is unverified", async () => {
   for (
     const condition of [
