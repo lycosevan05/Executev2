@@ -17,7 +17,7 @@ protocol SubscriptionServicing: AnyObject {
 protocol RevenueCatClient: AnyObject {
     var appUserID: String? { get }
     var onCustomerInfoChange: (() -> Void)? { get set }
-    func identify(_ email: String) async throws
+    func identify(_ customerID: String) async throws
     func logOut() async throws
     func premiumState() async throws -> PremiumState
     func packages() async throws -> [BillingPackage]
@@ -90,13 +90,13 @@ final class RevenueCatSubscriptionService: SubscriptionServicing {
     }
 
     private func withIdentity<T: Sendable>(_ operation: @escaping @MainActor (RevenueCatClient) async throws -> T) async throws -> T {
-        guard let email = desiredUserID else { throw CancellationError() }
+        guard let customerID = desiredUserID else { throw CancellationError() }
         let expectedRevision = revision
         return try await enqueue {
             try self.check(expectedRevision)
-            try await self.client.identify(email)
+            try await self.client.identify(customerID)
             try self.check(expectedRevision)
-            guard self.client.appUserID == email else {
+            guard self.client.appUserID == customerID else {
                 throw AppError(title: "Account could not be verified", message: "Sign in again before managing purchases.")
             }
             let result = try await operation(self.client)

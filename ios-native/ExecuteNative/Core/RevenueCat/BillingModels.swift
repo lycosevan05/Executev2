@@ -57,6 +57,53 @@ struct BillingSubscription: Codable, Equatable, Sendable {
     }
 }
 
+struct OwnerBoundBillingResponse: Decodable, Sendable {
+    let ownerID: UUID
+    let customerID: String
+    let subscription: BillingSubscription?
+
+    enum CodingKeys: String, CodingKey {
+        case ownerID = "owner_id"
+        case customerID = "customer_id"
+        case subscription
+    }
+}
+
+@MainActor
+struct OwnerBoundBillingIdentityResolver {
+    let currentSession: () -> AuthenticatedAccountSession?
+    let getSession: () async throws -> (owner: UUID, accessToken: String)
+    let fetch: (String) async throws -> OwnerBoundBillingResponse
+
+    static let unavailable = AppError(
+        title: "Billing account could not be verified",
+        message: "Sign in again or try billing later."
+    )
+
+    func resolve(_ binding: AuthenticatedAccountSession) async throws -> OwnerBoundBillingResponse {
+        guard currentSession() == binding else { throw CancellationError() }
+        do {
+            let session = try await getSession()
+            try Task.checkCancellation()
+            guard session.owner == binding.owner, currentSession() == binding else { throw CancellationError() }
+            let identity = try await fetch(session.accessToken)
+            try Task.checkCancellation()
+            guard currentSession() == binding else { throw CancellationError() }
+            guard identity.ownerID == binding.owner, let customer = UUID(uuidString: identity.customerID),
+                  customer.uuidString.lowercased() == identity.customerID,
+                  customer != binding.owner, identity.customerID != "00000000-0000-0000-0000-000000000000",
+                  identity.subscription.map({ $0.userID == binding.owner.uuidString.lowercased() }) ?? true else {
+                throw Self.unavailable
+            }
+            return identity
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw Self.unavailable
+        }
+    }
+}
+
 struct BillingPackage: Equatable, Identifiable, Sendable {
     enum Plan: String, CaseIterable, Sendable { case monthly, annual }
     let id: String

@@ -565,6 +565,120 @@ final class SubscriptionIdentityTests: XCTestCase {
 }
 
 @MainActor
+final class OwnerBoundBillingIdentityTests: XCTestCase {
+    private let customerID = "6b247122-6428-4b5f-abfd-217463558b80"
+
+    func testOptInRequiresTheExactHostedProjectOrigin() throws {
+        let project = URL(string: "https://billing-fixture.supabase.co")!
+        XCTAssertFalse(try AppConfiguration.enableRevenueCatIdentity(approvedOrigin: "", supabaseURL: project))
+        XCTAssertTrue(try AppConfiguration.enableRevenueCatIdentity(approvedOrigin: project.absoluteString, supabaseURL: project))
+        XCTAssertThrowsError(try AppConfiguration.enableRevenueCatIdentity(
+            approvedOrigin: "https://other-fixture.supabase.co", supabaseURL: project
+        ))
+        let nestedHost = URL(string: "https://nested.billing-fixture.supabase.co")!
+        XCTAssertThrowsError(try AppConfiguration.enableRevenueCatIdentity(
+            approvedOrigin: nestedHost.absoluteString, supabaseURL: nestedHost
+        ))
+    }
+
+    func testVerifiedBillingUsesOnlyOpaqueIDAndExactOwnerProjection() async throws {
+        let binding = session(for: billingUserA)
+        let client = TestRevenueCatClient()
+        let subscription = BillingSubscription(userID: billingUserA.id.uuidString.lowercased(), plan: "premium", status: "active")
+        let legacy = TestSubscriptionReader()
+        legacy.failure = offline
+        let resolver = OwnerBoundBillingIdentityResolver(
+            currentSession: { binding },
+            getSession: { (binding.owner, "fixture-only") },
+            fetch: { bearer in
+                XCTAssertEqual(bearer, "fixture-only")
+                return OwnerBoundBillingResponse(ownerID: binding.owner, customerID: self.customerID, subscription: subscription)
+            }
+        )
+        let store = BillingStore(service: RevenueCatSubscriptionService(client: client),
+                                 reader: legacy, identityResolver: resolver)
+        store.activate(billingUserA)
+        await store.load()
+        XCTAssertEqual(store.subscription, subscription)
+        XCTAssertTrue(store.premiumState.isPremium)
+        XCTAssertNil(store.refreshError)
+        await store.purchaseSelectedPackage()
+        await store.restorePurchases()
+        XCTAssertEqual(client.logins, [customerID])
+        XCTAssertEqual(client.purchasedBy, [customerID])
+        XCTAssertEqual(client.restores, 1)
+    }
+
+    func testUnverifiedBindingNeverReadsOrGrantsLegacyAccess() async {
+        let binding = session(for: billingUserA)
+        let client = TestRevenueCatClient()
+        client.states[billingUserA.email] = entitled
+        let legacy = TestSubscriptionReader()
+        legacy.rows[billingUserA.email] = BillingSubscription(userID: billingUserA.email, plan: "premium", status: "active")
+        var response = OwnerBoundBillingResponse(
+            ownerID: billingUserA.id, customerID: customerID,
+            subscription: BillingSubscription(userID: billingUserB.id.uuidString.lowercased(), plan: "premium", status: "active")
+        )
+        let resolver = OwnerBoundBillingIdentityResolver(
+            currentSession: { binding },
+            getSession: { (binding.owner, "fixture-only") },
+            fetch: { _ in response }
+        )
+        let store = BillingStore(service: RevenueCatSubscriptionService(client: client),
+                                 reader: legacy, identityResolver: resolver)
+        store.activate(billingUserA)
+        await store.load()
+        XCTAssertFalse(store.premiumState.isPremium)
+        XCTAssertNil(store.subscription)
+        XCTAssertTrue(client.logins.isEmpty)
+
+        response = OwnerBoundBillingResponse(ownerID: billingUserA.id, customerID: customerID,
+                                             subscription: nil)
+        client.states[customerID] = entitled
+        await store.load()
+        XCTAssertTrue(store.premiumState.isPremium)
+
+        response = OwnerBoundBillingResponse(ownerID: billingUserB.id, customerID: customerID,
+                                             subscription: nil)
+        await store.refresh()
+        await store.purchaseSelectedPackage()
+        XCTAssertFalse(store.premiumState.isPremium)
+        XCTAssertTrue(store.packages.isEmpty)
+        XCTAssertTrue(client.purchasedBy.isEmpty)
+        XCTAssertFalse(client.logins.contains(billingUserA.email))
+    }
+
+    func testSameOwnerReauthenticationDiscardsAnInFlightIdentity() async {
+        var binding = session(for: billingUserA)
+        let gate = BillingGate()
+        let client = TestRevenueCatClient()
+        client.states[customerID] = entitled
+        let resolver = OwnerBoundBillingIdentityResolver(
+            currentSession: { binding },
+            getSession: { (billingUserA.id, "fixture-only") },
+            fetch: { _ in
+                await gate.suspend()
+                return OwnerBoundBillingResponse(ownerID: billingUserA.id, customerID: self.customerID,
+                                                 subscription: nil)
+            }
+        )
+        let store = BillingStore(service: RevenueCatSubscriptionService(client: client), identityResolver: resolver)
+        store.activate(billingUserA)
+        let oldRefresh = Task { await store.refresh() }
+        await gate.waitUntilEntered()
+        binding = session(for: billingUserA)
+        gate.release()
+        await oldRefresh.value
+        XCTAssertFalse(store.premiumState.isPremium)
+        XCTAssertTrue(client.logins.isEmpty)
+    }
+
+    private func session(for user: ExecuteUser) -> AuthenticatedAccountSession {
+        AuthenticatedAccountSession(owner: user.id, session: UUID(), authentication: UUID())
+    }
+}
+
+@MainActor
 final class BillingStoreTests: XCTestCase {
     private func makeStore(_ client: TestRevenueCatClient = TestRevenueCatClient(), reader: TestSubscriptionReader = TestSubscriptionReader()) -> BillingStore {
         let store = BillingStore(service: RevenueCatSubscriptionService(client: client), reader: reader)

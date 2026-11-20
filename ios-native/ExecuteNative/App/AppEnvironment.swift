@@ -36,6 +36,7 @@ final class AppEnvironment: ObservableObject {
         router: AppRouter,
         subscriptionService: SubscriptionServicing,
         subscriptionReader: SubscriptionReading = EmptySubscriptionReader(),
+        billingIdentityResolver: OwnerBoundBillingIdentityResolver? = nil,
         dataService: SupabaseDataService? = nil,
         realtimeService: SupabaseRealtimeService? = nil,
         storageService: SupabaseStorageService? = nil,
@@ -61,6 +62,7 @@ final class AppEnvironment: ObservableObject {
             router: router,
             subscriptionService: subscriptionService,
             subscriptionReader: subscriptionReader,
+            billingIdentityResolver: billingIdentityResolver,
             configurationError: configurationError,
             deletionNoticeDefaults: configuration == nil ? nil : .standard
         )
@@ -112,7 +114,7 @@ final class AppEnvironment: ObservableObject {
                 client: client, configuration: configuration, ownerDefaults: .standard
             )
             let functions = SupabaseEdgeFunctionService(client: client)
-            let uploadClient = FunctionsClient(
+            let pinnedFunctions = FunctionsClient(
                 url: configuration.supabaseURL.appendingPathComponent("functions/v1"),
                 headers: ["apikey": configuration.supabaseAnonKey]
             )
@@ -125,7 +127,7 @@ final class AppEnvironment: ObservableObject {
             if configuration.guardedDeletionEnabled {
                 accountService = SupabaseAccountService(
                     functions: PinnedDeletionFunctionService(
-                        client: client, functions: uploadClient, route: .guarded, currentSession: currentDeletionSession
+                        client: client, functions: pinnedFunctions, route: .guarded, currentSession: currentDeletionSession
                     ),
                     readiness: .verifiedGuardedRollout(current: currentDeletionSession)
                 )
@@ -137,7 +139,7 @@ final class AppEnvironment: ObservableObject {
                     return session
                 }
                 let stagedFunctions = PinnedDeletionFunctionService(
-                    client: client, functions: uploadClient, route: .staged, currentSession: fixtureSession
+                    client: client, functions: pinnedFunctions, route: .staged, currentSession: fixtureSession
                 )
                 accountService = SupabaseAccountService(
                     functions: stagedFunctions,
@@ -146,9 +148,23 @@ final class AppEnvironment: ObservableObject {
             }
 #endif
             let consent = AISharingConsent { appState?.allowsDraftWrites(for: $0) == true }
-            let aiFunctions = ConsentedAIRequestInvoker(functions: uploadClient, consent: consent) {
+            let aiFunctions = ConsentedAIRequestInvoker(functions: pinnedFunctions, consent: consent) {
                 try await client.auth.session
             }
+            let billingIdentityResolver = configuration.revenueCatIdentityEnabled ? OwnerBoundBillingIdentityResolver(
+                currentSession: { appState?.currentBillingSession() },
+                getSession: {
+                    let session = try await client.auth.session
+                    return (session.user.id, session.accessToken)
+                },
+                fetch: { bearer in
+                    try await pinnedFunctions.invoke(
+                        "revenuecatIdentity",
+                        options: .init(headers: ["Authorization": "Bearer \(bearer)"], body: [String: String]()),
+                        decoder: .execute
+                    )
+                }
+            ) : nil
             let environment = AppEnvironment(
                 configuration: configuration,
                 configurationError: nil,
@@ -158,6 +174,7 @@ final class AppEnvironment: ObservableObject {
                 router: router,
                 subscriptionService: subscriptionService,
                 subscriptionReader: SupabaseSubscriptionReader(client: client),
+                billingIdentityResolver: billingIdentityResolver,
                 dataService: SupabaseDataService(client: client),
                 realtimeService: SupabaseRealtimeService(client: client),
                 storageService: SupabaseStorageService(

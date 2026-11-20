@@ -16,7 +16,7 @@ final class LiveRevenueCatClient: RevenueCatClient {
         return Purchases.shared.appUserID
     }
 
-    func identify(_ email: String) async throws {
+    func identify(_ customerID: String) async throws {
         guard !configuration.revenueCatAPIKey.isEmpty,
               !configuration.revenueCatAPIKey.contains("$("),
               !configuration.revenueCatAPIKey.hasPrefix("your-"),
@@ -28,11 +28,11 @@ final class LiveRevenueCatClient: RevenueCatClient {
             throw AppError(title: "Purchases are unavailable", message: "This version cannot use the test store.")
         }
 #endif
-        if appUserID != email { loadedPackages.removeAll() }
+        if appUserID != customerID { loadedPackages.removeAll() }
         if !Purchases.isConfigured {
-            Purchases.configure(withAPIKey: configuration.revenueCatAPIKey, appUserID: email)
-        } else if Purchases.shared.appUserID != email {
-            _ = try await Purchases.shared.logIn(email)
+            Purchases.configure(withAPIKey: configuration.revenueCatAPIKey, appUserID: customerID)
+        } else if Purchases.shared.appUserID != customerID {
+            _ = try await Purchases.shared.logIn(customerID)
         }
         if updatesTask == nil {
             let stream = Purchases.shared.customerInfoStream

@@ -14,12 +14,14 @@ enum AppLaunchState: Equatable {
     case failed(AppError)
 }
 
-struct AccountDeletionConfirmation: Identifiable, Equatable, Sendable {
+struct AuthenticatedAccountSession: Identifiable, Equatable, Sendable {
     let owner: UUID
     let session: UUID
     let authentication: UUID
     var id: UUID { session }
 }
+
+typealias AccountDeletionConfirmation = AuthenticatedAccountSession
 
 @MainActor
 final class AppState: ObservableObject {
@@ -63,6 +65,7 @@ final class AppState: ObservableObject {
         router: AppRouter,
         subscriptionService: SubscriptionServicing,
         subscriptionReader: SubscriptionReading = EmptySubscriptionReader(),
+        billingIdentityResolver: OwnerBoundBillingIdentityResolver? = nil,
         configurationError: AppError?,
         deletionNoticeDefaults: UserDefaults? = nil,
         sessionRestoreTimeoutNanoseconds: UInt64 = 10_000_000_000
@@ -71,7 +74,7 @@ final class AppState: ObservableObject {
         self.accountService = accountService
         self.cache = cache
         self.router = router
-        self.billing = BillingStore(service: subscriptionService, reader: subscriptionReader)
+        self.billing = BillingStore(service: subscriptionService, reader: subscriptionReader, identityResolver: billingIdentityResolver)
         self.configurationError = configurationError
         self.deletionNoticeDefaults = deletionNoticeDefaults
         self.sessionRestoreTimeoutNanoseconds = sessionRestoreTimeoutNanoseconds
@@ -253,10 +256,18 @@ final class AppState: ObservableObject {
         return confirmation
     }
 
-    func currentDeletionSession() -> AccountDeletionConfirmation? {
+    func currentDeletionSession() -> AccountDeletionConfirmation? { currentAuthenticatedAccountSession() }
+
+    func currentBillingSession() -> AuthenticatedAccountSession? {
+        guard let binding = currentAuthenticatedAccountSession(),
+              !deletingUserIDs.contains(binding.owner) else { return nil }
+        return binding
+    }
+
+    private func currentAuthenticatedAccountSession() -> AuthenticatedAccountSession? {
         guard let owner = signedInUserID, !authenticationRequestsInFlight.contains(sessionGeneration),
               authService.hasLocalSession(for: owner) else { return nil }
-        return AccountDeletionConfirmation(owner: owner, session: sessionGeneration, authentication: authenticationGeneration)
+        return AuthenticatedAccountSession(owner: owner, session: sessionGeneration, authentication: authenticationGeneration)
     }
 
     func isDeletionConfirmationCurrent(_ confirmation: AccountDeletionConfirmation) -> Bool {

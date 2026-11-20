@@ -12,6 +12,7 @@ struct AppConfiguration: Equatable {
     var revenueCatAnnualProductID = "execute_premium_annual"
     var appReviewLogin: AppReviewLogin? = nil
     var guardedDeletionEnabled = false
+    var revenueCatIdentityEnabled = false
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
     var stagedDeletionOwnerID: UUID? = nil
 #endif
@@ -66,6 +67,9 @@ struct AppConfiguration: Equatable {
             uploadBucket: uploadBucket.isEmpty ? "uploads" : uploadBucket,
             callbackScheme: callbackScheme
         )
+        configuration.revenueCatIdentityEnabled = try Self.enableRevenueCatIdentity(
+            approvedOrigin: value("RevenueCatIdentityProjectURL"), supabaseURL: supabaseURL
+        )
         configuration.appReviewLogin = AppReviewLogin(
             email: value("AppReviewAccountEmail"),
             accountID: value("AppReviewAccountID"),
@@ -90,7 +94,19 @@ struct AppConfiguration: Equatable {
         return configuration
     }
 
+    static func enableRevenueCatIdentity(approvedOrigin: String, supabaseURL: URL) throws -> Bool {
+        guard !approvedOrigin.isEmpty, approvedOrigin != "$(REVENUECAT_IDENTITY_PROJECT_URL)" else { return false }
+        guard matchesHostedProjectOrigin(approvedOrigin, supabaseURL: supabaseURL) else {
+            throw AppError(title: "Billing configuration is invalid", message: "Set the RevenueCat identity project to the exact Supabase project origin.")
+        }
+        return true
+    }
+
     static func allowsGuardedDeletion(approvedOrigin: String, supabaseURL: URL) -> Bool {
+        matchesHostedProjectOrigin(approvedOrigin, supabaseURL: supabaseURL)
+    }
+
+    private static func matchesHostedProjectOrigin(_ approvedOrigin: String, supabaseURL: URL) -> Bool {
         guard approvedOrigin == supabaseURL.absoluteString,
               let origin = URLComponents(url: supabaseURL, resolvingAgainstBaseURL: false),
               origin.scheme == "https",

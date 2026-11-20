@@ -95,6 +95,16 @@ These public identifiers are configurable in xcconfig and Info.plist. Those hist
 
 `ExecuteNativeTests/Billing.storekit` contains test-only products/prices and is bundled only with the test target. `StoreKitBillingTests` exercises Apple local StoreKit pricing, purchase/sync, cancellation, and pending outcomes; it does not validate RevenueCat receipts or Apple's sandbox. Release builds reject RevenueCat Test Store keys.
 
+### Owner-bound RevenueCat identity
+
+Leave `REVENUECAT_IDENTITY_PROJECT_URL` blank for existing email-backed
+customers. For an isolated, enrolled cohort, set it to the exact hosted
+Supabase origin using the same `https:/$()/project-ref.supabase.co` spelling
+as `SUPABASE_URL`. The authenticated `revenuecatIdentity` function returns
+the opaque customer ID and the owner-bound subscription. Billing in this
+mode requires an enrolled account and uses the endpoint for every request
+that needs to resolve the account.
+
 ### Resolve the native-dev configuration
 
 **Verified setup — 2026-10-16:** Apple Developer team `58GZDC8UKY` contains explicit App ID `com.executelabs.execute.native-dev`, description **Execute Native Dev**. The [App Store Connect record](https://appstoreconnect.apple.com/apps/6823713820/distribution/info) is **Execute Native Dev**, numeric Apple ID **6823713820**, SKU `execute-native-dev`, iOS, English (U.S.), Limited Access. Paid Apps Agreement and displayed banking/tax statuses were verified Active after the Account Holder accepted the updated agreement. Existing Execute records were preserved.

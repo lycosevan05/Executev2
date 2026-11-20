@@ -17,6 +17,8 @@ final class BillingStore: ObservableObject {
     var onPremiumStateChanged: ((PremiumState) -> Void)?
     private let service: SubscriptionServicing
     private let reader: SubscriptionReading
+    private let identityResolver: OwnerBoundBillingIdentityResolver?
+    private var verifiedCustomerID: String?
     private var user: ExecuteUser?
     private var generation = UUID()
     private var refreshGeneration = UUID()
@@ -27,16 +29,19 @@ final class BillingStore: ObservableObject {
 
     private static let premiumActiveMessage = "Your Premium access is active."
 
-    init(service: SubscriptionServicing, reader: SubscriptionReading = EmptySubscriptionReader()) {
+    init(service: SubscriptionServicing, reader: SubscriptionReading = EmptySubscriptionReader(),
+         identityResolver: OwnerBoundBillingIdentityResolver? = nil) {
         self.service = service
         self.reader = reader
+        self.identityResolver = identityResolver
         service.onCustomerInfoChange = { [weak self] in
             self?.scheduleCustomerInfoRefresh()
         }
     }
 
     func activate(_ user: ExecuteUser) {
-        guard self.user?.id != user.id || self.user?.email != user.email else { return }
+        if identityResolver == nil, self.user?.id == user.id, self.user?.email == user.email { return }
+        if identityResolver != nil, self.user != nil { service.reset() }
         clearSession()
         self.user = user
     }
@@ -50,6 +55,7 @@ final class BillingStore: ObservableObject {
         generation = UUID()
         refreshGeneration = UUID()
         user = nil
+        verifiedCustomerID = nil
         subscription = nil
         liveState = nil
         appStoreNotice = nil
@@ -97,14 +103,16 @@ final class BillingStore: ObservableObject {
         refreshError = nil
         // Publish each source as it arrives so a slow read on either side cannot delay the other.
         async let appStoreError = refreshAppStore(user: user, session: session, request: request)
-        do {
-            let row = try await reader.subscription(for: user)
-            guard generation == session, refreshGeneration == request else { return }
-            subscription = row?.userID == user.email ? row : nil
-            publishPremiumState()
-        } catch {
-            guard generation == session, refreshGeneration == request else { return }
-            refreshError = AppError.from(error, title: "Subscription status could not be refreshed")
+        if identityResolver == nil {
+            do {
+                let row = try await reader.subscription(for: user)
+                guard generation == session, refreshGeneration == request else { return }
+                subscription = row?.userID == user.email ? row : nil
+                publishPremiumState()
+            } catch {
+                guard generation == session, refreshGeneration == request else { return }
+                refreshError = AppError.from(error, title: "Subscription status could not be refreshed")
+            }
         }
         let storeError = await appStoreError
         guard generation == session, refreshGeneration == request else { return }
@@ -115,10 +123,9 @@ final class BillingStore: ObservableObject {
     private func refreshAppStore(user: ExecuteUser, session: UUID, request: UUID) async -> AppError? {
         guard generation == session, refreshGeneration == request else { return nil }
         do {
-            try await service.configure(appUserID: user.email)
-            guard generation == session, refreshGeneration == request else { return nil }
+            let binding = try await configureBilling(for: user, session: session, request: request)
             let state = try await service.currentPremiumState()
-            guard generation == session, refreshGeneration == request else { return nil }
+            try requireCurrentBilling(session, request: request, binding: binding)
             liveState = state
             let hasLiveAccess = PremiumState.resolve(server: nil, live: state).isPremium
             switch appStoreNotice {
@@ -140,6 +147,56 @@ final class BillingStore: ObservableObject {
         }
     }
 
+    private func requireCurrentBilling(_ session: UUID, request: UUID? = nil,
+                                       binding: AuthenticatedAccountSession? = nil) throws {
+        if identityResolver != nil { try Task.checkCancellation() }
+        guard generation == session, request == nil || refreshGeneration == request,
+              binding == nil || identityResolver?.currentSession() == binding else {
+            throw CancellationError()
+        }
+    }
+
+    private func configureBilling(for user: ExecuteUser, session: UUID,
+                                  request: UUID? = nil) async throws -> AuthenticatedAccountSession? {
+        try requireCurrentBilling(session, request: request)
+        guard let identityResolver else {
+            try await service.configure(appUserID: user.email)
+            try requireCurrentBilling(session, request: request)
+            return nil
+        }
+
+        guard let binding = identityResolver.currentSession(), binding.owner == user.id else {
+            throw CancellationError()
+        }
+        let identity: OwnerBoundBillingResponse
+        do {
+            identity = try await identityResolver.resolve(binding)
+            try requireCurrentBilling(session, request: request, binding: binding)
+            guard verifiedCustomerID == nil || verifiedCustomerID == identity.customerID else {
+                throw OwnerBoundBillingIdentityResolver.unavailable
+            }
+        } catch {
+            // Cancelled or superseded work cannot clear a more recent session.
+            try requireCurrentBilling(session, request: request, binding: binding)
+            subscription = nil
+            liveState = nil
+            packages = []
+            selectedPackageID = nil
+            appStoreNotice = nil
+            message = nil
+            service.reset()
+            publishPremiumState()
+            throw error
+        }
+
+        verifiedCustomerID = identity.customerID
+        subscription = identity.subscription
+        publishPremiumState()
+        try await service.configure(appUserID: identity.customerID)
+        try requireCurrentBilling(session, request: request, binding: binding)
+        return binding
+    }
+
     func load() async {
         await refresh()
         await loadPackages()
@@ -152,10 +209,9 @@ final class BillingStore: ObservableObject {
         error = nil
         if case .purchaseUnconfirmed = appStoreNotice { appStoreNotice = nil }
         do {
-            try await service.configure(appUserID: user.email)
-            guard generation == session else { return }
+            let binding = try await configureBilling(for: user, session: session)
             let loaded = try await service.availablePackages()
-            guard generation == session else { return }
+            try requireCurrentBilling(session, binding: binding)
             packages = loaded
             if !loaded.contains(where: { $0.id == selectedPackageID }) {
                 selectedPackageID = loaded.first(where: { $0.plan == .annual })?.id ?? loaded.first?.id
@@ -192,12 +248,11 @@ final class BillingStore: ObservableObject {
         message = nil
         appStoreNotice = nil
         do {
-            try await service.configure(appUserID: user.email)
-            guard generation == session else { return }
+            let binding = try await configureBilling(for: user, session: session)
             switch action {
             case .purchase(let id):
                 let result = try await service.purchase(packageID: id)
-                guard generation == session else { return }
+                try requireCurrentBilling(session, binding: binding)
                 switch result {
                 case .purchased(let state):
                     liveState = state
@@ -221,14 +276,14 @@ final class BillingStore: ObservableObject {
                 }
             case .restore:
                 let state = try await service.restorePurchases()
-                guard generation == session else { return }
+                try requireCurrentBilling(session, binding: binding)
                 liveState = state
                 let hasLiveAccess = PremiumState.resolve(server: nil, live: state).isPremium
                 appStoreNotice = hasLiveAccess ? .restored : nil
                 message = hasLiveAccess ? "Your App Store purchase was restored." : "No active App Store subscription was found to restore. Check that you are using the Apple Account that made the purchase."
             case .manage:
                 try await service.manageSubscriptions()
-                guard generation == session else { return }
+                try requireCurrentBilling(session, binding: binding)
             }
             publishPremiumState()
         } catch {
