@@ -298,13 +298,16 @@ import Supabase
 
 
 @MainActor final class HomeCancellationTests: XCTestCase {
-    func testCancelledGoalSynchronizationDoesNotPublishFailureAndSameAccountCanRestart() async throws {
+    func testColdDashboardRendersBeforeGoalHistoryFinishes() async throws {
+        try await exerciseCancellation(blockedTable: "goals", warm: false, backgroundGoals: true)
+    }
+    func testCancelledColdDashboardReadDoesNotPublishFailureAndSameAccountCanRestart() async throws {
         try await exerciseCancellation(blockedTable: "goals", warm: false)
     }
     func testCancelledDashboardRefreshRetainsSavedSnapshotAndSameAccountCanRestart() async throws {
         try await exerciseCancellation(blockedTable: "daily_logs", warm: true)
     }
-    private func exerciseCancellation(blockedTable: String, warm: Bool) async throws {
+    private func exerciseCancellation(blockedTable: String, warm: Bool, backgroundGoals: Bool = false) async throws {
         let owner = ExecuteUser(id: UUID(), email: "home-cancel@example.invalid", displayName: "Fixture")
         let host = "\(UUID().uuidString.lowercased()).home-cancellation.invalid"
         let body = try JSONSerialization.data(withJSONObject: [["id": UUID().uuidString, "owner_id": owner.id.uuidString,
@@ -329,11 +332,20 @@ import Supabase
             XCTAssertEqual(model.snapshot.dailyLog?.caloriesConsumed, 206)
         }
         let suspended = expectation(description: "Actual SDK read suspended at \(blockedTable)")
-        fixture.block(table: blockedTable) { suspended.fulfill() }
+        fixture.block(table: blockedTable, limit: backgroundGoals ? "500" : nil) { suspended.fulfill() }
         let loading = Task {
             if warm { await model.refresh() } else { await model.start(for: owner) }
         }
         await fulfillment(of: [suspended], timeout: 3)
+        if backgroundGoals {
+            XCTAssertFalse(model.isInitialLoading)
+            XCTAssertEqual(model.snapshot.dailyLog?.caloriesConsumed, 206)
+            XCTAssertNil(model.error)
+            await model.stop()
+            await loading.value
+            XCTAssertEqual(fixture.writeCount, 0)
+            return
+        }
         loading.cancel()
         await loading.value
         XCTAssertNil(model.error)
@@ -540,6 +552,7 @@ private final class HomeCancellationFixture: @unchecked Sendable {
     private var onReadBlocked: (() -> Void)?
     private var pendingRead: ((Bool) -> Void)?
     private var blockedTable: String?
+    private var blockedLimit: String?
     private var onBlocked: (() -> Void)?
     private var writes = 0
     init(body: Data) { self.responseBody = body }
@@ -569,13 +582,15 @@ private final class HomeCancellationFixture: @unchecked Sendable {
         callback?(failing)
     }
     var writeCount: Int { lock.lock(); defer { lock.unlock() }; return writes }
-    func block(table: String?, onBlocked: (() -> Void)?) {
-        lock.lock(); defer { lock.unlock() }; blockedTable = table; self.onBlocked = onBlocked
+    func block(table: String?, limit: String? = nil, onBlocked: (() -> Void)?) {
+        lock.lock(); defer { lock.unlock() }; blockedTable = table; blockedLimit = limit; self.onBlocked = onBlocked
     }
     func shouldSuspend(_ request: URLRequest) -> Bool {
         lock.lock()
         if request.httpMethod != "GET" { writes += 1 }
-        let blocked = request.url?.lastPathComponent == blockedTable
+        let limit = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+            .queryItems?.first { $0.name == "limit" }?.value
+        let blocked = request.url?.lastPathComponent == blockedTable && (blockedLimit == nil || blockedLimit == limit)
         let callback = blocked ? onBlocked : nil
         if blocked { onBlocked = nil }
         lock.unlock()

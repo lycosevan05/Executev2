@@ -22,6 +22,7 @@ final class HomeViewModel: ObservableObject {
     private var customizationReviewRow: BackendRow?
     private var customizationStorageUnreadable = false
     private var customizationRevision = UUID()
+    private var goalTrackingTask: Task<Void, Never>?
     var customizationOwner: UUID? { user?.id }
 
     private let dataService: SupabaseDataService?
@@ -124,8 +125,11 @@ final class HomeViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
+        goalTrackingTask?.cancel()
+        goalTrackingTask = nil
         trackingGeneration = UUID()
         snapshot = .empty
+        isInitialLoading = true
         layoutRecordID = nil
         widgetOrder = HomeWidget.defaultOrder
         hiddenWidgets = []
@@ -152,6 +156,8 @@ final class HomeViewModel: ObservableObject {
     }
 
     func stop() async {
+        goalTrackingTask?.cancel()
+        goalTrackingTask = nil
         trackingGeneration = UUID()
         user = nil
         customizationBusy = false; customizationError = nil; customizationIntent = nil; customizationReviewed = false
@@ -425,18 +431,6 @@ final class HomeViewModel: ObservableObject {
         let today = HomeDate.todayString
         do {
             try checkRead()
-            if canTrackGoals(loadingUserID) {
-                do {
-                    try await GoalActivityTracker.shared.synchronize(data: dataService, user: loadingUser, isCurrent: {
-                        do { try checkRead(); return self.canTrackGoals(loadingUserID) } catch { return false }
-                    })
-                } catch {
-                    try checkRead()
-                    guard !abandonCancelledLoad(error, request: trackingRequest, owner: loadingUserID) else { return }
-                    self.error = AppError.from(error, title: "Automatic goal progress needs refresh")
-                }
-            }
-            try checkRead()
             async let plans: [EntityRecord<HomeAIPlan>] = dataService.list(.aiPlans, orderBy: "-updated_date", limit: 50)
             async let profiles: [EntityRecord<HomeUserProfile>] = dataService.list(.userProfiles, orderBy: "-updated_date", limit: 1)
             async let nutritionProfiles: [EntityRecord<HomeNutritionProfile>] = dataService.list(.nutritionProfiles, orderBy: "-updated_date", limit: 1)
@@ -481,8 +475,11 @@ final class HomeViewModel: ObservableObject {
             )
             try checkRead()
             snapshot = loadedSnapshot
+            isInitialLoading = false
+            isRefreshing = false
             try? await cache.write(loadedSnapshot, for: dashboardKey, userID: loadingUserID, ttl: 300)
             try checkRead()
+            scheduleGoalTracking(dataService, user: loadingUser, request: trackingRequest, identity: readIdentity)
         } catch {
             do { try checkRead() }
             catch { _ = abandonCancelledLoad(CancellationError(), request: trackingRequest, owner: loadingUserID); return }
@@ -497,6 +494,34 @@ final class HomeViewModel: ObservableObject {
         isInitialLoading = false
         isRefreshing = false
         hasStarted = true
+    }
+
+    private func scheduleGoalTracking(_ data: EntityDataServicing, user: ExecuteUser, request: UUID, identity: RecoveryIdentity?) {
+        guard goalTrackingTask == nil, canTrackGoals(user.id) else { return }
+        goalTrackingTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            defer {
+                if request == trackingGeneration { goalTrackingTask = nil }
+            }
+            @MainActor func isCurrent() -> Bool {
+                guard !Task.isCancelled, request == trackingGeneration, self.user?.id == user.id,
+                      canTrackGoals(user.id) else { return false }
+                guard let identity else { return true }
+                return (try? customizationCheck(request, identity: identity)) != nil
+            }
+            guard isCurrent() else { return }
+            do {
+                let changed = try await GoalActivityTracker.shared.synchronize(data: data, user: user, isCurrent: isCurrent)
+                guard changed, isCurrent() else { return }
+                let rows: [EntityRecord<HomeGoal>] = try await data.list(.goals, orderBy: "-updated_date", limit: 50)
+                guard isCurrent(), rows.allSatisfy({ NutritionWeekSelection.owned($0.metadata, by: user) }) else { return }
+                snapshot.goals = rows.map(\.payload).filter { $0.status == nil || $0.status == "active" }
+                await persistDashboard()
+            } catch {
+                guard isCurrent(), self.error == nil else { return }
+                self.error = AppError.from(error, title: "Automatic goal progress needs refresh")
+            }
+        }
     }
 
     /// Navigation cancellation is an abandoned read, not evidence of an empty or failed dashboard.

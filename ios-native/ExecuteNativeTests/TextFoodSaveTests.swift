@@ -270,6 +270,32 @@ private final class TextFoodRepository: RecoveryRepository, EntityDataServicing 
 
 
 @MainActor final class NutritionSessionTests: XCTestCase {
+    func testIndependentReadsStartWhileFoodIsStillWaiting() async throws {
+        let fixture = try await NutritionSessionFixture()
+        defer { fixture.close() }
+        let foodStarted = expectation(description: "Food request is held")
+        let otherReadsStarted = expectation(description: "The other four reads start")
+        otherReadsStarted.expectedFulfillmentCount = 4
+        var finishFood: CheckedContinuation<Void, Never>?
+        fixture.data.beforeReturn = { table in
+            if table == .foodLogs {
+                await withCheckedContinuation { continuation in
+                    finishFood = continuation
+                    foodStarted.fulfill()
+                }
+            } else {
+                otherReadsStarted.fulfill()
+            }
+        }
+        let loading = Task { await fixture.model.start(for: fixture.owner) }
+        await fulfillment(of: [foodStarted, otherReadsStarted], timeout: 3)
+        XCTAssertTrue(fixture.model.isInitialLoading)
+        finishFood?.resume()
+        await loading.value
+        XCTAssertFalse(fixture.model.isInitialLoading)
+        XCTAssertNil(fixture.model.error)
+    }
+
     func testSDKSwitchDuringReadRejectsRowsAndErrorsWithoutOverwritingNextOwnersCache() async throws {
         for fail in [false, true] {
             let fixture = try await NutritionSessionFixture(); defer { fixture.close() }

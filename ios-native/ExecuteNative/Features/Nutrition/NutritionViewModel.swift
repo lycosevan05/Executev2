@@ -511,7 +511,7 @@ final class NutritionViewModel: ObservableObject {
     private func reload(isRefresh: Bool = false) async {
         let request = UUID(); loadGeneration = request
         defer { if request == loadGeneration { isInitialLoading = false; isRefreshing = false } }
-        guard let dataService, let scope = try? readScope() else { return }
+        guard dataService != nil, let scope = try? readScope() else { return }
         let loadingDate = scope.date
         let key = CacheKey("nutrition", loadingDate)
         isRefreshing = isRefresh
@@ -521,24 +521,22 @@ final class NutritionViewModel: ObservableObject {
             guard request == loadGeneration else { throw CancellationError() }
             try validate(scope)
         }
-        func read<P: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<P>] {
+        do {
             try check()
-            let rows: [EntityRecord<P>] = try await dataService.list(table, orderBy: orderBy, limit: limit)
+            async let foodResult: [EntityRecord<NutritionFoodLog>] = readNutritionRecords(.foodLogs, orderBy: "-created_date", limit: 300)
+            async let dailyResult: [EntityRecord<NutritionDailyLog>] = readNutritionRecords(.dailyLogs, orderBy: "-updated_date", limit: 100)
+            async let profileResult: [EntityRecord<HomeNutritionProfile>] = readNutritionRecords(.nutritionProfiles, orderBy: "-updated_date", limit: 10)
+            async let planResult: [EntityRecord<HomeAIPlan>] = readNutritionRecords(.aiPlans, orderBy: "-updated_date", limit: 25)
+            async let mealResult: [EntityRecord<NutritionMealPlan>] = readNutritionRecords(.mealPlans, orderBy: "-updated_date", limit: 100)
+            let (foodLogs, dailyLogs, profiles, plans, mealPlans) = try await (foodResult, dailyResult, profileResult, planResult, mealResult)
             try check()
             if let identity = scope.identity {
-                guard rows.allSatisfy({ NutritionWeekSelection.owned($0.metadata, by: identity.user) }) else {
+                let records = [foodLogs.map(\.metadata), dailyLogs.map(\.metadata), profiles.map(\.metadata),
+                               plans.map(\.metadata), mealPlans.map(\.metadata)]
+                guard records.allSatisfy({ rows in rows.allSatisfy { NutritionWeekSelection.owned($0, by: identity.user) } }) else {
                     throw AppError(title: "Nutrition needs a current account", message: "Records from another account were not displayed or cached. Refresh the correct account.")
                 }
             }
-            return rows
-        }
-        do {
-            let foodLogs: [EntityRecord<NutritionFoodLog>] = try await read(.foodLogs, orderBy: "-created_date", limit: 300)
-            let dailyLogs: [EntityRecord<NutritionDailyLog>] = try await read(.dailyLogs, orderBy: "-updated_date", limit: 100)
-            let profiles: [EntityRecord<HomeNutritionProfile>] = try await read(.nutritionProfiles, orderBy: "-updated_date", limit: 10)
-            let plans: [EntityRecord<HomeAIPlan>] = try await read(.aiPlans, orderBy: "-updated_date", limit: 25)
-            let mealPlans: [EntityRecord<NutritionMealPlan>] = try await read(.mealPlans, orderBy: "-updated_date", limit: 100)
-            try check()
 
             let activePlan = selectActivePlan(plans)
             let dailyLog = selectDailyLog(dailyLogs, date: loadingDate, activePlan: activePlan)
@@ -569,6 +567,15 @@ final class NutritionViewModel: ObservableObject {
             guard (try? check()) != nil else { return }
             self.error = AppError.from(error, title: "Couldn't load nutrition")
         }
+    }
+
+    private func readNutritionRecords<Payload: Codable & Sendable>(
+        _ table: EntityTable, orderBy: String, limit: Int
+    ) async throws -> [EntityRecord<Payload>] {
+        // Keep the injected service on the main actor while its network requests overlap.
+        guard let dataService else { throw CancellationError() }
+        try Task.checkCancellation()
+        return try await dataService.list(table, orderBy: orderBy, limit: limit)
     }
 
     private func restoreCachedSnapshot() async {

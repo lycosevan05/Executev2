@@ -70,17 +70,18 @@ final class GoalActivityTracker {
         if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() }
     }
 
+    @discardableResult
     func synchronize(data: EntityDataServicing, user: ExecuteUser, today: String = HomeDate.todayString, derivePlanGoals: Bool = false,
-                     isCurrent: () -> Bool) async throws {
+                     isCurrent: () -> Bool) async throws -> Bool {
         await acquire(); defer { release() }
         func check() throws { try Task.checkCancellation(); guard isCurrent() else { throw CancellationError() } }
         try check()
-        guard UserDefaults.standard.data(forKey: "execute.cache.\(user.id.uuidString).goals.pending-write") == nil else { return }
+        guard UserDefaults.standard.data(forKey: "execute.cache.\(user.id.uuidString).goals.pending-write") == nil else { return false }
         if derivePlanGoals { try await GoalDerivation.synchronize(data: data, user: user, today: today, isCurrent: isCurrent) }
         try check()
         let goals: [EntityRecord<JSONValue>] = try await data.listAll(.goals, isCurrent: isCurrent)
         let tracked = goals.filter { GoalActivityMetric.resolve($0.payload) != nil && [nil, "active", "completed"].contains($0.payload["status"]?.stringValue) }
-        guard !tracked.isEmpty else { return }
+        guard !tracked.isEmpty else { return false }
         let history: [EntityRecord<JSONValue>] = try await data.listAll(.goalProgressEntries, isCurrent: isCurrent)
         let logs: [EntityRecord<JSONValue>] = try await data.listAll(.dailyLogs, isCurrent: isCurrent)
         let sessions: [EntityRecord<JSONValue>] = try await data.listAll(.workoutLogs, isCurrent: isCurrent)
@@ -119,6 +120,7 @@ final class GoalActivityTracker {
                 throw AppError(title: "Goal history needs review", message: "Duplicate automatic entries were found. No automatic repair was attempted.")
             }
         }
+        var changedGoals = false
         for goal in tracked {
             try check()
             guard let metric = GoalActivityMetric.resolve(goal.payload),
@@ -201,8 +203,10 @@ final class GoalActivityTracker {
             try check()
             if !patch.allSatisfy({ goal.payload[$0.key] == $0.value }) {
                 let _: EntityRecord<JSONValue> = try await data.update(.goals, id: goal.id, patch: .object(patch))
+                changedGoals = true
             }
         }
+        return changedGoals
     }
 
     static func managed(_ row: EntityRecord<JSONValue>) -> Bool {
