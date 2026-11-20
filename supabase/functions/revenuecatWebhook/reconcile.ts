@@ -119,7 +119,7 @@ function date(value: unknown): string | null {
 }
 
 async function getJson(
-  deps: Dependencies,
+  deps: Pick<Dependencies, "fetch">,
   url: string,
   key: string,
   extra: Record<string, string> = {},
@@ -193,6 +193,7 @@ export function revenueCatProjection(body: Data, userId: string): Data {
     revenuecat_plan: active ? "premium" : "free",
     revenuecat_status: status,
     revenuecat_observed_at: observedAt,
+    revenuecat_current_period_end: end,
     plan: active ? "premium" : "free",
     status,
     store: typeof subscription.store === "string"
@@ -236,7 +237,7 @@ async function changeFor(
 }
 
 async function mergeCurrentStripe(
-  deps: Dependencies,
+  deps: Pick<Dependencies, "fetch" | "stripeKey">,
   row: SubscriptionRow | null,
   projection: Data,
   checkOwner: (snapshot: Data) => void,
@@ -362,9 +363,11 @@ async function reconcileVerified(
   verified: VerifiedReconciliation,
   event: RevenueCatEvent,
 ): Promise<boolean> {
+  const verifyTransferEnvironment = event.type === "TRANSFER" &&
+    event.environment == null;
   if (
     event.app_id !== verified.appId ||
-    event.environment !== verified.environment
+    (!verifyTransferEnvironment && event.environment !== verified.environment)
   ) throw new Error("Webhook app or environment is unconfirmed");
   if (!deps.revenueCatKey) {
     throw new Error("Customer reconciliation is unavailable");
@@ -418,58 +421,19 @@ async function reconcileVerified(
 
   const changes = await Promise.all(
     [...owners.values()].map(async (subject) => {
-      const body = await getJson(
+      const change = await currentVerifiedChange(
         deps,
-        `https://api.revenuecat.com/v1/subscribers/${
-          encodeURIComponent(subject.customer_id)
-        }`,
-        deps.revenueCatKey!,
-        verified.environment === "SANDBOX" ? { "X-Is-Sandbox": "true" } : {},
-        false,
+        verified,
+        subject,
+        resolve,
       );
-      const subscriber = object(body.subscriber);
-      const original = providerId(subscriber.original_app_user_id);
-      if (original !== subject.customer_id) {
-        const identity = await resolve(original);
-        if (
-          !(identity.state === "active" && sameBinding(subject, identity)) &&
-          !(identity.state === "unresolved" && anonymousId.test(original))
-        ) throw new Error("RevenueCat subscriber ownership mismatch");
-      }
-      let projection = revenueCatProjection(body, subject.customer_id);
-      const product = projection.revenuecat_product_id;
       if (
-        product !== null && (typeof product !== "string" ||
-          !verified.products.has(product) ||
-          object(object(subscriber.subscriptions)[product]).store !==
-            "app_store" ||
-          (projection.revenuecat_plan === "premium" &&
-            projection.revenuecat_environment !== verified.environment) ||
-          (projection.revenuecat_environment !== null &&
-            projection.revenuecat_environment !== verified.environment))
-      ) throw new Error("Unconfirmed RevenueCat entitlement scope");
-
-      projection = await mergeCurrentStripe(
-        deps,
-        subject.subscription,
-        projection,
-        (snapshot) => {
-          const metadata = object(snapshot.metadata);
-          if (
-            metadata.execute_owner_uuid !== subject.owner_id ||
-            (metadata.user_id !== subject.owner_id &&
-              (subject.email === null || metadata.user_id !== subject.email)) ||
-            snapshot.livemode !== (verified.environment === "PRODUCTION")
-          ) throw new Error("Unconfirmed Stripe owner or environment");
-        },
-      );
-      return {
-        owner_id: subject.owner_id,
-        customer_id: subject.customer_id,
-        expected_email: subject.email,
-        expected_updated_date: subject.subscription?.updated_date ?? null,
-        data: eventProjection(projection, event),
-      };
+        verifyTransferEnvironment &&
+        change.data.revenuecat_environment !== verified.environment
+      ) {
+        throw new Error("Transfer environment awaits provider confirmation");
+      }
+      return { ...change, data: eventProjection(change.data, event) };
     }),
   );
   // The service-only RPC rechecks retirement, canonical ID and each revision.
@@ -477,7 +441,106 @@ async function reconcileVerified(
   return true;
 }
 
-function constantTimeEqual(a: string, b: string): boolean {
+async function currentVerifiedChange(
+  deps: Pick<Dependencies, "fetch" | "revenueCatKey" | "stripeKey">,
+  verified: VerifiedReconciliation,
+  subject: ActiveSubject,
+  resolve: (identifier: string) => Promise<VerifiedSubject>,
+): Promise<VerifiedSubscriptionChange> {
+  if (!deps.revenueCatKey) {
+    throw new Error("Customer reconciliation is unavailable");
+  }
+  const body = await getJson(
+    deps,
+    `https://api.revenuecat.com/v1/subscribers/${
+      encodeURIComponent(subject.customer_id)
+    }`,
+    deps.revenueCatKey!,
+    verified.environment === "SANDBOX" ? { "X-Is-Sandbox": "true" } : {},
+    false,
+  );
+  const subscriber = object(body.subscriber);
+  const original = providerId(subscriber.original_app_user_id);
+  if (original !== subject.customer_id) {
+    const identity = await resolve(original);
+    if (
+      !(identity.state === "active" && sameBinding(subject, identity)) &&
+      !(identity.state === "unresolved" && anonymousId.test(original))
+    ) throw new Error("RevenueCat subscriber ownership mismatch");
+  }
+  let projection = revenueCatProjection(body, subject.customer_id);
+  const product = projection.revenuecat_product_id;
+  if (
+    product !== null && (typeof product !== "string" ||
+      !verified.products.has(product) ||
+      object(object(subscriber.subscriptions)[product]).store !==
+        "app_store" ||
+      (projection.revenuecat_plan === "premium" &&
+        projection.revenuecat_environment !== verified.environment) ||
+      (projection.revenuecat_environment !== null &&
+        projection.revenuecat_environment !== verified.environment))
+  ) throw new Error("Unconfirmed RevenueCat entitlement scope");
+
+  projection = await mergeCurrentStripe(
+    deps,
+    subject.subscription,
+    projection,
+    (snapshot) => {
+      const metadata = object(snapshot.metadata);
+      if (
+        metadata.execute_owner_uuid !== subject.owner_id ||
+        (metadata.user_id !== subject.owner_id &&
+          (subject.email === null || metadata.user_id !== subject.email)) ||
+        snapshot.livemode !== (verified.environment === "PRODUCTION")
+      ) throw new Error("Unconfirmed Stripe owner or environment");
+    },
+  );
+  return {
+    owner_id: subject.owner_id,
+    customer_id: subject.customer_id,
+    expected_email: subject.email,
+    expected_updated_date: subject.subscription?.updated_date ?? null,
+    data: projection,
+  };
+}
+
+export async function reconcileOverdueSandboxOwner(
+  deps: Pick<Dependencies, "fetch" | "revenueCatKey" | "stripeKey">,
+  verified: VerifiedReconciliation,
+  owner: unknown,
+  now = Date.now(),
+): Promise<boolean> {
+  if (verified.environment !== "SANDBOX") throw new Error("Sandbox required");
+  const subject = readVerifiedSubject(owner, verified.environment);
+  if (subject.state !== "active" || !subject.subscription) return false;
+  const { data } = subject.subscription;
+  const due = data.revenuecat_current_period_end ??
+    (data.store === "app_store" ? data.current_period_end : null);
+  if (
+    data.revenuecat_plan !== "premium" || typeof due !== "string" ||
+    !Number.isFinite(Date.parse(due)) || Date.parse(due) > now
+  ) return false;
+  const change = await currentVerifiedChange(
+    deps,
+    verified,
+    subject,
+    async (identifier) =>
+      readVerifiedSubject(
+        await verified.resolve(identifier),
+        verified.environment,
+      ),
+  );
+  const observed = Date.parse(String(change.data.revenuecat_observed_at));
+  if (observed < Date.parse(due) || observed > now + 60_000) {
+    throw new Error(
+      "RevenueCat observation is outside the reconciliation window",
+    );
+  }
+  await verified.apply([change]);
+  return true;
+}
+
+export function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);

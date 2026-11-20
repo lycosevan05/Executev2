@@ -586,3 +586,20 @@ An independent read of the exact Executev2 QA row still showed
 event was a renewal observed at 09:44:57 UTC. This closes the signed
 renewal-history check. Delivery of the Sandbox expiration and backend
 reconciliation remain open.
+
+### Automatic recovery when an expiration event is missing
+
+The isolated job runs every five minutes and reads only overdue, verified
+Sandbox App Store owners. It reconciles from the current RevenueCat
+subscriber and any linked Stripe subscription. The existing owner and
+revision checks protect against concurrent writers and retirement. A failed
+provider read leaves the row eligible for a later job run. Successful runs
+retain recorded webhook metadata so recovery does not imply delivery.
+
+Use the provider-specific App Store deadline even when Stripe is the
+effective source. Record the last signed App Store end time, confirm that
+the isolated expiration was withheld, and read the backend before opening
+the app. The acceptance target is Free within 15 minutes when neither
+provider still grants access. Valid grace, renewed App Store, active Stripe,
+and retired-owner fixtures cover the other branches. Hosted timing still
+requires independent provider and database evidence.

@@ -3,6 +3,7 @@ import {
   affectedEmails,
   createHandler,
   type Dependencies,
+  reconcileOverdueSandboxOwner,
   revenueCatProjection,
   type SubscriptionChange,
   type SubscriptionRow,
@@ -692,7 +693,7 @@ Deno.test("verified integration pins authorization, app, event scope and ledger 
     const event of [
       { ...f.event, app_id: "different-app" },
       { ...f.event, environment: "PRODUCTION" },
-      { ...f.event, environment: undefined },
+      { ...f.event, type: "EXPIRATION", environment: undefined },
     ]
   ) {
     equal((await f.deliver(event)).status, 503);
@@ -807,4 +808,99 @@ Deno.test("verified owner-revision conflict from the atomic RPC requests retry",
   f.verified.apply = () => Promise.reject(new Error("Revision changed"));
   equal((await f.deliver()).status, 503);
   equal(f.legacy.writes(), 0);
+});
+
+Deno.test("a transfer without environment requires fresh evidence for each active side", async () => {
+  const pending = verifiedFixture();
+  equal(
+    (await pending.deliver({ ...pending.event, environment: undefined }))
+      .status,
+    503,
+  );
+  deepEqual(pending.batches, []);
+
+  const verified = verifiedFixture();
+  verified.identities.set(customerA, { state: "retired" });
+  equal(
+    (await verified.deliver({ ...verified.event, environment: undefined }))
+      .status,
+    200,
+  );
+  equal(verified.attempted.length, 1);
+  equal(verified.batches[0][0].owner_id, ownerB);
+});
+
+Deno.test("a due-owner sweep expires App Store access, retains grace or linked Stripe, and skips retired owners", async () => {
+  for (
+    const control of [
+      "expired",
+      "grace",
+      "renewed",
+      "stripe",
+      "retired",
+      "provider failure",
+    ]
+  ) {
+    const f = verifiedFixture();
+    const due = "2026-10-21T11:55:00.000Z";
+    const subscription = {
+      user_id: ownerA,
+      store: control === "stripe" ? "stripe" : "app_store",
+      current_period_end: control === "stripe" ? end : due,
+      revenuecat_current_period_end: due,
+      revenuecat_plan: "premium",
+      revenuecat_last_event_type: "RENEWAL",
+      ...(control === "stripe" ? { stripe_subscription_id: "sub_bound" } : {}),
+    };
+    f.source.subscription = { data: subscription, updated_date: revision };
+    const safe = control === "retired" ? { state: "retired" } : f.source;
+    f.providers.set(
+      customerA,
+      control === "provider failure"
+        ? Response.json(null, { status: 503 })
+        : verifiedSnapshot(customerA, true, {
+          expires_date: control === "renewed" ? end : due,
+          grace_period_expires_date: control === "grace" ? end : null,
+        }),
+    );
+    f.providers.set(
+      "sub_bound",
+      Response.json({
+        id: "sub_bound",
+        livemode: false,
+        metadata: { user_id: a, execute_owner_uuid: ownerA },
+        customer: "cus_bound",
+        items: { data: [{ price: { id: "price_bound" } }] },
+        status: "active",
+        current_period_start: 1792616400,
+        current_period_end: 1792702800,
+      }),
+    );
+    const run = reconcileOverdueSandboxOwner(
+      f.deps,
+      f.verified,
+      safe,
+      Date.parse(now),
+    );
+    if (control === "provider failure") {
+      let failed = false;
+      try {
+        await run;
+      } catch {
+        failed = true;
+      }
+      equal(failed, true);
+      deepEqual(f.batches, []);
+      continue;
+    }
+    equal(await run, control !== "retired");
+    if (control === "retired") {
+      deepEqual(f.attempted, []);
+      continue;
+    }
+    const change = f.batches[0][0];
+    equal(change.expected_updated_date, revision);
+    equal(change.data.plan, control === "expired" ? "free" : "premium");
+    equal(change.data.revenuecat_last_event_type, undefined);
+  }
 });

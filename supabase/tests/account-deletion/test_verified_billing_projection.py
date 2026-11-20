@@ -114,6 +114,30 @@ def test_verified_billing(db):
     assert subject(db, owner=DELETION_FIRST)["subscription"]["data"]["plan"] == "premium"
     print("PASS atomic multi-owner projections and stale revision refusal")
 
+
+    due_file = HERE / "sandbox-expiry-reconciliation.sql"
+    db.file(due_file)
+    inventory = f"public.list_due_verified_sandbox_app_store_owners('{PROJECT}')"
+    expect_failure(lambda: db.sql("set role authenticated; select " + inventory), "42501")
+    assert db.sql("select count(*) from " + inventory) == "0"
+    current = subject(db, owner=DELETION_FIRST)["subscription"]
+    preserved_stripe = change(
+        DELETION_FIRST, second, current["updated_date"], store="stripe",
+        revenuecat_environment="SANDBOX", revenuecat_plan="premium",
+        revenuecat_current_period_end="2001-01-01T00:00:00Z",
+        current_period_end="2099-01-01T00:00:00Z",
+    )
+    assert request(db, apply([preserved_stripe])) == "1"
+    assert db.sql("select value->>'owner_id' from " + inventory + " as due(value)") == DELETION_FIRST
+    current = subject(db, owner=DELETION_FIRST)["subscription"]
+    refreshed = change(
+        DELETION_FIRST, second, current["updated_date"], revenuecat_environment=None,
+        revenuecat_plan=None, revenuecat_current_period_end=None,
+    )
+    assert request(db, apply([refreshed])) == "1"
+    assert db.sql("select count(*) from " + inventory) == "0"
+    db.sql("drop function public.list_due_verified_sandbox_app_store_owners(text)")
+    print("PASS service-only due-owner inventory uses the App Store deadline for mixed billing")
     # A provider read can finish before closure, while its transaction starts
     # afterwards. Closure uses the exact UUID-backed row as its snapshot.
     snapshot = db.sql(f"""select jsonb_build_array(jsonb_build_object(

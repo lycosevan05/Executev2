@@ -18,6 +18,7 @@ drop policy "verified billing update is service owned" on public.user_subscripti
 drop policy "verified billing delete is service owned" on public.user_subscriptions;
 drop function public.check_staged_app_store_account_deletion(text,uuid,text,jsonb,boolean);
 drop function public.apply_verified_billing_projections(text,text,jsonb);
+drop function if exists public.list_due_verified_sandbox_app_store_owners(text);
 drop function public.read_verified_billing_subject(text,text,uuid);
 drop function public.activate_verified_billing_owner(text,uuid,text);
 drop function execute_revenuecat_private.reject_cohort_legacy_write();

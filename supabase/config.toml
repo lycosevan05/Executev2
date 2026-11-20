@@ -29,3 +29,6 @@ verify_jwt = true
 
 [functions.revenuecatIdentity]
 verify_jwt = true
+
+[functions.revenuecatExpiryReconcile]
+verify_jwt = false
