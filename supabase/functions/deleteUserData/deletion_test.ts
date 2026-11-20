@@ -893,6 +893,43 @@ Deno.test("staged billing fence requires a positive RPC and forwards the exact r
   deepEqual(fixture.events, []);
 });
 
+Deno.test("App Store ownership preflight rejects before uploads close", async () => {
+  const fixture = new Fixture();
+  const subscription = sub("app-store", user.id, { store: "app_store" });
+  fixture.tables.set("user_subscriptions", [subscription]);
+  const store = createDeletionStore(
+    fixture,
+    "uploads",
+    async () => ({ error: null, data: 0 }),
+    {
+      requireBillingFenceForSubscriptions: true,
+      verifyBillingProjection: async (account, snapshots) => {
+        deepEqual(account, user);
+        deepEqual(snapshots, [subscription]);
+        return { error: null, data: false };
+      },
+      closeBillingProjection: async () => {
+        throw new Error("Billing closed after failed preflight");
+      },
+    },
+  );
+  await rejects(
+    () =>
+      deleteAccount(
+        user,
+        ["user_subscriptions"],
+        store,
+        new BillingFixture().billing(),
+        async () => {
+          throw new Error("Uploads closed after failed preflight");
+        },
+      ),
+    /App Store billing ownership could not be confirmed/,
+  );
+  deepEqual(fixture.listings, []);
+  deepEqual(fixture.events, []);
+});
+
 Deno.test("staged Stripe cancellation requires trusted immutable UUID ownership", async () => {
   for (
     const [metadata, allowed] of [

@@ -130,6 +130,50 @@ def test_verified_billing(db):
     assert subject(db, owner=DELETION_FIRST)["subscription"]["data"]["plan"] == "premium"
     print("PASS deletion fence invalidates an in-flight write and retains unrelated access")
 
+    def app_store_deletion(snapshot, *, close_fence=False, project=PROJECT):
+        snapshot_sql = json.dumps(snapshot).replace("'", "''")
+        return (
+            f"public.check_staged_app_store_account_deletion('{project}', '{DELETION_FIRST}', "
+            f"'{EMAILS[DELETION_FIRST]}', '{snapshot_sql}'::jsonb, {str(close_fence).lower()})"
+        )
+
+    def app_store_rows():
+        return json.loads(db.sql(f"""select jsonb_agg(jsonb_build_object(
+          'id', s.id, 'owner_id', s.owner_id, 'owner_email', s.owner_email,
+          'created_by', s.created_by, 'user_email', s.user_email, 'data', s.data
+        )) from public.user_subscriptions s where s.owner_id='{DELETION_FIRST}'"""))
+
+    snapshot = app_store_rows()
+    assert request(db, app_store_deletion(snapshot)) == "f"
+    current = subject(db, owner=DELETION_FIRST)["subscription"]
+    mixed = change(DELETION_FIRST, second, current["updated_date"],
+                   revenuecat_environment="SANDBOX", stripe_customer_id="cus_fixture")
+    assert request(db, apply([mixed])) == "1"
+    assert request(db, app_store_deletion(app_store_rows(), close_fence=True)) == "f"
+    current = subject(db, owner=DELETION_FIRST)["subscription"]
+    clean = change(DELETION_FIRST, second, current["updated_date"],
+                   revenuecat_environment="SANDBOX", stripe_customer_id=None)
+    assert request(db, apply([clean])) == "1"
+    snapshot = app_store_rows()
+    assert request(db, app_store_deletion(snapshot, project="wrong-project")) == "f"
+    expect_failure(lambda: db.sql("set role authenticated; select " + app_store_deletion(snapshot)), "42501")
+    assert request(db, app_store_deletion(snapshot)) == "t"
+    assert subject(db, identifier=second)["state"] == "active"
+    expect_failure(
+        lambda: request(db, app_store_deletion([{**snapshot[0], "id": UNRELATED}], close_fence=True)),
+        "40001",
+    )
+    assert subject(db, identifier=second)["state"] == "active"
+    current = subject(db, owner=DELETION_FIRST)["subscription"]
+    overlap(db, app_store_deletion(snapshot, close_fence=True),
+            apply([change(DELETION_FIRST, second, current["updated_date"])]), "40001")
+    assert subject(db, identifier=second) == {"state": "retired"}
+    assert request(db, app_store_deletion(snapshot, close_fence=True)) == "t"
+    db.sql(f"delete from public.user_subscriptions where owner_id='{DELETION_FIRST}'")
+    assert request(db, app_store_deletion([], close_fence=True)) == "t"
+    expect_failure(lambda: request(db, apply([clean])), "40001")
+    print("PASS exact App Store Sandbox admission, atomic retirement, stale writer refusal and partial retry")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

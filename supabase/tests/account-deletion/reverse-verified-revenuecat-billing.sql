@@ -16,6 +16,7 @@ drop trigger reject_cohort_legacy_billing_write on public.user_subscriptions;
 drop policy "verified billing insert is service owned" on public.user_subscriptions;
 drop policy "verified billing update is service owned" on public.user_subscriptions;
 drop policy "verified billing delete is service owned" on public.user_subscriptions;
+drop function public.check_staged_app_store_account_deletion(text,uuid,text,jsonb,boolean);
 drop function public.apply_verified_billing_projections(text,text,jsonb);
 drop function public.read_verified_billing_subject(text,text,uuid);
 drop function public.activate_verified_billing_owner(text,uuid,text);

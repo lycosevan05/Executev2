@@ -349,7 +349,7 @@ RevenueCat documents this as an App Store event in its
 | --- | --- | --- |
 | Cancellation followed by expiry | Passed: actual cancellation and EXPIRATION delivery200, one B free/canceled row and refreshed device gates | Complete for this run; passive immediate revocation without refresh is not established |
 | Refund/revocation | Expired provider snapshot fixture revokes; no live pass | Supported Sandbox refund with actual provider entitlement, event/delivery, backend and device checks |
-| Refund reversal | Fix deployed as v8; 20 local tests pass; source/auth/configured TEST smoke verified | Supported real Sandbox refund/reversal integration acceptance |
+| Refund reversal | Fix deployed as v8; 20 local tests pass; source/auth/configured TEST smoke verified | Release owner accepted fixture coverage for reversal on Nov 19; live Sandbox refund passed in E66 |
 | Billing retry/grace | Current grace and expired grace fixtures behave as expected; Swift grace-resolution unit coverage exists | Actual Apple Sandbox billing-failure/grace transition, recovery or grace expiry, matching server/device state |
 | Delayed/repeated events | Existing idempotency/current-truth fixtures; repeated same-owner physical restore passed | Controlled integration delivery without replaying unrelated production history |
 
@@ -567,3 +567,11 @@ elapsed current period projects Free. The E73 native guard continues to
 apply on refresh for an elapsed App Store projection. The historical
 physical receipt probe remains pending.
 [RevenueCat delivery and retry behavior](https://www.revenuecat.com/docs/integrations/webhooks)
+
+## E75 refund reversal acceptance — 2026-11-19
+
+The release owner approved using the staged reconciliation fixtures for
+Apple refund reversal. The fixtures cover restoring eligibility on fresh
+provider evidence after a reversal. No live Apple reversal was observed.
+This resolves the refund-reversal acceptance item. The missing Sandbox
+expiration delivery and signed renewal history remain open.

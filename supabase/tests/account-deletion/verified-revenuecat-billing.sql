@@ -254,6 +254,71 @@ end;
 $$;
 
 revoke all on function execute_revenuecat_private.reject_cohort_legacy_write() from public, anon, authenticated, service_role;
+-- This service-only rehearsal admits a verified App Store Sandbox account.
+-- Fence closure and ledger retirement commit together so retries see a stable state.
+create function public.check_staged_app_store_account_deletion(
+  p_project text, p_owner_id uuid, p_email text, p_rows jsonb, p_close boolean
+)
+returns boolean
+language plpgsql security definer
+set search_path = pg_catalog, pg_temp
+set lock_timeout = '5s'
+as $$
+declare
+  subject jsonb;
+  row_data jsonb;
+begin
+  if nullif(p_project, '') is null or p_close is null
+     or jsonb_typeof(p_rows) is distinct from 'array'
+     or jsonb_array_length(p_rows) > 1 then
+    return false;
+  end if;
+  perform 1 from auth.users where id = p_owner_id and email = p_email for share;
+  if not found then return false; end if;
+  -- Match the writer's Auth-first lock order. The close step rechecks everything
+  -- after the upload drain, and the shared fence checks the full row snapshot.
+  lock table public.user_subscriptions in exclusive mode;
+  subject := public.read_verified_billing_subject(p_project, null, p_owner_id);
+  row_data := p_rows->0->'data';
+  if jsonb_array_length(p_rows) = 1 and (
+    p_rows->0->>'owner_id' is distinct from p_owner_id::text
+    or row_data->>'user_id' is distinct from p_owner_id::text
+    or row_data->>'verified_billing_project' is distinct from p_project
+    or row_data->>'verified_billing_environment' is distinct from 'SANDBOX'
+    or row_data->>'revenuecat_environment' is distinct from 'SANDBOX'
+    or row_data->>'store' is distinct from 'app_store'
+    or exists (select from jsonb_each(row_data) entry where left(entry.key, 7) = 'stripe_'
+      and entry.value not in ('null'::jsonb, '[]'::jsonb))
+  ) then
+    return false;
+  end if;
+  if subject->>'state' = 'retired' then
+    if execute_revenuecat_private.billing_owner_closed(p_owner_id) is distinct from true then
+      return false;
+    end if;
+  elsif subject->>'state' is distinct from 'active'
+     or subject->>'owner_id' is distinct from p_owner_id::text
+     or subject->>'environment' is distinct from 'SANDBOX'
+     or jsonb_array_length(p_rows) <> 1
+     or subject->'subscription'->'data' is distinct from row_data then
+    return false;
+  end if;
+  if not p_close then return true; end if;
+  if public.close_account_billing_projection(p_owner_id, p_email, p_rows) is distinct from true then
+    raise exception 'Verified App Store deletion fence could not be closed' using errcode = '55000';
+  end if;
+  if public.retire_revenuecat_identity(p_project, p_owner_id) is distinct from true then
+    raise exception 'Verified App Store billing identity could not be retired' using errcode = '55000';
+  end if;
+  return true;
+end;
+$$;
+
+revoke all on function public.check_staged_app_store_account_deletion(text,uuid,text,jsonb,boolean)
+  from public, anon, authenticated, service_role;
+grant execute on function public.check_staged_app_store_account_deletion(text,uuid,text,jsonb,boolean)
+  to service_role;
+
 revoke all on function public.activate_verified_billing_owner(text,uuid,text),
   public.read_verified_billing_subject(text,text,uuid),
   public.apply_verified_billing_projections(text,text,jsonb) from public, anon, authenticated, service_role;

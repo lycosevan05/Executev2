@@ -188,6 +188,59 @@ class HostedFixture:
         self.readback_storage(witness, missing=True, name="cutover")
         self.readback(witness)
 
+    def billing_rpc(self, name, payload, expected=200):
+        return self.json("POST", f"/rest/v1/rpc/{name}", expected, admin=True, payload=payload)
+
+    def seed_app_store_billing(self, project, save):
+        target = self.state["actors"]["target"]
+        self.auth_user(target)
+        if self.state.get("app_store_billing"):
+            raise Stop("The App Store projection is already recorded.")
+        scope = {"p_project": project, "p_owner_id": target["id"]}
+        customer = canonical_uuid(self.billing_rpc("ensure_revenuecat_customer_id", scope))
+        environment = "SANDBOX"
+        if self.billing_rpc("activate_verified_billing_owner", {**scope, "p_environment": environment}) is not True:
+            raise Stop("The disposable verified billing owner was not activated.")
+        billing = {
+            "p_project": project, "p_environment": environment,
+            "p_changes": [{
+                "owner_id": target["id"], "customer_id": customer,
+                "expected_email": target["email"], "expected_updated_date": None,
+                "data": {
+                    "store": "app_store", "plan": "premium", "status": "active",
+                    "revenuecat_environment": environment,
+                },
+            }],
+        }
+        if self.billing_rpc("apply_verified_billing_projections", billing) != 1:
+            raise Stop("The disposable App Store fixture projection was not written.")
+        subject = self.billing_rpc("read_verified_billing_subject", scope)
+        if (subject.get("owner_id") != target["id"] or subject.get("customer_id") != customer
+                or subject.get("state") != "active"
+                or subject.get("subscription", {}).get("data", {}).get("plan") != "premium"):
+            raise Stop("The projected App Store fixture could not be independently verified.")
+        billing["p_changes"][0]["expected_updated_date"] = subject["subscription"]["updated_date"]
+        self.state["app_store_billing"] = billing
+        save()
+
+    def check_app_store_billing_deleted(self):
+        target = self.state["actors"]["target"]
+        billing = self.state.get("app_store_billing")
+        if not billing or billing["p_changes"][0]["owner_id"] != target["id"]:
+            raise Stop("An exact recorded App Store fixture is required.")
+        project = billing["p_project"]
+        customer = billing["p_changes"][0]["customer_id"]
+        for identity in ({"p_identifier": customer}, {"p_owner_id": target["id"]}):
+            subject = self.billing_rpc("read_verified_billing_subject", {"p_project": project, **identity})
+            if subject != {"state": "retired"}:
+                raise Stop("The billing ledger did not retain its exact retirement marker.")
+        error = self.billing_rpc("apply_verified_billing_projections", billing, (400, 409, 500))
+        if error.get("code") != "40001":
+            raise Stop("The stale billing write was not rejected by the ownership fence.")
+        query = urlencode({"owner_id": f"eq.{target['id']}", "select": "id"})
+        if self.json("GET", "/rest/v1/user_subscriptions?" + query, 200, admin=True) != []:
+            raise Stop("A subscription projection survived or was recreated after deletion.")
+
     def hold(self, save):
         target = self.state["actors"]["target"]
         witness = self.state["actors"]["witness"]
@@ -212,6 +265,13 @@ class HostedFixture:
         self.request("POST", STAGED_ROUTE, (500,), token=target_token, payload={})
         self.readback(target)
         self.readback(witness)
+        billing = self.state.get("app_store_billing")
+        if billing:
+            subject = self.billing_rpc("read_verified_billing_subject", {
+                "p_project": billing["p_project"], "p_owner_id": target["id"],
+            })
+            if subject.get("state") != "active":
+                raise Stop("A held upload closed the billing identity prematurely.")
 
     def exercise(self, save):
         target = self.state["actors"]["target"]
@@ -342,9 +402,11 @@ def private_state(path, origin, prepare):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("prepare", "seed", "check-off", "check-cutover", "hold", "rehearse",
-                                          "verify-committed", "readback-sql", "check-withdrawn", "check-restored", "cleanup"))
+                                          "verify-committed", "seed-app-store-billing", "check-app-store-billing-deleted", "readback-sql", "check-withdrawn", "check-restored", "cleanup"))
     parser.add_argument("--approved-origin", required=True)
     parser.add_argument("--state", required=True, type=Path)
+    parser.add_argument("--app-store-fixture-project",
+                        help="The synthetic, local ledger project label for App Store fixture seeding.")
     parser.add_argument("--writers-isolated", action="store_true",
                         help="Confirm the project has no issued capabilities or untracked writers.")
     parser.add_argument("--include-guard-state", action="store_true",
@@ -354,6 +416,11 @@ def main():
     args = parser.parse_args()
     if args.staged_withdrawn and args.phase not in ("check-restored", "cleanup"):
         parser.error("--staged-withdrawn applies only to the post-rollback phases")
+    if args.phase == "seed-app-store-billing":
+        if not re.fullmatch(r"w09-fixture-[a-z0-9-]{1,30}", args.app_store_fixture_project or ""):
+            parser.error("Use a synthetic w09-fixture-* ledger project label.")
+    elif args.app_store_fixture_project:
+        parser.error("--app-store-fixture-project applies only to seed-app-store-billing")
     origin = args.approved_origin
     if (not re.fullmatch(r"https://[a-z]{20}\.supabase\.co", origin)
             or origin in RESTRICTED_PROJECTS
@@ -377,6 +444,10 @@ def main():
     elif args.phase == "seed":
         for actor in state["actors"].values():
             fixture.seed(actor)
+    elif args.phase == "seed-app-store-billing":
+        fixture.seed_app_store_billing(args.app_store_fixture_project, save)
+    elif args.phase == "check-app-store-billing-deleted":
+        fixture.check_app_store_billing_deleted()
     elif args.phase == "check-off":
         fixture.check_off()
     elif args.phase == "check-cutover":

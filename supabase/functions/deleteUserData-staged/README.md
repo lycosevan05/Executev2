@@ -242,6 +242,34 @@ python3 supabase/tests/account-deletion/run_hosted_rehearsal.py "$phase" \
    guard flag to verify surviving data, then run `cleanup --staged-withdrawn`
    and independently read back absence.
 
+### App Store-linked fixture
+
+The staged handler can test deletion for one disposable App Store Sandbox
+owner. Install the subscription retirement, billing fence, identity ledger,
+and verified billing SQL after the upload guards. Use the same exact project
+URL and disposable Auth UUID checks as the standard rehearsal. Set
+`EXECUTE_STAGED_APP_STORE_LINKED_DELETION=1` and use the same synthetic
+`w09-fixture-*` label in both `EXECUTE_VERIFIED_BILLING_PROJECT` and the
+runner's `seed-app-store-billing --app-store-fixture-project` phase. Keep the
+Stripe-linked mode disabled and omit external billing writers. Seed the
+projection after `seed` and before `hold`.
+
+The service checks the exact UUID-backed App Store Sandbox projection before
+closing uploads. It rejects Stripe fields, foreign projects, and legacy or
+unverified owners. After uploads drain, one database transaction rechecks
+the snapshot, closes the projection fence, and retires the RevenueCat ledger
+identity. A retry can finish after the projection row is removed. App Store
+subscription management stays with Apple. This rehearsal uses no purchase
+or Apple or RevenueCat API calls.
+
+After `rehearse`, run `check-app-store-billing-deleted`. It verifies retirement
+by owner and customer, rejects a stale projection write, and reads the
+subscription table independently. Verify the clean-install schema reversal
+before seeding this fixture. The populated verified-billing reversal
+intentionally refuses an enrolled cohort. Keep that fence and its retirement
+markers if the isolated project will still receive traffic, and withdraw the
+staged handler before returning the project to a paused state.
+
 The runner verifies Auth markers, UUIDs and paths before acting on its fixtures.
 Exact-object absence requires a fresh `cacheNonce` download and an empty Storage
 listing. Previously fetched URLs can still serve cached bytes after origin

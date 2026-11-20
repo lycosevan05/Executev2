@@ -95,6 +95,10 @@ export type BillingProjectionSnapshot = {
 type BillingFenceOptions = {
   requireBillingFenceForSubscriptions?: boolean;
   requireStripeOnly?: boolean;
+  verifyBillingProjection?: (
+    user: DeletionUser,
+    snapshots: BillingProjectionSnapshot[],
+  ) => PromiseLike<Result>;
   closeBillingProjection?: (
     user: DeletionUser,
     snapshots: BillingProjectionSnapshot[],
@@ -367,17 +371,28 @@ export function createDeletionStore(
       const subscriptionIds = subscriptionRows.flatMap(({ subscriptionIds }) =>
         subscriptionIds
       );
+      const projectionRows = subscriptionRows.map(({ billingProjection }) => {
+        if (!billingProjection) {
+          throw new Error("Billing projection inventory was incomplete.");
+        }
+        return billingProjection;
+      });
+      if (billingFence.verifyBillingProjection) {
+        const result = await billingFence.verifyBillingProjection(
+          user,
+          projectionRows,
+        );
+        if (result.error || result.data !== true) {
+          throw new Error(
+            "Verified App Store billing ownership could not be confirmed.",
+          );
+        }
+      }
       return {
         subscriptionIds: [...new Set(subscriptionIds)],
         ...(closeProjection && {
           async closeBillingProjection() {
-            const rows = subscriptionRows.map(({ billingProjection }) => {
-              if (!billingProjection) {
-                throw new Error("Billing projection inventory was incomplete.");
-              }
-              return billingProjection;
-            });
-            const result = await closeProjection(user, rows);
+            const result = await closeProjection(user, projectionRows);
             if (result.error || result.data !== true) {
               throw new Error(
                 "Billing projection fence could not be confirmed.",

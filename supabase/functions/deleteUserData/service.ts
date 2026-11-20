@@ -18,6 +18,7 @@ export async function removeAccount(
     allowStripe: boolean;
     requireUploadDrain?: boolean;
     enableStagedBilling?: boolean;
+    stagedAppStoreProject?: string;
     revokeAppleAuthorization?: () => Promise<
       AppleRevocationOutcome | undefined
     >;
@@ -27,11 +28,18 @@ export async function removeAccount(
   if (options.requireUploadDrain && uploadsBucket !== "uploads") {
     throw new Error("The configured bucket has no guarded upload cutover.");
   }
-  const retireSubscriptions =
+  const appStoreProject = options.stagedAppStoreProject;
+  if (
+    appStoreProject !== undefined &&
+    (!appStoreProject || options.allowStripe || options.enableStagedBilling)
+  ) {
+    throw new Error("Invalid staged App Store deletion configuration.");
+  }
+  const retireSubscriptions = appStoreProject !== undefined ||
     Deno.env.get("EXECUTE_STAGED_STRIPE_RETIREMENT") ===
       "1";
   if (
-    options.enableStagedBilling &&
+    (options.enableStagedBilling || appStoreProject) &&
     (!options.requireUploadDrain || !retireSubscriptions)
   ) {
     throw new Error("The staged billing deletion safeguards are unavailable.");
@@ -76,7 +84,26 @@ export async function removeAccount(
         requireBillingFenceForSubscriptions:
           options.requireUploadDrain === true,
         requireStripeOnly: options.enableStagedBilling === true,
-        closeBillingProjection: options.enableStagedBilling
+        ...(appStoreProject && {
+          verifyBillingProjection: (account, rows) =>
+            service.rpc("check_staged_app_store_account_deletion", {
+              p_project: appStoreProject,
+              p_owner_id: account.id,
+              p_email: account.email ?? null,
+              p_rows: rows,
+              p_close: false,
+            }),
+        }),
+        closeBillingProjection: appStoreProject
+          ? (account, rows) =>
+            service.rpc("check_staged_app_store_account_deletion", {
+              p_project: appStoreProject,
+              p_owner_id: account.id,
+              p_email: account.email ?? null,
+              p_rows: rows,
+              p_close: true,
+            })
+          : options.enableStagedBilling
           ? (account, rows) =>
             service.rpc("close_account_billing_projection", {
               p_owner_id: account.id,

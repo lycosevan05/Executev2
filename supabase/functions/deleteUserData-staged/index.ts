@@ -26,6 +26,10 @@ Deno.serve(createStagedDeletionHandler({
       enableStagedBilling:
         Deno.env.get("EXECUTE_STAGED_BILLING_LINKED_DELETION") ===
           "1",
+      stagedAppStoreProject:
+        Deno.env.get("EXECUTE_STAGED_APP_STORE_LINKED_DELETION") === "1"
+          ? Deno.env.get("EXECUTE_VERIFIED_BILLING_PROJECT") ?? ""
+          : undefined,
       revokeAppleAuthorization: () => {
         if (settings) {
           return revokeCapturedAppleAuthorization(
