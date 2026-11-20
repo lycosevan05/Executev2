@@ -7,6 +7,8 @@ import {
 export interface RevenueCatEvent {
   id?: string;
   type: string;
+  app_id?: string;
+  environment?: string;
   app_user_id?: string;
   original_app_user_id?: string;
   aliases?: string[];
@@ -24,6 +26,24 @@ export interface SubscriptionChange {
   expected_updated_date: string | null;
   data: Data;
 }
+export type BillingEnvironment = "SANDBOX" | "PRODUCTION";
+
+export interface VerifiedSubscriptionChange {
+  owner_id: string;
+  customer_id: string;
+  expected_email: string | null;
+  expected_updated_date: string | null;
+  data: Data;
+}
+
+export interface VerifiedReconciliation {
+  appId: string;
+  environment: BillingEnvironment;
+  products: ReadonlySet<string>;
+  resolve: (identifier: string) => Promise<unknown>;
+  apply: (changes: VerifiedSubscriptionChange[]) => Promise<void>;
+}
+
 export interface Dependencies {
   webhookSecret?: string;
   revenueCatKey?: string;
@@ -31,6 +51,8 @@ export interface Dependencies {
   fetch: typeof fetch;
   read: (userId: string) => Promise<SubscriptionRow | null>;
   apply: (changes: SubscriptionChange[]) => Promise<void>;
+  // Absent uses the legacy integration. Null denotes incomplete verified configuration.
+  verified?: VerifiedReconciliation | null;
 }
 
 const handledTypes = new Set([
@@ -101,6 +123,7 @@ async function getJson(
   url: string,
   key: string,
   extra: Record<string, string> = {},
+  acceptCreatedCustomer = true,
 ): Promise<Data> {
   const response = await deps.fetch(url, {
     headers: {
@@ -110,7 +133,7 @@ async function getJson(
     },
     signal: AbortSignal.timeout(8000),
   });
-  const acceptedCreatedCustomer =
+  const acceptedCreatedCustomer = acceptCreatedCustomer &&
     url.startsWith("https://api.revenuecat.com/v1/subscribers/") &&
     response.status === 201;
   if (response.status !== 200 && !acceptedCreatedCustomer) {
@@ -197,41 +220,258 @@ async function changeFor(
     deps.revenueCatKey!,
   );
   let projection = revenueCatProjection(body, userId);
-  const stripeIDs = knownStripeSubscriptionIDs(row?.data ?? {});
-  if (stripeIDs.length) {
-    if (!deps.stripeKey) throw new Error("Stripe reconciliation unavailable");
-    const snapshots = await Promise.all(stripeIDs.map(async (id) => {
-      const stripe = await getJson(
-        deps,
-        `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(id)}`,
-        deps.stripeKey!,
-        { "Stripe-Version": "2024-04-10" },
-      );
-      if (stripe.id !== id) throw new Error("Invalid Stripe subscription");
-      if (stripe.metadata != null) {
-        const metadata = object(stripe.metadata);
-        if (metadata.user_id != null && metadata.user_id !== userId) {
-          throw new Error("Stripe subscription identity mismatch");
-        }
+  projection = await mergeCurrentStripe(deps, row, projection, (snapshot) => {
+    if (snapshot.metadata != null) {
+      const metadata = object(snapshot.metadata);
+      if (metadata.user_id != null && metadata.user_id !== userId) {
+        throw new Error("Stripe subscription identity mismatch");
       }
-      return stripe;
-    }));
-    const stripe = projectStripeSubscriptions(
-      snapshots,
-      row?.data ?? {},
-      projection.revenuecat_observed_at as string,
-    );
-    projection = mergeProviderProjections(projection, stripe);
-  }
+    }
+  });
   return {
     user_id: userId,
     expected_updated_date: row?.updated_date ?? null,
-    data: {
-      ...projection,
-      revenuecat_last_event_id: event.id ?? null,
-      revenuecat_last_event_type: event.type,
-    },
+    data: eventProjection(projection, event),
   };
+}
+
+async function mergeCurrentStripe(
+  deps: Dependencies,
+  row: SubscriptionRow | null,
+  projection: Data,
+  checkOwner: (snapshot: Data) => void,
+): Promise<Data> {
+  const stripeIDs = knownStripeSubscriptionIDs(row?.data ?? {});
+  if (!stripeIDs.length) return projection;
+  if (!deps.stripeKey) throw new Error("Stripe reconciliation unavailable");
+  const snapshots = await Promise.all(stripeIDs.map(async (id) => {
+    const stripe = await getJson(
+      deps,
+      `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(id)}`,
+      deps.stripeKey!,
+      { "Stripe-Version": "2024-04-10" },
+    );
+    if (stripe.id !== id) throw new Error("Invalid Stripe subscription");
+    checkOwner(stripe);
+    return stripe;
+  }));
+  return mergeProviderProjections(
+    projection,
+    projectStripeSubscriptions(
+      snapshots,
+      row?.data ?? {},
+      projection.revenuecat_observed_at as string,
+    ),
+  );
+}
+
+function eventProjection(projection: Data, event: RevenueCatEvent): Data {
+  return {
+    ...projection,
+    revenuecat_last_event_id: event.id ?? null,
+    revenuecat_last_event_type: event.type,
+  };
+}
+
+interface ActiveSubject {
+  state: "active";
+  owner_id: string;
+  customer_id: string;
+  email: string | null;
+  subscription: SubscriptionRow | null;
+}
+
+type VerifiedSubject = ActiveSubject | {
+  state: "retired" | "blocked" | "unresolved";
+};
+
+const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const anonymousId =
+  /^\$RCAnonymousID:(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/;
+
+function providerId(value: unknown): string {
+  if (
+    typeof value !== "string" || !value.length || value.length > 100 ||
+    value !== value.trim() || /[\p{Cc}/]/u.test(value)
+  ) {
+    throw new Error("Invalid verified customer ID");
+  }
+  return value;
+}
+
+function verifiedGroups(event: RevenueCatEvent): string[][] {
+  const groups = event.type === "TRANSFER"
+    ? [ids(event.transferred_from), ids(event.transferred_to)]
+    : [[
+      ...[event.app_user_id, event.original_app_user_id].filter(
+        (id) => id !== undefined,
+      ),
+      ...(event.aliases === undefined ? [] : ids(event.aliases)),
+    ]];
+  const normalized = groups.map((group) =>
+    [...new Set(group.map(providerId))].sort()
+  );
+  if (
+    normalized.some((group) => !group.length) ||
+    new Set(normalized.flat()).size > 24
+  ) {
+    throw new Error("Invalid verified customer group");
+  }
+  return normalized;
+}
+
+function readVerifiedSubject(
+  value: unknown,
+  expectedEnvironment: BillingEnvironment,
+): VerifiedSubject {
+  const subject = object(value);
+  if (
+    subject.state === "retired" || subject.state === "blocked" ||
+    subject.state === "unresolved"
+  ) return { state: subject.state };
+  const { state, owner_id, customer_id, email } = subject;
+  if (
+    state !== "active" || subject.environment !== expectedEnvironment ||
+    typeof owner_id !== "string" || !uuid.test(owner_id) ||
+    typeof customer_id !== "string" || !uuid.test(customer_id) ||
+    owner_id === customer_id || (email != null && typeof email !== "string")
+  ) throw new Error("Invalid verified customer binding");
+  let subscription: SubscriptionRow | null = null;
+  if (subject.subscription !== null) {
+    const row = object(subject.subscription);
+    const data = object(row.data);
+    if (
+      typeof row.updated_date !== "string" ||
+      !Number.isFinite(Date.parse(row.updated_date)) ||
+      data.user_id !== owner_id
+    ) throw new Error("Invalid verified subscription readback");
+    subscription = { data, updated_date: row.updated_date };
+  }
+  return { state, owner_id, customer_id, email: email ?? null, subscription };
+}
+
+function sameBinding(first: ActiveSubject, second: ActiveSubject): boolean {
+  return first.owner_id === second.owner_id &&
+    first.customer_id === second.customer_id &&
+    first.email === second.email &&
+    first.subscription?.updated_date === second.subscription?.updated_date;
+}
+
+async function reconcileVerified(
+  deps: Dependencies,
+  verified: VerifiedReconciliation,
+  event: RevenueCatEvent,
+): Promise<boolean> {
+  if (
+    event.app_id !== verified.appId ||
+    event.environment !== verified.environment
+  ) throw new Error("Webhook app or environment is unconfirmed");
+  if (!deps.revenueCatKey) {
+    throw new Error("Customer reconciliation is unavailable");
+  }
+
+  // Reuse exact lookups across transfer sides and the provider's returned original ID.
+  const resolutions = new Map<string, Promise<VerifiedSubject>>();
+  const resolve = (identifier: string) => {
+    const recorded = resolutions.get(identifier);
+    if (recorded) return recorded;
+    const pending = verified.resolve(identifier).then((value) =>
+      readVerifiedSubject(value, verified.environment)
+    );
+    resolutions.set(identifier, pending);
+    return pending;
+  };
+
+  const owners = new Map<string, ActiveSubject>();
+  for (const group of verifiedGroups(event)) {
+    const resolved = await Promise.all(group.map(async (identifier) => ({
+      identifier,
+      subject: await resolve(identifier),
+    })));
+    let active: ActiveSubject | undefined;
+    let retired = false;
+    for (const { identifier, subject } of resolved) {
+      if (subject.state === "active") {
+        if (active && !sameBinding(subject, active)) {
+          throw new Error("Customer group spans conflicting bindings");
+        }
+        active = subject;
+      } else if (subject.state === "retired") {
+        retired = true;
+      } else if (
+        subject.state !== "unresolved" || !anonymousId.test(identifier)
+      ) {
+        throw new Error("Customer group ownership is unconfirmed");
+      }
+    }
+    if (active) {
+      const previous = owners.get(active.owner_id);
+      if (retired || (previous && !sameBinding(active, previous))) {
+        throw new Error("Customer group spans conflicting bindings");
+      }
+      owners.set(active.owner_id, active);
+    } else if (!retired) {
+      throw new Error("No verified customer in group");
+    }
+  }
+  if (!owners.size) return false;
+
+  const changes = await Promise.all(
+    [...owners.values()].map(async (subject) => {
+      const body = await getJson(
+        deps,
+        `https://api.revenuecat.com/v1/subscribers/${
+          encodeURIComponent(subject.customer_id)
+        }`,
+        deps.revenueCatKey!,
+        {},
+        false,
+      );
+      const original = providerId(object(body.subscriber).original_app_user_id);
+      if (original !== subject.customer_id) {
+        const identity = await resolve(original);
+        if (
+          !(identity.state === "active" && sameBinding(subject, identity)) &&
+          !(identity.state === "unresolved" && anonymousId.test(original))
+        ) throw new Error("RevenueCat subscriber ownership mismatch");
+      }
+      let projection = revenueCatProjection(body, subject.customer_id);
+      const product = projection.revenuecat_product_id;
+      if (
+        product !== null && (typeof product !== "string" ||
+          !verified.products.has(product) || projection.store !== "app_store" ||
+          (projection.revenuecat_plan === "premium" &&
+            projection.revenuecat_environment !== verified.environment) ||
+          (projection.revenuecat_environment !== null &&
+            projection.revenuecat_environment !== verified.environment))
+      ) throw new Error("Unconfirmed RevenueCat entitlement scope");
+
+      projection = await mergeCurrentStripe(
+        deps,
+        subject.subscription,
+        projection,
+        (snapshot) => {
+          const metadata = object(snapshot.metadata);
+          if (
+            metadata.execute_owner_uuid !== subject.owner_id ||
+            (metadata.user_id !== subject.owner_id &&
+              (subject.email === null || metadata.user_id !== subject.email)) ||
+            snapshot.livemode !== (verified.environment === "PRODUCTION")
+          ) throw new Error("Unconfirmed Stripe owner or environment");
+        },
+      );
+      return {
+        owner_id: subject.owner_id,
+        customer_id: subject.customer_id,
+        expected_email: subject.email,
+        expected_updated_date: subject.subscription?.updated_date ?? null,
+        data: eventProjection(projection, event),
+      };
+    }),
+  );
+  // The service-only RPC rechecks retirement, canonical ID and each revision.
+  await verified.apply(changes);
+  return true;
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
@@ -258,7 +498,6 @@ export function createHandler(
       return reply({ error: "Unauthorized" }, 401);
     }
     let event: RevenueCatEvent;
-    let users: string[];
     try {
       const payload = object(await req.json());
       event = object(payload.event) as unknown as RevenueCatEvent;
@@ -268,6 +507,29 @@ export function createHandler(
       if (!handledTypes.has(event.type)) {
         return reply({ received: true, skipped: event.type });
       }
+    } catch {
+      return reply({ error: "Invalid event payload." }, 400);
+    }
+    if (deps.verified !== undefined) {
+      try {
+        if (deps.verified === null) {
+          throw new Error("Verified billing is not configured");
+        }
+        const applied = await reconcileVerified(deps, deps.verified, event);
+        return reply(
+          applied ? { received: true } : {
+            received: true,
+            skipped: "retired_subjects",
+          },
+        );
+      } catch {
+        return reply({
+          error: "Subscription reconciliation failed; retry required.",
+        }, 503);
+      }
+    }
+    let users: string[];
+    try {
       users = affectedEmails(event);
     } catch {
       return reply({ error: "Invalid event payload." }, 400);

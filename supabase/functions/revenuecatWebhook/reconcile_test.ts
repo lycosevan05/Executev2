@@ -6,6 +6,8 @@ import {
   revenueCatProjection,
   type SubscriptionChange,
   type SubscriptionRow,
+  type VerifiedReconciliation,
+  type VerifiedSubscriptionChange,
 } from "./reconcile.ts";
 
 const a = "a@example.com";
@@ -482,4 +484,318 @@ Deno.test("explicit subscription grace cannot be extended by a conflicting entit
     });
     equal(revenueCatProjection(body, a).plan, "free");
   }
+});
+
+const ownerA = "11111111-1111-4111-8111-111111111111";
+const ownerB = "22222222-2222-4222-8222-222222222222";
+const customerA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const customerB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const anonymous = "$RCAnonymousID:1234567890abcdef1234567890abcdef";
+const appId = "native-dev-app";
+const revision = "2026-10-21T20:00:00Z";
+
+function verifiedFixture() {
+  const legacy = fixture();
+  const source: Record<string, unknown> = {
+    state: "active",
+    owner_id: ownerA,
+    customer_id: customerA,
+    email: a,
+    environment: "SANDBOX",
+    subscription: {
+      data: { user_id: ownerA, plan: "premium", status: "active" },
+      updated_date: revision,
+    },
+  };
+  const destination: Record<string, unknown> = {
+    state: "active",
+    owner_id: ownerB,
+    customer_id: customerB,
+    email: b,
+    environment: "SANDBOX",
+    subscription: null,
+  };
+  const identities = new Map<string, unknown>([
+    [customerA, source],
+    [customerB, destination],
+    ["VerifiedAlias", destination],
+  ]);
+  const providers = new Map<string, Response>([
+    [customerA, verifiedSnapshot(customerA, false)],
+    [customerB, verifiedSnapshot(customerB)],
+  ]);
+  const attempted: string[] = [];
+  const resolutions: string[] = [];
+  const batches: VerifiedSubscriptionChange[][] = [];
+  const verified: VerifiedReconciliation = {
+    appId,
+    environment: "SANDBOX",
+    products: new Set(["native_month"]),
+    resolve(identifier) {
+      resolutions.push(identifier);
+      return Promise.resolve(
+        identities.get(identifier) ?? { state: "unresolved" },
+      );
+    },
+    apply(changes) {
+      batches.push(changes);
+      return Promise.resolve();
+    },
+  };
+  const deps: Dependencies = {
+    ...legacy.deps,
+    verified,
+    fetch: ((input: string | URL | Request) => {
+      attempted.push(String(input));
+      const id = decodeURIComponent(
+        new URL(String(input)).pathname.split("/").at(-1)!,
+      );
+      return Promise.resolve(
+        providers.get(id) ?? Response.json(null, { status: 404 }),
+      );
+    }) as typeof fetch,
+  };
+  const event = {
+    id: "scoped-transfer",
+    type: "TRANSFER",
+    app_id: appId,
+    environment: "SANDBOX",
+    transferred_from: [customerA],
+    transferred_to: [anonymous, "VerifiedAlias", customerB],
+  };
+  const deliver = (value: Record<string, unknown> = event, auth?: string) =>
+    createHandler(deps)(legacy.request({ event: value }, auth));
+  return {
+    legacy,
+    source,
+    destination,
+    identities,
+    providers,
+    attempted,
+    resolutions,
+    batches,
+    verified,
+    deps,
+    event,
+    deliver,
+  };
+}
+
+function verifiedSnapshot(
+  original: string,
+  active = true,
+  overrides: Record<string, unknown> = {},
+  isSandbox = true,
+  status = 200,
+): Response {
+  const value = snapshot(active, overrides);
+  return Response.json({
+    ...value,
+    subscriber: {
+      ...value.subscriber,
+      original_app_user_id: original,
+      subscriptions: {
+        native_month: {
+          ...value.subscriber.subscriptions.native_month,
+          is_sandbox: isSandbox,
+        },
+      },
+    },
+  }, { status });
+}
+
+Deno.test("verified transfer reconciles two active owners atomically and deduplicates aliases", async () => {
+  const f = verifiedFixture();
+  equal((await f.deliver()).status, 200);
+  equal(f.batches.length, 1);
+  const [from, to] = f.batches[0];
+  deepEqual(
+    [
+      from.owner_id,
+      from.customer_id,
+      from.expected_email,
+      from.expected_updated_date,
+      from.data.plan,
+    ],
+    [ownerA, customerA, a, revision, "free"],
+  );
+  deepEqual(
+    [
+      to.owner_id,
+      to.customer_id,
+      to.expected_email,
+      to.expected_updated_date,
+      to.data.plan,
+    ],
+    [ownerB, customerB, b, null, "premium"],
+  );
+  equal(to.data.user_id, undefined);
+  equal(to.data.revenuecat_app_user_id, customerB);
+  deepEqual(f.attempted.map((url) => url.split("/").at(-1)), [
+    customerA,
+    customerB,
+  ]);
+  deepEqual(f.legacy.reads, []);
+  equal(f.legacy.writes(), 0);
+});
+
+Deno.test("verified transfer skips a retired source without looking it up at RevenueCat", async () => {
+  const f = verifiedFixture();
+  f.identities.set(customerA, { state: "retired" });
+  equal((await f.deliver()).status, 200);
+  deepEqual(f.batches[0].map((change) => change.owner_id), [ownerB]);
+  deepEqual(f.attempted.map((url) => url.split("/").at(-1)), [customerB]);
+});
+
+Deno.test("verified retired-only event is acknowledged without a provider read or write", async () => {
+  const f = verifiedFixture();
+  f.identities.set(customerA, { state: "retired" });
+  const response = await f.deliver({
+    ...f.event,
+    type: "EXPIRATION",
+    app_user_id: customerA,
+  });
+  equal(response.status, 200);
+  deepEqual(await response.json(), {
+    received: true,
+    skipped: "retired_subjects",
+  });
+  deepEqual(f.attempted, []);
+  deepEqual(f.batches, []);
+});
+
+Deno.test("verified transfer rejects unresolved named, blocked, foreign or unbound anonymous participants", async () => {
+  for (
+    const participants of [
+      [customerB, "UnknownAlias"],
+      [customerB, "SuspendedAlias"],
+      [customerA, customerB],
+      [anonymous],
+      [customerB, "verifiedAlias"],
+    ]
+  ) {
+    const f = verifiedFixture();
+    f.identities.set("SuspendedAlias", { state: "blocked" });
+    equal(
+      (await f.deliver({ ...f.event, transferred_to: participants })).status,
+      503,
+    );
+    deepEqual(f.batches, []);
+    deepEqual(f.attempted, []);
+  }
+});
+
+Deno.test("verified integration pins authorization, app, event scope and ledger environment", async () => {
+  const f = verifiedFixture();
+  equal((await f.deliver(f.event, "Bearer invalid")).status, 401);
+  for (
+    const event of [
+      { ...f.event, app_id: "different-app" },
+      { ...f.event, environment: "PRODUCTION" },
+      { ...f.event, environment: undefined },
+    ]
+  ) {
+    equal((await f.deliver(event)).status, 503);
+  }
+  deepEqual(f.resolutions, []);
+  f.destination.environment = "PRODUCTION";
+  equal((await f.deliver()).status, 503);
+  deepEqual(f.attempted, []);
+  deepEqual(f.batches, []);
+});
+
+Deno.test("incomplete verified config cannot fall back to the legacy mailbox", async () => {
+  const f = verifiedFixture();
+  f.deps.verified = null;
+  equal(
+    (await f.deliver({ ...f.event, type: "RENEWAL", app_user_id: a })).status,
+    503,
+  );
+  deepEqual(f.legacy.reads, []);
+  equal(f.legacy.writes(), 0);
+  deepEqual(f.attempted, []);
+});
+
+Deno.test("verified reconciliation rejects wrong provider scope, a foreign original or a new customer", async () => {
+  for (
+    const value of [
+      verifiedSnapshot(customerA),
+      verifiedSnapshot(customerB, true, {}, false),
+      verifiedSnapshot(customerB, true, {
+        product_identifier: "different_app",
+      }),
+      verifiedSnapshot(customerB, false, {}, true, 201),
+    ]
+  ) {
+    const f = verifiedFixture();
+    f.providers.set(customerB, value);
+    equal((await f.deliver()).status, 503);
+    deepEqual(f.batches, []);
+  }
+});
+
+Deno.test("verified delayed expiry uses fresh renewal truth and a truly elapsed period returns Free", async () => {
+  for (const [expiration, plan] of [[end, "premium"], [now, "free"]]) {
+    const f = verifiedFixture();
+    f.providers.set(
+      customerA,
+      verifiedSnapshot(customerA, true, { expires_date: expiration }),
+    );
+    equal(
+      (await f.deliver({
+        ...f.event,
+        type: "EXPIRATION",
+        app_user_id: customerA,
+        aliases: [anonymous],
+      })).status,
+      200,
+    );
+    equal(f.batches.length, 1);
+    equal(f.batches[0][0].expected_updated_date, revision);
+    equal(f.batches[0][0].data.plan, plan);
+    equal(f.batches[0][0].data.revenuecat_last_event_type, "EXPIRATION");
+  }
+});
+
+Deno.test("verified webhook requires a matching immutable Stripe owner and environment", async () => {
+  for (
+    const [owner, live, status] of [
+      [ownerA, false, 200],
+      [ownerB, false, 503],
+      [ownerA, true, 503],
+    ] as const
+  ) {
+    const f = verifiedFixture();
+    f.source.subscription = {
+      data: { user_id: ownerA, stripe_subscription_id: "sub_bound" },
+      updated_date: revision,
+    };
+    f.providers.set(
+      "sub_bound",
+      Response.json({
+        id: "sub_bound",
+        livemode: live,
+        metadata: { user_id: a, execute_owner_uuid: owner },
+        customer: "cus_bound",
+        items: { data: [{ price: { id: "price_bound" } }] },
+        status: "active",
+        current_period_start: 1792616400,
+        current_period_end: 1792702800,
+      }),
+    );
+    equal((await f.deliver()).status, status);
+    if (status === 200) {
+      equal(f.batches[0][0].data.store, "stripe");
+      equal(f.batches[0][0].data.plan, "premium");
+    } else {
+      deepEqual(f.batches, []);
+    }
+  }
+});
+
+Deno.test("verified owner-revision conflict from the atomic RPC requests retry", async () => {
+  const f = verifiedFixture();
+  f.verified.apply = () => Promise.reject(new Error("Revision changed"));
+  equal((await f.deliver()).status, 503);
+  equal(f.legacy.writes(), 0);
 });

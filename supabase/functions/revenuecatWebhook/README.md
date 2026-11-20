@@ -71,6 +71,36 @@ The following steps document rollout requirements and remaining acceptance:
 Rollback: redeploy the prior handler first; the additive RPC/index may remain
 unused. Rolling back code does not undo already reconciled subscription rows.
 
+## Verified owner IDs (isolated rollout)
+
+The verified writer uses the staged service-only
+`read_verified_billing_subject` and `apply_verified_billing_projections` RPCs.
+Enroll a verified billing cohort and configure a dedicated integration with a
+webhook secret and RevenueCat API key for the same RevenueCat project. Leave
+all of these settings absent to retain legacy behavior:
+
+- `EXECUTE_VERIFIED_BILLING_PROJECT` is the exact RevenueCat ledger project.
+- `EXECUTE_VERIFIED_BILLING_SUPABASE_URL` must equal `SUPABASE_URL`.
+- `EXECUTE_VERIFIED_BILLING_ENVIRONMENT` is `SANDBOX` or `PRODUCTION`.
+- `EXECUTE_VERIFIED_REVENUECAT_APP_ID` is the exact webhook `app_id`.
+- `EXECUTE_VERIFIED_REVENUECAT_PRODUCTS` lists the allowed App Store product
+  identifiers separated by commas.
+
+Notification app and environment, the verified ledger environment, and any
+positive entitlement's product and environment must agree. Transfer events
+require an explicit matching environment. Resolve each transfer side as one
+exact owner group. A retired side is skipped with no provider lookup, and one
+transaction rechecks the live subjects before writing their projections.
+An unresolved group or conflicting binding requests a retry. Current provider
+snapshots drive access, including when the incoming event is an old expiration.
+The v1 provider endpoint can create a missing verified canonical customer.
+A creation response remains insufficient for a projection write.
+
+Keep shared or legacy integrations on the existing writer until verified and
+legacy cohorts can be routed independently. See the
+[verified subscriber rollout](../../../docs/w09-revenuecat-subscriber-deletion.md)
+and [RevenueCat webhook fields](https://www.revenuecat.com/docs/integrations/webhooks/event-types-and-fields).
+
 ## Validation
 
 ```sh
