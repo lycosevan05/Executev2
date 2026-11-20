@@ -267,7 +267,7 @@ Deno.test("one failed RevenueCat lookup prevents all transfer writes and request
 });
 Deno.test("DB revision conflict is not acknowledged as a successful transfer", async () => {
   const f = fixture();
-  f.deps.apply = () => Promise.reject(new Error("40001"));
+  f.deps.apply = () => Promise.reject(new Error("PT409"));
   equal((await createHandler(f.deps)(f.request())).status, 503);
   equal(f.rows.has(b), false);
 });

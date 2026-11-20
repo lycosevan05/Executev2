@@ -754,7 +754,7 @@ Deno.test("duplicate delivery remains one customer row and reconciles current tr
 Deno.test("revision conflicts request retry without accepting stale entitlement projection", async () => {
   const f = fixture();
   const original = structuredClone(f.row());
-  f.deps.apply = () => Promise.reject(new Error("40001 revision conflict"));
+  f.deps.apply = () => Promise.reject(new Error("PT409 revision conflict"));
   equal((await createStripeHandler(f.deps)(f.request())).status, 503);
   equal(f.batches.length, 0);
   deepEqual(f.row(), original);

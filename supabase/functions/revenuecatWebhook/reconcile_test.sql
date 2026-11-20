@@ -36,7 +36,7 @@ begin
       jsonb_build_object('user_id','transfer-b@example.test','expected_updated_date','2000-01-01','data','{"plan":"free"}'::jsonb)
     ));
     raise exception 'Expected a revision conflict';
-  exception when sqlstate '40001' then null;
+  exception when sqlstate 'PT409' then null;
   end;
   select jsonb_agg(to_jsonb(s) order by id) into after_rows from public.user_subscriptions s;
   if before_rows is distinct from after_rows then raise exception 'Partial transfer escaped rollback'; end if;
@@ -48,7 +48,7 @@ begin
   begin
     perform public.reconcile_revenuecat_subscriptions('[{"user_id":"transfer-b@example.test","expected_updated_date":null,"data":{"plan":"free"}}]');
     raise exception 'Expected an insert-race conflict';
-  exception when sqlstate '40001' then null;
+  exception when sqlstate 'PT409' then null;
   end;
   if not exists(select 1 from public.user_subscriptions where data->>'user_id'='transfer-b@example.test' and data->>'plan'='premium')
     then raise exception 'Concurrent entitlement overwritten'; end if;
@@ -63,6 +63,19 @@ begin
   perform public.reconcile_revenuecat_subscriptions(changes);
   if (select count(*) from public.user_subscriptions where data->>'user_id' in ('transfer-a@example.test','transfer-b@example.test')) <> 2
     then raise exception 'Duplicate subscription rows created'; end if;
+end $$;
+
+-- A revision supplied for an absent row requires a fresh read.
+do $$
+begin
+  begin
+    perform public.reconcile_revenuecat_subscriptions('[{"user_id":"absent@example.test","expected_updated_date":"2000-01-01","data":{"plan":"premium"}}]');
+    raise exception 'Expected an absent-row conflict';
+  exception when sqlstate 'PT409' then null;
+  end;
+  if exists(select 1 from public.user_subscriptions where data->>'user_id'='absent@example.test') then
+    raise exception 'A stale reconciliation created a subscription';
+  end if;
 end $$;
 
 -- 5. Anonymous identifiers are refused by the database boundary too.

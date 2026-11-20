@@ -14,7 +14,7 @@ declare
   filename text := split_part(p_object_name, '/', 2);
 begin
   if current_setting('transaction_isolation') not in ('read committed', 'read uncommitted') then
-    raise exception 'Upload dispatch requires a fresh snapshot' using errcode = '40001';
+    raise exception 'Upload dispatch requires a fresh snapshot' using errcode = 'PT409';
   end if;
   if p_owner_id is null or p_object_name is null or char_length(filename) not between 1 and 255
      or filename ~ '[^A-Za-z0-9._-]' or filename in ('.', '..')

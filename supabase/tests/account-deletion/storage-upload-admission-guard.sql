@@ -58,7 +58,7 @@ begin
   end if;
   perform 1 from auth.users where id = p_owner_id for update;
   if not found then
-    raise exception 'Storage closure requires a live account' using errcode = '40001';
+    raise exception 'Storage closure requires a live account' using errcode = 'PT409';
   end if;
   insert into execute_storage_deletion_guard.closed_upload_admission (owner_id)
     values (p_owner_id) on conflict do nothing;

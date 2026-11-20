@@ -6,7 +6,7 @@ import { serviceClient, verifiedReconciliation } from "./configuration.ts";
 // existing RevenueCat bearer secret before any provider lookup or DB write.
 // REVENUECAT_SECRET_API_KEY: server-only REST API v1 key for this RC project.
 // STRIPE_SECRET_KEY: existing Stripe key, only used for rows with a Stripe ID.
-// Deploy 20261021000000_reconcile_revenuecat_subscriptions.sql first.
+// Install the reconciliation and HTTP conflict migrations listed in the README first.
 Deno.serve(async (req) => {
   const cors = handleCors(req);
   if (cors) return cors;

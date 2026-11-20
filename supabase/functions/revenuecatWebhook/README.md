@@ -47,11 +47,14 @@ The following steps document rollout requirements and remaining acceptance:
    `SUPABASE_SERVICE_ROLE_KEY` configuration. `STRIPE_SECRET_KEY` is required when
    reconciling any existing row with `stripe_subscription_id`; a failed/missing
    Stripe lookup causes retry, never a guessed downgrade.
-3. Preflight the unique email index and duplicate rows. Apply **only**
+3. On a new installation, preflight duplicate email keys and apply
    `supabase/migrations/20261021000000_reconcile_revenuecat_subscriptions.sql`.
-   Its index creation fails on duplicates and deletes no rows. Do not use an
-   unreviewed `db push` that also applies unrelated pending migrations. The new
-   RPC is service-role-only and security-invoker; table RLS is retained.
+   Its unique index rejects duplicates. Then apply
+   `supabase/migrations/20261120000000_return_conflicts_without_transaction_retries.sql`.
+   Projects with the reconciliation RPC already installed need only the latter
+   migration. Stale billing snapshots return HTTP 409 so the caller can re-read
+   provider state. The RPC runs with its caller's table permissions and grants
+   execution only to the service role.
 4. Deploy **only** `revenuecatWebhook`, retaining `verify_jwt=false`. Existing
    Stripe webhook code is unchanged; no legacy Stripe upsert RPC was installed by this rollout. Run the synthetic TEST,
    missing/invalid bearer checks and a known-customer provider read before a real

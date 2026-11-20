@@ -25,7 +25,7 @@ declare
   new_name text;
 begin
   if current_setting('transaction_isolation') not in ('read committed', 'read uncommitted') then
-    raise exception 'Upload dispatch requires a fresh snapshot' using errcode = '40001';
+    raise exception 'Upload dispatch requires a fresh snapshot' using errcode = 'PT409';
   end if;
   if p_owner_id is null or p_filename is null
      or p_filename !~ '^[A-Za-z0-9._-]{1,120}$' or p_filename in ('.', '..') then
@@ -74,7 +74,7 @@ set lock_timeout = '5s'
 as $$
 begin
   if current_setting('transaction_isolation') not in ('read committed', 'read uncommitted') then
-    raise exception 'Upload closure requires a fresh snapshot' using errcode = '40001';
+    raise exception 'Upload closure requires a fresh snapshot' using errcode = 'PT409';
   end if;
   perform public.close_account_upload_admission(p_owner_id);
   return query
