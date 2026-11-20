@@ -396,15 +396,21 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
             throw SandboxFixtureError.invalidInputs
         }
         let auth = AppEnvironment.live().authService
-        if let existing = try await auth.restoreSession() {
+        let existing = try await auth.restoreSession()
+        if let existing, existing.id != review.accountID {
             guard [target, witness].contains(existing.id) else {
                 throw SandboxFixtureError.unexpectedCustomer
             }
-            if existing.id == review.accountID { return }
             try await auth.signOut()
         }
-        let user = try await auth.signInForAppReview(email: review.email, password: password)
-        XCTAssertEqual(user.id, review.accountID)
+        if existing?.id != review.accountID {
+            let user = try await auth.signInForAppReview(email: review.email, password: password)
+            XCTAssertEqual(user.id, review.accountID)
+        }
+        let cache = UserScopedCacheStore()
+        await cache.activate(userID: review.accountID)
+        try await cache.write("hosted-deletion-sentinel", for: CacheKey("qa", "hosted-deletion"),
+                              userID: review.accountID)
     }
 
     func testReadApprovedSandboxRenewalHistory() async throws {

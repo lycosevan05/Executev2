@@ -81,6 +81,52 @@ final class SignedDeletionUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Profile"].exists)
     }
 
+    func testHostedPaidTargetDeletesFromProfile() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["EXECUTE_HOSTED_DELETE_PAID_TARGET"] == "1" else {
+            throw XCTSkip("Requires the approved disposable hosted App Store target")
+        }
+        let origin = "https://rnhwzvliewgsxhqysiom.supabase.co"
+        guard environment["EXECUTE_STAGED_DELETION_ORIGIN"] == origin,
+              let owner = environment["EXECUTE_STAGED_DELETION_OWNER_UUID"].flatMap(UUID.init(uuidString:)),
+              let email = environment["EXECUTE_STAGED_QA_SIGN_IN_EMAIL"],
+              email.range(of: #"^w09-[a-f0-9]{32}-target@example\.invalid$"#, options: .regularExpression) != nil else {
+            throw Failure.fixture
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment["EXECUTE_STAGED_DELETION_ORIGIN"] = origin
+        app.launchEnvironment["EXECUTE_STAGED_DELETION_OWNER_UUID"] = owner.uuidString
+        app.launch()
+        try openProfile(email, app)
+        let premium = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Execute Premium")).firstMatch
+        try require(premium, "Active Premium target")
+        // Keep the account row clear of the persistent bottom navigation bar.
+        app.swipeUp()
+        app.swipeUp()
+        try openDeletion(app)
+        let billingWarning = app.staticTexts.containing(NSPredicate(
+            format: "label CONTAINS %@", "Apple will keep billing you until you cancel"
+        )).firstMatch
+        try require(billingWarning, "Apple subscription warning")
+        let field = app.textFields["DELETE"]
+        let action = app.buttons["Permanently Delete Account"]
+        XCTAssertTrue(field.isEnabled)
+        XCTAssertFalse(action.isEnabled)
+        field.tap()
+        field.typeText("DELETE")
+        try reveal(action, app, "Permanent deletion of the paid QA target")
+        XCTAssertTrue(action.isEnabled)
+        action.tap()
+
+        try require(app.textFields["Email"], "Signed-out screen after hosted deletion")
+        XCTAssertFalse(app.buttons["Profile"].exists)
+        app.terminate()
+        app.launch()
+        try require(app.textFields["Email"], "Signed-out screen on cold relaunch")
+        XCTAssertFalse(app.buttons["Profile"].exists)
+    }
+
     private func requireFixture() async throws -> Fixture {
         guard ProcessInfo.processInfo.environment["EXECUTE_E68_SIGNED_DELETION"] == "1" else {
             throw XCTSkip("Requires the isolated signed E68 deletion fixture")

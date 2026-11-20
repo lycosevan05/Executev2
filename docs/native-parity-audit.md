@@ -893,3 +893,19 @@ work. See the single [current handoff and detailed evidence](reports/2026-11-08-
   and launched. The release owner accepted refund-reversal fixtures. A
   read-only check still saw the exact Sandbox QA backend row project Premium
   after the Apple-signed period ended.
+
+### Hosted two-subscriber follow-up — 2026-11-19
+
+- **W09.** Both exact, verified owners had distinct App Store Sandbox
+  transaction histories and Premium in the signed app and on the hosted
+  backend. The witness received HTTP 403 from the target-only route.
+  The signed UI showed Apple's billing warning, deleted the paid target,
+  and remained signed out after cold launch. Independent readbacks
+  found the target Auth record, app row, upload, billing row, and local
+  cache marker absent. The paid witness retained its data and Premium.
+  A replay of the actual target renewal after deletion returned HTTP 200
+  with a skip and left the retired identity without a subscription row.
+  Apple still showed an active subscription for the deleted account.
+  The same email registered a new Auth UUID and billing customer ID with
+  no Premium projection. The production cutover still needs the guarded
+  replacement and migration of the testers on build 17.
