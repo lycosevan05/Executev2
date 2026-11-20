@@ -1,5 +1,9 @@
 import { deepEqual, equal } from "node:assert/strict";
-import { createStripeHandler, type StripeEvent } from "./reconcile.ts";
+import {
+  createStripeHandler,
+  type StripeEvent,
+  type VerifiedStripeChange,
+} from "./reconcile.ts";
 import {
   createHandler as createRevenueCatHandler,
   type SubscriptionChange,
@@ -168,6 +172,208 @@ function fixture(type = "customer.subscription.updated") {
     },
   };
 }
+
+const owner = "9dbe7d02-cd1b-4148-9a4d-07e7bc371676";
+const otherOwner = "0cf4aa1b-7565-4a63-9e90-b5cff739fef3";
+const canonicalCustomer = "46553530-fbf4-45e7-be28-b9d09fac144e";
+
+function verifiedFixture() {
+  const f = fixture();
+  const metadata = { user_id: email, execute_owner_uuid: owner };
+  const owned = { ...stripe("canceled"), metadata, livemode: false };
+  f.event.livemode = false;
+  f.event.data.object = owned;
+  f.subscriptions.set("sub_current", owned);
+  const customers = new Map<string, Data>([[
+    "cus_fixture",
+    { id: "cus_fixture", livemode: false, metadata },
+  ]]);
+  const subject: Data = {
+    state: "active",
+    owner_id: owner,
+    email,
+    customer_id: canonicalCustomer,
+    environment: "SANDBOX",
+    subscription: f.rows.get(email),
+  };
+  const projects: VerifiedStripeChange[][] = [];
+  const ownerReads: string[] = [];
+  let provider = revenueCat(true);
+  f.deps.verified = {
+    environment: "SANDBOX",
+    read(id) {
+      ownerReads.push(id);
+      return Promise.resolve(subject);
+    },
+    apply(changes) {
+      projects.push(structuredClone(changes));
+      return Promise.resolve();
+    },
+  };
+  const legacyFetch = f.deps.fetch;
+  f.deps.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const id = decodeURIComponent(url.pathname.split("/").at(-1)!);
+    const headers = new Headers(init?.headers);
+    if (
+      url.hostname === "api.stripe.com" &&
+      url.pathname.startsWith("/v1/customers/")
+    ) {
+      f.calls.push(url.href);
+      equal(headers.get("X-Is-Sandbox"), null);
+      equal(headers.get("Stripe-Version"), "2024-04-10");
+      const customer = customers.get(id);
+      return Promise.resolve(
+        customer
+          ? Response.json(customer)
+          : new Response(null, { status: 404 }),
+      );
+    }
+    if (url.hostname === "api.revenuecat.com") {
+      f.calls.push(url.href);
+      equal(id, canonicalCustomer);
+      equal(headers.get("X-Is-Sandbox"), "true");
+      return Promise.resolve(Response.json(provider));
+    }
+    return legacyFetch(input, init);
+  }) as typeof fetch;
+
+  return {
+    ...f,
+    metadata,
+    owned,
+    projects,
+    ownerReads,
+    subject,
+    customers,
+    handle: () => createStripeHandler(f.deps)(f.request()),
+    setProvider(value: Data) {
+      provider = value;
+    },
+  };
+}
+
+Deno.test("verified Stripe commits through the owner-bound writer and preserves canonical RevenueCat access", async () => {
+  const f = verifiedFixture();
+  equal((await f.handle()).status, 200);
+  deepEqual(f.ownerReads, [owner]);
+  deepEqual(f.reads, []);
+  deepEqual(f.batches, []);
+  equal(f.projects.length, 1);
+  const [record] = f.projects[0];
+  equal(record.owner_id, owner);
+  equal(record.customer_id, canonicalCustomer);
+  equal(record.expected_email, email);
+  equal(record.expected_updated_date, before);
+  equal(record.data.user_id, undefined);
+  equal(record.data.revenuecat_app_user_id, canonicalCustomer);
+  equal(record.data.revenuecat_environment, "SANDBOX");
+  equal(record.data.plan, "premium");
+  equal(record.data.store, "app_store");
+});
+
+Deno.test("verified Stripe never falls back to email when mode is incomplete or provider ownership is unverified", async () => {
+  for (
+    const condition of [
+      "invalid config",
+      "signed mismatch",
+      "missing owner",
+      "foreign customer",
+      "wrong environment",
+    ]
+  ) {
+    const f = verifiedFixture();
+    switch (condition) {
+      case "invalid config":
+        f.deps.verified = false;
+        break;
+      case "signed mismatch":
+        f.event.data.object = {
+          ...f.owned,
+          metadata: { ...f.metadata, execute_owner_uuid: otherOwner },
+        };
+        break;
+      case "missing owner":
+        f.subscriptions.set("sub_current", stripe());
+        f.subscriptions.get("sub_current")!.livemode = false;
+        break;
+      case "foreign customer":
+        f.customers.get("cus_fixture")!.metadata = {
+          ...f.metadata,
+          execute_owner_uuid: otherOwner,
+        };
+        break;
+      case "wrong environment":
+        f.event.livemode = true;
+        break;
+    }
+    equal((await f.handle()).status, 503, condition);
+    deepEqual(f.ownerReads, [], condition);
+    deepEqual(f.reads, [], condition);
+    deepEqual(f.projects, [], condition);
+    deepEqual(f.batches, [], condition);
+  }
+});
+
+Deno.test("verified Stripe acknowledges an exact retired owner without RevenueCat lookup or write", async () => {
+  const f = verifiedFixture();
+  f.subject.state = "retired";
+  const response = await f.handle();
+  equal(response.status, 200);
+  deepEqual(await response.json(), {
+    received: true,
+    skipped: "verified_retired_owner",
+  });
+  deepEqual(f.ownerReads, [owner]);
+  deepEqual(f.projects, []);
+  equal(f.calls.some((url) => url.includes("api.revenuecat.com")), false);
+});
+
+Deno.test("verified Stripe retries ambiguous subjects and mixed-environment provider evidence", async () => {
+  for (
+    const condition of [
+      "blocked",
+      "unresolved",
+      "wrong Auth email",
+      "wrong cohort",
+      "foreign subscription",
+      "foreign environment",
+      "unknown environment",
+    ]
+  ) {
+    const f = verifiedFixture();
+    switch (condition) {
+      case "blocked":
+      case "unresolved":
+        f.subject.state = condition;
+        break;
+      case "wrong Auth email":
+        f.subject.email = "other@example.invalid";
+        break;
+      case "wrong cohort":
+        f.subject.environment = "PRODUCTION";
+        break;
+      case "foreign subscription":
+        f.rows.get(email)!.data.stripe_subscription_ids = ["sub_foreign"];
+        f.subscriptions.set("sub_foreign", {
+          ...stripe("active", "sub_foreign"),
+          metadata: { ...f.metadata, execute_owner_uuid: otherOwner },
+          livemode: false,
+        });
+        break;
+      case "foreign environment":
+        f.setProvider(revenueCat(true, {}, { is_sandbox: false }));
+        break;
+      case "unknown environment":
+        f.setProvider(revenueCat(true, {}, { is_sandbox: undefined }));
+        break;
+    }
+    equal((await f.handle()).status, 503, condition);
+    deepEqual(f.ownerReads, [owner], condition);
+    deepEqual(f.projects, [], condition);
+    deepEqual(f.batches, [], condition);
+  }
+});
 
 Deno.test("Stripe deletion cannot remove independently current RevenueCat access", async () => {
   const f = fixture("customer.subscription.deleted");
