@@ -33,7 +33,7 @@
  * ─────────────────────────────────────────────────
  */
 
-import { backend } from '@/api/backendClient';
+import { backend, supabase } from '@/api/backendClient';
 
 // ─── Stripe frontend config ───────────────────────────────────────────────────
 // TODO: Replace with your actual Stripe publishable key
@@ -42,11 +42,15 @@ export const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KE
 // ─── In-memory cache ──────────────────────────────────────────────────────────
 let _cachedSubscription = null;
 let _cacheTime = 0;
+let _cacheOwner = null;
+let _cacheGeneration = 0;
 const CACHE_TTL_MS = 60_000; // 1 minute
 
 export function bustSubscriptionCache() {
   _cachedSubscription = null;
   _cacheTime = 0;
+  _cacheOwner = null;
+  _cacheGeneration++;
 }
 
 /**
@@ -86,24 +90,33 @@ export function hasBillingIssue(subscription) {
  * Returns null if none found (treat as free).
  */
 export async function loadUserSubscription(forceRefresh = false) {
-  const now = Date.now();
-  if (!forceRefresh && _cachedSubscription && now - _cacheTime < CACHE_TTL_MS) {
-    return _cachedSubscription;
-  }
-
+  const generation = _cacheGeneration;
   try {
     const user = await backend.auth.me();
-    if (!user) return null;
+    if (!user || generation !== _cacheGeneration) return null;
+    if (!forceRefresh && _cacheOwner === user.id && Date.now() - _cacheTime < CACHE_TTL_MS) {
+      return _cachedSubscription;
+    }
 
-    const records = await backend.entities.UserSubscription.filter(
-      { user_id: user.email },
-      '-updated_date',
-      1
-    );
-
-    const sub = records?.[0] || null;
+    const { data, error } = await supabase.rpc('read_execute_billing_projection');
+    if (error && error.code !== 'PGRST202') throw error;
+    let sub = null;
+    if (error?.code === 'PGRST202' || data?.state === 'legacy') {
+      // Older projects and owners outside the verified cohort use the existing email reader.
+      const records = await backend.entities.UserSubscription.filter(
+        { user_id: user.email }, '-updated_date', 1
+      );
+      sub = records?.[0] ?? null;
+    } else if (data?.state === 'verified') {
+      sub = data.subscription ?? null;
+    } else if (data?.state !== 'unavailable') {
+      throw new Error('Billing projection response was not recognized');
+    }
+    const currentUser = await backend.auth.me();
+    if (generation !== _cacheGeneration || currentUser?.id !== user.id) return null;
     _cachedSubscription = sub;
-    _cacheTime = now;
+    _cacheOwner = user.id;
+    _cacheTime = Date.now();
     return sub;
   } catch {
     return null;

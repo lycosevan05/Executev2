@@ -443,7 +443,7 @@ async function reconcileVerified(
 
 async function currentVerifiedChange(
   deps: Pick<Dependencies, "fetch" | "revenueCatKey" | "stripeKey">,
-  verified: VerifiedReconciliation,
+  verified: Pick<VerifiedReconciliation, "environment" | "products">,
   subject: ActiveSubject,
   resolve: (identifier: string) => Promise<VerifiedSubject>,
 ): Promise<VerifiedSubscriptionChange> {
@@ -511,15 +511,34 @@ export async function reconcileOverdueSandboxOwner(
   now = Date.now(),
 ): Promise<boolean> {
   if (verified.environment !== "SANDBOX") throw new Error("Sandbox required");
+  const change = await prepareOverdueVerifiedOwner(deps, verified, owner, now);
+  if (!change) return false;
+  await verified.apply([change]);
+  return true;
+}
+
+export async function prepareOverdueVerifiedOwner(
+  deps: Pick<Dependencies, "fetch" | "revenueCatKey" | "stripeKey">,
+  verified: Pick<
+    VerifiedReconciliation,
+    "environment" | "products" | "resolve"
+  >,
+  owner: unknown,
+  now = Date.now(),
+): Promise<VerifiedSubscriptionChange | null> {
   const subject = readVerifiedSubject(owner, verified.environment);
-  if (subject.state !== "active" || !subject.subscription) return false;
+  if (subject.state !== "active" || !subject.subscription) return null;
   const { data } = subject.subscription;
   const due = data.revenuecat_current_period_end ??
     (data.store === "app_store" ? data.current_period_end : null);
   if (
     data.revenuecat_plan !== "premium" || typeof due !== "string" ||
     !Number.isFinite(Date.parse(due)) || Date.parse(due) > now
-  ) return false;
+  ) return null;
+  if (
+    verified.environment === "PRODUCTION" &&
+    data.revenuecat_environment !== "PRODUCTION"
+  ) throw new Error("Unconfirmed stored provider environment");
   const change = await currentVerifiedChange(
     deps,
     verified,
@@ -531,13 +550,15 @@ export async function reconcileOverdueSandboxOwner(
       ),
   );
   const observed = Date.parse(String(change.data.revenuecat_observed_at));
-  if (observed < Date.parse(due) || observed > now + 60_000) {
+  if (
+    !Number.isFinite(observed) || observed < Date.parse(due) ||
+    observed > now + 60_000
+  ) {
     throw new Error(
       "RevenueCat observation is outside the reconciliation window",
     );
   }
-  await verified.apply([change]);
-  return true;
+  return change;
 }
 
 export function constantTimeEqual(a: string, b: string): boolean {

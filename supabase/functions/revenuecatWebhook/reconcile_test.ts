@@ -3,6 +3,7 @@ import {
   affectedEmails,
   createHandler,
   type Dependencies,
+  prepareOverdueVerifiedOwner,
   reconcileOverdueSandboxOwner,
   revenueCatProjection,
   type SubscriptionChange,
@@ -903,4 +904,34 @@ Deno.test("a due-owner sweep expires App Store access, retains grace or linked S
     equal(change.data.plan, control === "expired" ? "free" : "premium");
     equal(change.data.revenuecat_last_event_type, undefined);
   }
+});
+
+Deno.test("production expiry observation proposes a change without applying it", async () => {
+  const f = verifiedFixture();
+  f.verified.environment = "PRODUCTION";
+  f.source.environment = "PRODUCTION";
+  f.source.subscription = {
+    data: {
+      user_id: ownerA,
+      store: "app_store",
+      revenuecat_plan: "premium",
+      revenuecat_environment: "PRODUCTION",
+      current_period_end: now,
+    },
+    updated_date: revision,
+  };
+  f.providers.set(
+    customerA,
+    verifiedSnapshot(customerA, true, { expires_date: now }, false),
+  );
+  const proposed = await prepareOverdueVerifiedOwner(
+    f.deps,
+    f.verified,
+    f.source,
+    Date.parse(now),
+  );
+  equal(proposed?.data.plan, "free");
+  equal(proposed?.expected_updated_date, revision);
+  deepEqual(f.batches, []);
+  equal(f.legacy.writes(), 0);
 });

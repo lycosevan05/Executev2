@@ -104,6 +104,36 @@ def test_verified_billing(db):
     assert subject(db, owner=WRITER_FIRST)["subscription"] == observed
     print("PASS scoped UUID write, provider and environment matching, and authenticated write protection")
 
+    db.file(HERE / "verified-billing-client-read.sql")
+    client_read = "select public.read_execute_billing_projection()"
+    expect_failure(lambda: db.sql("set role anon; " + client_read), "42501")
+    assert json.loads(db.sql(authenticated + client_read)) == {"state": "unavailable"}
+    def as_caller(owner):
+        claims = json.dumps({"sub": owner, "role": "authenticated"})
+        return db.sql(f"set request.jwt.claims = '{claims}'; set role authenticated; " + client_read)
+    assert json.loads(as_caller(UNRELATED)) == {"state": "legacy"}
+    production = "44444444-4444-4444-4444-444444444444"
+    email = "production-fixture@example.invalid"
+    db.sql(f"insert into auth.users (id, email) values ('{production}', '{email}')")
+    customer = request(db, ensure(production))
+    assert request(db, activate(production, "PRODUCTION")) == "t"
+    assert json.loads(as_caller(production)) == {"state": "verified", "subscription": None}
+    change_production = {
+        "owner_id": production, "customer_id": customer, "expected_email": email,
+        "expected_updated_date": None,
+        "data": {"plan": "premium", "status": "active", "store": "app_store",
+                 "revenuecat_environment": "PRODUCTION", "stripe_customer_id": "private_fixture"},
+    }
+    assert request(db, apply([change_production], "PRODUCTION")) == "1"
+    production_read = json.loads(as_caller(production))
+    assert production_read["subscription"]["plan"] == "premium"
+    assert "stripe_customer_id" not in production_read["subscription"]
+    assert customer not in json.dumps(production_read)
+    assert json.loads(as_caller(UNRELATED)) == {"state": "legacy"}
+    assert json.loads(as_caller(WRITER_FIRST)) == {"state": "unavailable"}
+    print("PASS authenticated compatibility read isolates production, legacy and Sandbox")
+
+
     paired = [change(WRITER_FIRST, first, observed["updated_date"], plan="free"), change(DELETION_FIRST, second)]
     expect_failure(lambda: request(db, apply([paired[0], {**paired[1], "customer_id": first}])), "40001")
     assert subject(db, owner=WRITER_FIRST)["subscription"] == observed

@@ -150,3 +150,34 @@ Verify both upload routes and ordinary entity and billing writes with approved
 synthetic fixtures. The [local rollback fixture](../supabase/tests/account-deletion/test_staged_schema_reversal.py)
 compares the schema before and after both supported reversal sequences. Any
 prior data changes require their own recovery assessment.
+
+## Build 19 and production handoff
+
+The replacement is Execute Performance 1.0 build 19, the original
+`com.executelabs.execute` bundle on the original App Store Connect record.
+Its signed TestFlight Internal Only export targets Executev2. Food photo
+and barcode both use the packaged `guardedStorageUpload` route. The
+matching Release build launched on the QA simulator. The signed export has
+SHA-256 `b1675242803c87dee4645089506d7b475e8fefa6f31a68d023a5d57cebe123d0`.
+Build 17 still had three sessions in the last seven days. The existing LSD
+internal group has three testers and automatic distribution for Xcode builds.
+
+| Step | Evidence required before proceeding |
+| --- | --- |
+| Internal distribution | Owner approves delivery to the original app record and the LSD group. Verify processing, the 1.0 (19) identifier, internal-only access, and group assignment. |
+| Tester adoption | Confirm the three testers have a guarded replacement. Exercise both entry points on installed build 19 using a disposable account. Capture the guarded route, exact object readback, and owner change/error behavior. The simulator and source evidence do not cover the physical camera. |
+| Writer inventory and drain | Recheck deployed web and Capacitor origins. Record the last direct or signed write, signed capability expiry, resumable sessions, unfinished dispatches, and privileged writers. Reconcile every unknown dispatch using independent evidence. |
+| W09 cutover | Capture the live catalog and function revisions again. Confirm the writer drain and rehearse rollback against the captured schema. Seek approval for the fourth upload SQL file and any legacy build retirement after tester adoption. |
+| W09 deletion | Keep production deletion separate from writer cutover. Verify production billing ownership and Apple custody for the rollout population, including retry safety. Require receipt version 1 from the signed native client and verify terminal outcomes before increasing scope. |
+
+The current read-only baseline is in
+[`production-rollout-readback.sql`](../supabase/tests/account-deletion/production-rollout-readback.sql).
+At this checkpoint Executev2 had guarded upload revision 1, legacy deletion
+revision 6 and RevenueCat webhook revision 8. The writer-cutover RPC and both
+restrictive direct-write policies were absent. Build 17 distribution continues
+during migration.
+
+To roll back a client delivery, stop assigning build 19 and retain the
+supported build and current Storage admission. For a later database cutover,
+use the existing writer-cutover reversal after verifying that in-flight work
+is terminal. Keep retirement markers while late billing events can arrive.

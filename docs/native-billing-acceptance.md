@@ -634,3 +634,35 @@ The signed Free-gate probe is prepared. The device was released before
 that follow-up. The hosted evidence covers the verified Sandbox cohort.
 The legacy web reader still filters by email and needs a compatible
 path before rollout to owner-bound rows.
+
+### Prepare the production rollout
+
+The [production aggregate](../supabase/tests/account-deletion/production-rollout-readback.sql)
+found eight legacy RevenueCat rows, zero verified projections, zero linked
+Stripe rows and no billing fence or scheduled job. The existing RevenueCat
+webhook remains the legacy writer. A matching email does not establish an
+owner binding. Prepare provider and Auth evidence for any candidate, including
+the app, environment, product, known transfer aliases and exact Auth UUID.
+
+Build 19 understands the authenticated, owner-scoped compatibility RPC.
+On older databases it falls back to the existing email read when PostgREST
+reports the RPC missing. After the RPC is present it uses that fallback only
+for a legacy decision. A verified Free or empty result is authoritative.
+Sandbox and unavailable results cannot fall back to email. The RPC returns
+only display fields, after a server-side production cohort lookup. The
+Capacitor RevenueCat SDK still signs in by email for its independent
+entitlement and purchase flow. Keep build 19 on legacy billing. Before any
+verified cohort can use that client, update and verify SDK ownership and
+access gating, including logout and same-email re-registration.
+
+| Phase | Forward step | Stop or rollback |
+| --- | --- | --- |
+| Prepare schema | Capture current catalog and restore artifact. Review the billing projection fence, owner ledger, verified projection SQL and the compatibility RPC in dependency order. Obtain production approval before applying SQL. | Keep legacy webhook admission available. Remove the compatibility RPC before any dependency reversal. Stop structural reversal if it would remove a live fence, enrolled owner or retirement evidence. |
+| Observe one owner | Establish a verified production binding independently. Capture the verified owner’s current App Store and applicable Stripe state. After explicit approval, deploy `revenuecatExpiryObserve` with gateway JWT verification off and its separate strong bearer, explicit enable flag, one exact UUID, approved project and product list. Invoke manually during the observation window. | The candidate performs only reads, reports one decision, and has no schedule or write path. Remove the observer enable flag and withdraw the endpoint to stop it. Its settings are separate from the shared webhook configuration. |
+| Verify coexistence | Replay approved, isolated legacy and verified scenarios before enabling dual routing. Verify the authenticated production client read against the exact canary, keep unverified historical owners on the legacy route, and reject ambiguous aliases for review. | Never switch the shared webhook to verified-only while unresolved legacy rows remain. Keep both writer revisions available until source, owner, and delivery evidence match. |
+| Schedule production writes | After the observer is verified, review the writable allowlist, compare-and-set ownership, 15-minute target, alerting, and retry/rollback behavior. Start with a separately authorized canary and compare provider and readback evidence before expanding. | Disable the scheduler and withdraw the write endpoint before changing schema. Preserve verified-owner bindings and retirement markers. Do not issue a speculative provider retry or rewrite an unverified legacy row. |
+
+W15's hosted rehearsal passed for verified Sandbox owners. The original
+delivery failure remains uncorrelated, and the legacy QA row still showed
+expired App Store Premium at the last readback. Production observation has
+no enrolled owner yet.
