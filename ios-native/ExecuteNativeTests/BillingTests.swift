@@ -44,6 +44,32 @@ final class PremiumResolutionTests: XCTestCase {
         XCTAssertFalse(PremiumState.resolve(server: nil, live: revoked, now: now).isPremium)
     }
 
+    func testDatedAppStoreProjectionStopsGrantingAtExpiryDespiteStaleStatus() throws {
+        let row = try JSONDecoder().decode(BillingSubscription.self, from: Data(
+            #"{"plan":"premium","status":"active","store":"app_store","current_period_end":"2026-11-19T09:50:42Z"}"#.utf8
+        ))
+        let end = try XCTUnwrap(row.periodEnd)
+        XCTAssertTrue(PremiumState.resolve(server: row, live: nil, now: end.addingTimeInterval(-1)).isPremium)
+        XCTAssertFalse(PremiumState.resolve(server: row, live: nil, now: end).isPremium)
+        XCTAssertFalse(PremiumState.resolve(server: row, live: .free, now: end.addingTimeInterval(1)).isPremium)
+
+        let futureGrace = end.addingTimeInterval(300)
+        let live = PremiumState(isPremium: true, entitlementIdentifier: "paid",
+                                expirationDate: end, gracePeriodExpirationDate: futureGrace)
+        let duringGrace = PremiumState.resolve(server: row, live: live, now: end.addingTimeInterval(1))
+        XCTAssertTrue(duringGrace.isPremium)
+        XCTAssertEqual(duringGrace.expirationDate, futureGrace)
+        XCTAssertFalse(PremiumState.resolve(server: row, live: live, now: futureGrace).isPremium)
+    }
+
+    func testDatedStripeAndUndatedLegacyGrantsRetainBackendBehavior() {
+        let stripe = BillingSubscription(plan: "premium", status: "trialing",
+                                         currentPeriodEnd: "2026-11-19T09:50:42Z", store: "stripe")
+        let undatedAppStore = BillingSubscription(plan: "premium", status: "active", store: "app_store")
+        XCTAssertTrue(PremiumState.resolve(server: stripe, live: nil, now: .distantFuture).isPremium)
+        XCTAssertTrue(PremiumState.resolve(server: undatedAppStore, live: nil, now: .distantFuture).isPremium)
+    }
+
     func testKnownBackendMemberSurvivesRevenueCatOutage() {
         let row = BillingSubscription(userID: billingUserA.email, plan: "premium", status: "active")
         XCTAssertTrue(PremiumState.resolve(server: row, live: nil).isPremium)

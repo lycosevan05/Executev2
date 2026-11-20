@@ -19,7 +19,10 @@ struct PremiumState: Equatable, Sendable {
         // period even when the ordinary paid period has already ended.
         let liveAccessEnd = [live?.expirationDate, live?.gracePeriodExpirationDate].compactMap { $0 }.max()
         let liveActive = live?.isPremium == true && (liveAccessEnd.map { $0 > now } ?? true)
-        let serverActive = server?.grantsPremium == true
+        // The App Store projection's effective period includes observed grace.
+        // A delayed or undelivered expiry event can leave its status active.
+        let serverAccessEnd = server?.store == "app_store" ? server?.periodEnd : nil
+        let serverActive = server?.grantsPremium == true && (serverAccessEnd.map { $0 > now } ?? true)
         return PremiumState(
             isPremium: serverActive || liveActive,
             entitlementIdentifier: live?.entitlementIdentifier ?? "",
@@ -35,9 +38,10 @@ struct BillingSubscription: Codable, Equatable, Sendable {
     var currentPeriodEnd: String?
     var cancelAtPeriodEnd: Bool?
     var stripeSubscriptionID: String?
+    var store: String?
 
     enum CodingKeys: String, CodingKey {
-        case userID = "user_id", plan, status
+        case userID = "user_id", plan, status, store
         case currentPeriodEnd = "current_period_end"
         case cancelAtPeriodEnd = "cancel_at_period_end"
         case stripeSubscriptionID = "stripe_subscription_id"
