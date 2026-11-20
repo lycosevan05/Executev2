@@ -10,3 +10,5 @@ REVENUECAT_ANNUAL_PRODUCT_ID = execute_premium_annual
 SUPABASE_UPLOAD_BUCKET = uploads
 AUTH_CALLBACK_SCHEME = com.executelabs.execute.native-dev
 #include? "Local.xcconfig"
+
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(EXECUTE_QA_COMPILATION_CONDITION)

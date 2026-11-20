@@ -81,6 +81,16 @@ struct AppConfiguration: Equatable {
         )
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
         configuration.stagedDeletionOwnerID = stagedDeletionOwnerID
+        if stagedDeletionOwnerID != nil, urlString == Self.hostedDeletionFixtureOrigin {
+            let environment = ProcessInfo.processInfo.environment
+            if let email = environment["EXECUTE_STAGED_QA_SIGN_IN_EMAIL"],
+               email.range(of: #"^w09-[a-f0-9]{32}-(target|witness)@example\.invalid$"#, options: .regularExpression) != nil,
+               let owner = environment["EXECUTE_STAGED_QA_SIGN_IN_OWNER_UUID"] {
+                configuration.appReviewLogin = AppReviewLogin(
+                    email: email, accountID: owner, origin: urlString, supabaseURL: supabaseURL
+                )
+            }
+        }
 #endif
         // These are public identifiers, configurable for a separate native-dev app.
         func identifier(_ key: String, fallback: String) -> String {
@@ -117,9 +127,12 @@ struct AppConfiguration: Equatable {
     }
 
 #if EXECUTE_STAGED_DELETION_ACCEPTANCE
+    private static let hostedDeletionFixtureOrigin = "https://rnhwzvliewgsxhqysiom.supabase.co"
+
     private static func stagedOwnerID(configuredOrigin: String, environment: [String: String]) -> UUID? {
-        // Only the isolated HTTPS fixture can enable the staged route.
-        guard configuredOrigin == "https://127.0.0.1:55474",
+        // Only the loopback fixture and the dedicated hosted rehearsal may use this build.
+        let allowedOrigins = ["https://127.0.0.1:55474", hostedDeletionFixtureOrigin]
+        guard allowedOrigins.contains(configuredOrigin),
               environment["EXECUTE_STAGED_DELETION_ORIGIN"] == configuredOrigin,
               let owner = environment["EXECUTE_STAGED_DELETION_OWNER_UUID"] else { return nil }
         return UUID(uuidString: owner)

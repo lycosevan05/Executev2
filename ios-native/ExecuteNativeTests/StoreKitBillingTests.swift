@@ -380,6 +380,33 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
         XCTAssertEqual(entitlement?.isSandbox, true)
     }
 
+    func testPrepareHostedSandboxSubscriberSession() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["EXECUTE_HOSTED_SUBSCRIBER_SESSION"] == "1" else {
+            throw XCTSkip("Requires the exact hosted Sandbox QA fixture")
+        }
+        let configuration = try AppConfiguration.load()
+        guard configuration.supabaseURL.absoluteString == "https://rnhwzvliewgsxhqysiom.supabase.co",
+              configuration.revenueCatIdentityEnabled,
+              let review = configuration.appReviewLogin,
+              let password = env["EXECUTE_HOSTED_SUBSCRIBER_PASSWORD"], !password.isEmpty,
+              let target = env["EXECUTE_STAGED_DELETION_OWNER_UUID"].flatMap(UUID.init(uuidString:)),
+              let witness = env["EXECUTE_HOSTED_SUBSCRIBER_WITNESS_UUID"].flatMap(UUID.init(uuidString:)),
+              target != witness, [target, witness].contains(review.accountID) else {
+            throw SandboxFixtureError.invalidInputs
+        }
+        let auth = AppEnvironment.live().authService
+        if let existing = try await auth.restoreSession() {
+            guard [target, witness].contains(existing.id) else {
+                throw SandboxFixtureError.unexpectedCustomer
+            }
+            if existing.id == review.accountID { return }
+            try await auth.signOut()
+        }
+        let user = try await auth.signInForAppReview(email: review.email, password: password)
+        XCTAssertEqual(user.id, review.accountID)
+    }
+
     func testReadApprovedSandboxRenewalHistory() async throws {
         let env = ProcessInfo.processInfo.environment
         guard env["EXECUTE_SANDBOX_RENEWAL_HISTORY"] == "1" else {
