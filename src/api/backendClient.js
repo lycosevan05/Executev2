@@ -85,7 +85,7 @@ function toBackendError(error, status = 500) {
   return next;
 }
 
-function normalizeUser(user) {
+export function normalizeUser(user) {
   if (!user) return null;
   const metadata = user.user_metadata || {};
   return {

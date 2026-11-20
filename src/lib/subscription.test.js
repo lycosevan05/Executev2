@@ -62,4 +62,21 @@ describe('billing projection compatibility', () => {
     expect(await pending).toBeNull();
     expect(peekCachedSubscription()).toBeNull();
   });
+
+  it('unblocks startup when billing stalls and discards the late response', async () => {
+    vi.useFakeTimers();
+    try {
+      let finish;
+      rpc.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      const pending = loadUserSubscription();
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(await pending).toBeNull();
+      finish({ data: { state: 'verified', subscription: legacyPremium } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(peekCachedSubscription()).toBeNull();
+      expect(filter).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

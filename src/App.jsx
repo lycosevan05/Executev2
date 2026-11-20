@@ -231,6 +231,11 @@ function PlanGuard({ children }) {
     }
     // Cache miss — require a CONFIRMED read before deciding. Do NOT trust null.
     setDecision('checking');
+    const timer = setTimeout(() => {
+      // A stalled read has the same fallback as a network error.
+      cancelled = true;
+      setDecision('allow');
+    }, 8_000);
     (async () => {
       try {
         const filter = await userScopedFilter({ plan_type: 'daily', status: 'active' });
@@ -241,9 +246,14 @@ function PlanGuard({ children }) {
       } catch {
         // Query threw (network/429) — UNKNOWN, NOT a negative. Fail-open.
         if (!cancelled) setDecision('allow');
+      } finally {
+        clearTimeout(timer);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPremium, subLoading, cacheReady, location.pathname]);
 

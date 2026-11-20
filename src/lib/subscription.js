@@ -44,6 +44,7 @@ let _cachedSubscription = null;
 let _cacheTime = 0;
 let _cacheOwner = null;
 let _cacheGeneration = 0;
+const READ_TIMEOUT_MS = 8_000;
 const CACHE_TTL_MS = 60_000; // 1 minute
 
 export function bustSubscriptionCache() {
@@ -91,14 +92,18 @@ export function hasBillingIssue(subscription) {
  */
 export async function loadUserSubscription(forceRefresh = false) {
   const generation = _cacheGeneration;
-  try {
+  let timer;
+  let timedOut = false;
+
+  const read = async () => {
     const user = await backend.auth.me();
-    if (!user || generation !== _cacheGeneration) return null;
+    if (!user || timedOut || generation !== _cacheGeneration) return null;
     if (!forceRefresh && _cacheOwner === user.id && Date.now() - _cacheTime < CACHE_TTL_MS) {
       return _cachedSubscription;
     }
 
     const { data, error } = await supabase.rpc('read_execute_billing_projection');
+    if (timedOut || generation !== _cacheGeneration) return null;
     if (error && error.code !== 'PGRST202') throw error;
     let sub = null;
     if (error?.code === 'PGRST202' || data?.state === 'legacy') {
@@ -112,13 +117,28 @@ export async function loadUserSubscription(forceRefresh = false) {
     } else if (data?.state !== 'unavailable') {
       throw new Error('Billing projection response was not recognized');
     }
+    if (timedOut || generation !== _cacheGeneration) return null;
     const currentUser = await backend.auth.me();
-    if (generation !== _cacheGeneration || currentUser?.id !== user.id) return null;
+    if (timedOut || generation !== _cacheGeneration || currentUser?.id !== user.id) return null;
     _cachedSubscription = sub;
     _cacheOwner = user.id;
     _cacheTime = Date.now();
     return sub;
+  };
+
+  // The first Home render waits on billing. Bound the whole read, including
+  // auth and the legacy fallback, and discard any response after the deadline.
+  const deadline = new Promise(resolve => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      resolve(null);
+    }, READ_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([read(), deadline]);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }

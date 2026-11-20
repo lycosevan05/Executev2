@@ -1,6 +1,6 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { appCache } from '@/lib/appCache';
-import { backend, isSupabaseConfigured, supabase, supabaseConfigError } from '@/api/backendClient';
+import { backend, isSupabaseConfigured, normalizeUser, supabase, supabaseConfigError } from '@/api/backendClient';
 import { getPlatform } from '@/lib/platform';
 import { bustSubscriptionCache } from '@/lib/subscription';
 import { resetPersonalizationCaches } from '@/lib/personalizationSync';
@@ -23,43 +23,47 @@ export const AuthProvider = ({ children }) => {
     public_settings: { requiresAuth: true },
   });
 
-  const checkUserAuth = useCallback(async () => {
-    try {
-      setIsLoadingAuth(true);
-      const currentUser = await backend.auth.me();
-      setUser(currentUser);
-      setIsAuthenticated(true);
-      setAuthError(null);
-      // Reconcile the cache to this user. Idempotent: same uid is a no-op, a
-      // different uid purges the previous user's cache behind the loading floor.
-      if (currentUser?.id) appCache.activateUser(currentUser.id);
-    } catch (error) {
-      setUser(null);
-      setIsAuthenticated(false);
-      setAuthError({
-        type: 'auth_required',
-        message: error.message || 'Authentication required',
-      });
-    } finally {
-      setIsLoadingAuth(false);
-      setAuthChecked(true);
-    }
+  const authRevision = useRef(0);
+
+  const applySessionUser = useCallback((currentUser, error = null) => {
+    setUser(currentUser);
+    setIsAuthenticated(Boolean(currentUser));
+    setAuthError(currentUser ? null : error || {
+      type: 'auth_required',
+      message: 'Authentication required',
+    });
+    if (currentUser?.id) appCache.activateUser(currentUser.id);
+    setIsLoadingAuth(false);
+    setAuthChecked(true);
   }, []);
 
+  const checkUserAuth = useCallback(async () => {
+    const revision = ++authRevision.current;
+    setIsLoadingAuth(true);
+    try {
+      const currentUser = await backend.auth.me();
+      if (revision === authRevision.current) applySessionUser(currentUser);
+    } catch (error) {
+      if (revision === authRevision.current) {
+        applySessionUser(null, {
+          type: 'auth_required',
+          message: error.message || 'Authentication required',
+        });
+      }
+    }
+  }, [applySessionUser]);
+
   const checkAppState = useCallback(async () => {
+    const revision = ++authRevision.current;
     setIsLoadingPublicSettings(true);
     setAuthError(null);
 
     if (!isSupabaseConfigured) {
-      setUser(null);
-      setIsAuthenticated(false);
-      setAuthError({
+      applySessionUser(null, {
         type: 'missing_config',
         message: supabaseConfigError || 'Supabase is not configured.',
       });
-      setIsLoadingAuth(false);
       setIsLoadingPublicSettings(false);
-      setAuthChecked(true);
       return;
     }
 
@@ -70,36 +74,20 @@ export const AuthProvider = ({ children }) => {
       });
 
       const { data, error } = await supabase.auth.getSession();
+      if (revision !== authRevision.current) return;
       if (error) throw error;
-      if (data?.session) {
-        // getSession() is LOCAL (no network) — reconcile the cache off the local
-        // uid so an offline cold launch activates the right user even if the
-        // networked me() in checkUserAuth fails.
-        if (data.session.user?.id) appCache.activateUser(data.session.user.id);
-        await checkUserAuth();
-      } else {
-        setUser(null);
-        setIsAuthenticated(false);
-        setAuthError({
-          type: 'auth_required',
-          message: 'Authentication required',
-        });
-        setIsLoadingAuth(false);
-        setAuthChecked(true);
-      }
+      applySessionUser(normalizeUser(data?.session?.user));
     } catch (error) {
-      setUser(null);
-      setIsAuthenticated(false);
-      setAuthError({
-        type: 'unknown',
-        message: error.message || 'Failed to load authentication state',
-      });
-      setIsLoadingAuth(false);
-      setAuthChecked(true);
+      if (revision === authRevision.current) {
+        applySessionUser(null, {
+          type: 'unknown',
+          message: error.message || 'Failed to load authentication state',
+        });
+      }
     } finally {
       setIsLoadingPublicSettings(false);
     }
-  }, [checkUserAuth]);
+  }, [applySessionUser]);
 
   useEffect(() => {
     checkAppState();
@@ -109,29 +97,23 @@ export const AuthProvider = ({ children }) => {
     if (!supabase) return undefined;
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        // Reconcile the cache off the LOCAL event uid (no extra network). The
-        // switch decision is delegated to activateUser, which is idempotent on
-        // the same uid (so a token refresh / INITIAL_SESSION won't purge) and
-        // only purges + re-hydrates behind the loading floor on a real switch.
-        appCache.activateUser(session.user.id);
-        checkUserAuth().catch(() => {});
-      } else {
+      ++authRevision.current;
+      if (!session?.user) {
         appCache.deactivate();
         resetPersonalizationCaches();
-        setUser(null);
-        setIsAuthenticated(false);
-        setAuthError({
-          type: 'auth_required',
-          message: 'Authentication required',
-        });
-        setIsLoadingAuth(false);
-        setAuthChecked(true);
+        bustSubscriptionCache();
       }
+      // Supabase delivers the session while holding its auth lock. Use that
+      // snapshot directly so the listener never queues another Supabase call.
+      applySessionUser(normalizeUser(session?.user));
+      setIsLoadingPublicSettings(false);
     });
 
-    return () => data?.subscription?.unsubscribe();
-  }, [checkUserAuth]);
+    return () => {
+      ++authRevision.current;
+      data?.subscription?.unsubscribe();
+    };
+  }, [applySessionUser]);
 
   // ─── iOS OAuth deep-link bridge ────────────────────────────────────────────
   // When the user finishes Google/Apple sign-in inside the in-app Capacitor
@@ -165,8 +147,8 @@ export const AuthProvider = ({ children }) => {
               const access_token = params.get('access_token');
               const refresh_token = params.get('refresh_token');
               if (access_token && refresh_token) {
-                await supabase.auth.setSession({ access_token, refresh_token });
-                await checkUserAuth();
+                const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+                if (error) throw error;
                 return;
               }
             }
@@ -176,8 +158,8 @@ export const AuthProvider = ({ children }) => {
               // fail, leaving the app stuck on the login screen.
               const code = new URL(url).searchParams.get('code');
               if (code) {
-                await supabase.auth.exchangeCodeForSession(code);
-                await checkUserAuth();
+                const { error } = await supabase.auth.exchangeCodeForSession(code);
+                if (error) throw error;
               }
             }
           } catch (err) {
@@ -197,7 +179,7 @@ export const AuthProvider = ({ children }) => {
     })();
 
     return () => { cancelled = true; cleanup?.(); };
-  }, [checkUserAuth]);
+  }, []);
 
   // ─── RevenueCat (iOS native IAP) ───────────────────────────────────────────
   // Identify the signed-in user with RevenueCat so entitlements (and webhooks)
@@ -316,6 +298,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const logout = useCallback(async () => {
+    ++authRevision.current;
     setUser(null);
     setIsAuthenticated(false);
     appCache.clear();
