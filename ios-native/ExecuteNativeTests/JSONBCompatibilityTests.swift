@@ -3285,3 +3285,100 @@ private final class HeldAccountRead: RecoveryRepository {
         continuation = nil
     }
 }
+
+private final class RefreshFixtureClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seconds: TimeInterval = 0
+    var now: TimeInterval { lock.withLock { seconds } }
+    func advance(_ amount: TimeInterval) { lock.withLock { seconds += amount } }
+}
+
+private final class OutageRefreshProtocol: SessionRefreshProtocol, @unchecked Sendable {
+    static let clock = RefreshFixtureClock()
+    private static let backoff = SessionRefreshBackoff(now: { clock.now }, jitter: { 0 })
+    override class var gate: SessionRefreshBackoff { backoff }
+    override class var upstream: URLSession { fixtureSession }
+    static let fixtureSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RefreshOutageOrigin.self, AuthFixtureProtocol.self]
+        return URLSession(configuration: config)
+    }()
+}
+
+private final class RefreshOutageOrigin: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var hits: [String: Int] = [:]
+    nonisolated(unsafe) private static var recovered: Set<String> = []
+    static func recover(_ host: String) { _ = lock.withLock { recovered.insert(host) } }
+    static func count(host: String) -> Int { lock.withLock { hits[host, default: 0] } }
+    override class func canInit(with request: URLRequest) -> Bool {
+        lock.withLock { !recovered.contains(request.url?.host ?? "") }
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!
+        Self.lock.withLock { Self.hits[url.host!, default: 0] += 1 }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 521, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("temporarily unavailable".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+final class SessionRefreshBackoffTests: XCTestCase {
+    func testSDKRefreshAttemptsReachWireOnlyOnceAndPreserveSession() async throws {
+        let host = "same-owner.\(UUID().uuidString.lowercased()).auth-fixture.invalid"
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [OutageRefreshProtocol.self, AuthFixtureProtocol.self]
+        let client = SupabaseClient(supabaseURL: URL(string: "https://\(host)")!, supabaseKey: "fixture", options: .init(
+            auth: .init(storage: AuthFixtureStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: URLSession(configuration: config))))
+        let session = try await client.auth.verifyOTP(email: "fixture@example.invalid", token: "123456", type: .email).session
+        let owner = try XCTUnwrap(session?.user.id)
+        for _ in 0..<3 {
+            do { _ = try await client.auth.refreshSession(); XCTFail("Expected temporary failure") }
+            catch { XCTAssertEqual(client.auth.currentSession?.user.id, owner) }
+        }
+        XCTAssertEqual(RefreshOutageOrigin.count(host: host), 1)
+        do { _ = try await client.auth.refreshSession(refreshToken: "different-fixture"); XCTFail() } catch {}
+        XCTAssertEqual(RefreshOutageOrigin.count(host: host), 2)
+        RefreshOutageOrigin.recover(host)
+        OutageRefreshProtocol.clock.advance(60)
+        let recovered = try await client.auth.refreshSession()
+        XCTAssertEqual(recovered.user.id, owner)
+        XCTAssertNotEqual(recovered.refreshToken, session?.refreshToken)
+    }
+
+    func testBackoffCapsAndSuccessfulProbeResetsIt() async throws {
+        let clock = RefreshFixtureClock()
+        let gate = SessionRefreshBackoff(now: { clock.now }, jitter: { 0 })
+        let key = Data([1])
+        func send(_ status: Int, retryAfter: String? = nil) async throws -> Int {
+            let (_, response) = try await gate.perform(key: key) {
+                let response = HTTPURLResponse(url: URL(string: "https://refresh.invalid")!, statusCode: status,
+                                               httpVersion: nil, headerFields: retryAfter.map { ["Retry-After": $0] })
+                return (Data(), response!)
+            }
+            return (response as! HTTPURLResponse).statusCode
+        }
+        for delay in [60, 120, 240, 300, 300] {
+            let status = try await send(503)
+            XCTAssertEqual(status, 503)
+            clock.advance(TimeInterval(delay - 1))
+            do { _ = try await send(200); XCTFail("Admitted an early probe") }
+            catch { XCTAssertEqual((error as? URLError)?.code, .resourceUnavailable) }
+            clock.advance(1)
+        }
+        let recovered = try await send(200)
+        XCTAssertEqual(recovered, 200)
+        _ = try await send(521)
+        clock.advance(60)
+        let expired = try await send(401)
+        XCTAssertEqual(expired, 401)
+        _ = try await send(429, retryAfter: "700")
+        clock.advance(699)
+        do { _ = try await send(200); XCTFail() } catch {}
+        clock.advance(1)
+        _ = try await send(200)
+    }
+}

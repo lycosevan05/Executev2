@@ -105,7 +105,8 @@ final class AppEnvironment: ObservableObject {
             let client = SupabaseClient(
                 supabaseURL: configuration.supabaseURL,
                 supabaseKey: configuration.supabaseAnonKey,
-                options: .init(auth: .init(storage: SupabaseAuthStorage()))
+                options: .init(auth: .init(storage: SupabaseAuthStorage()),
+                               global: .init(session: SessionRefreshProtocol.makeSession()))
             )
 #if DEBUG
             environmentStartupLogger.debug("[Startup] Supabase initialized")

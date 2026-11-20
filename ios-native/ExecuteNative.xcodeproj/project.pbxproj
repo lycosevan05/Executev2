@@ -84,6 +84,7 @@
 		D3B53D88233B250FA1963563 /* NutritionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9D0D858E531A26440720885 /* NutritionModels.swift */; };
 		D5A33E652E9E3889F8744BEE /* TrainViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49573C2E0B5E36044153EE9F /* TrainViewModel.swift */; };
 		DF0BF49B8164C33130EFC36B /* SupabaseAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5BBA482D564AB560A2B2927 /* SupabaseAuthService.swift */; };
+		969ABDC387FB45E2A6903001 /* SessionRefreshTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 969ABDC387FB45E2A6903002 /* SessionRefreshTransport.swift */; };
 		DF7D321FB02CC306E1AA41A8 /* SupabaseRealtimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89379B64A39A036F997E547B /* SupabaseRealtimeService.swift */; };
 		E48965127B80764338A3E4DA /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81F7350C741A63C443C73FAB /* JSONValue.swift */; };
 		EBB34DE9A8D91988FA45684E /* BillingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91EE5E523843B5325882F6A2 /* BillingModels.swift */; };
@@ -217,6 +218,7 @@
 		A318512948BBB8B2878D0DBD /* JSONBCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONBCompatibilityTests.swift; sourceTree = "<group>"; };
 		A4182B2544CD74C40B79639D /* TrackViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackViewModel.swift; sourceTree = "<group>"; };
 		A5BBA482D564AB560A2B2927 /* SupabaseAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseAuthService.swift; sourceTree = "<group>"; };
+		969ABDC387FB45E2A6903002 /* SessionRefreshTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRefreshTransport.swift; sourceTree = "<group>"; };
 		A92B0906738C5FF28CB0ADA4 /* ExecuteNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecuteNativeApp.swift; sourceTree = "<group>"; };
 		AA851B22239363903CA153C0 /* HomeWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgets.swift; sourceTree = "<group>"; };
 		AB3080B9E9C4815740681B95 /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Regular.ttf"; sourceTree = "<group>"; };
@@ -572,6 +574,7 @@
 				F710192DC06647D73D2A6BBC /* AuthService.swift */,
 				130C56739539C3606A2AB883 /* MockAuthService.swift */,
 				A5BBA482D564AB560A2B2927 /* SupabaseAuthService.swift */,
+				969ABDC387FB45E2A6903002 /* SessionRefreshTransport.swift */,
 			);
 			path = Authentication;
 			sourceTree = "<group>";
@@ -910,6 +913,7 @@
 				A6477406A4DB232FC42A4F76 /* BillingStore.swift in Sources */,
 				EBB34DE9A8D91988FA45684E /* BillingModels.swift in Sources */,
 				DF0BF49B8164C33130EFC36B /* SupabaseAuthService.swift in Sources */,
+				969ABDC387FB45E2A6903001 /* SessionRefreshTransport.swift in Sources */,
 				8F75865E4C9F2453A99A5AA6 /* SupabaseDataService.swift in Sources */,
 				DF7D321FB02CC306E1AA41A8 /* SupabaseRealtimeService.swift in Sources */,
 				CF3A66F63D81837A64E4B36E /* SupabaseStorageService.swift in Sources */,
