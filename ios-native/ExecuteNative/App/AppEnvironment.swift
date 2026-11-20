@@ -165,6 +165,7 @@ final class AppEnvironment: ObservableObject {
                     )
                 }
             ) : nil
+            let entityData = SupabaseDataService(client: client)
             let environment = AppEnvironment(
                 configuration: configuration,
                 configurationError: nil,
@@ -175,7 +176,7 @@ final class AppEnvironment: ObservableObject {
                 subscriptionService: subscriptionService,
                 subscriptionReader: SupabaseSubscriptionReader(client: client),
                 billingIdentityResolver: billingIdentityResolver,
-                dataService: SupabaseDataService(client: client),
+                dataService: entityData,
                 realtimeService: SupabaseRealtimeService(client: client),
                 storageService: SupabaseStorageService(
                     client: client, uploadClient: pinnedFunctions, defaultBucket: configuration.uploadBucket
@@ -184,7 +185,7 @@ final class AppEnvironment: ObservableObject {
                 aiSharingConsent: consent
             )
             appState = environment.appState
-            environment.recoveryRepositoryFactory = { SupabaseRecoveryRepository(client: client) }
+            environment.recoveryRepositoryFactory = { SupabaseRecoveryRepository(client: client, data: entityData) }
             return environment
         } catch {
             let appError = AppError.from(error, title: "Configuration needed")

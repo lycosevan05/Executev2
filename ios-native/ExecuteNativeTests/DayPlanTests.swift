@@ -12,6 +12,31 @@ final class DayPlanTests: XCTestCase {
             defaults: defaults ?? UserDefaults(suiteName: "DayDraft.\(UUID())")!, premium: premium, canWrite: canWrite)
     }
 
+    func testSavedWorkoutSurvivesOfflineReopenAndIsHiddenFromAnotherAccount() async {
+        let data = DayData(), cache = UserScopedCacheStore(suiteName: "WorkoutRead.\(UUID())")
+        data.fixtureUser = user
+        let row = DayData.child(master: data.masterID)
+        data.rows[.workoutPlans] = [row]
+        await cache.activate(userID: user.id)
+        func view() -> DayPlanViewModel {
+            DayPlanViewModel(kind: .workout, date: date, data: data, ai: nil, cache: cache, premium: { true })
+        }
+        let initial = view()
+        await initial.start(for: user)
+        XCTAssertEqual(initial.saved?.id, row.id)
+        data.failTable = .aiPlans
+        let reopened = view()
+        await reopened.start(for: user)
+        XCTAssertEqual(reopened.saved?.id, row.id)
+        XCTAssertNotNil(reopened.error)
+        let other = ExecuteUser(id: UUID(), email: "other-day@example.invalid", displayName: "Other")
+        await cache.activate(userID: other.id)
+        await reopened.start(for: other)
+        XCTAssertNil(reopened.saved)
+        XCTAssertNil(reopened.master)
+        XCTAssertEqual(data.creates, 0)
+    }
+
     func testExplicitDurationKeepsApproximationRangesAndDoesNotGuessFromRest() throws {
         XCTAssertEqual(StatedPlanDuration.explicit(in: "gentle five-minute evening mobility")?.minutes, 5)
         XCTAssertEqual(StatedPlanDuration.explicit(in: "about thirty minutes"), StatedPlanDuration(text: "about thirty minutes", minutes: 30))

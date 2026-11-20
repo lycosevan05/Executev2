@@ -20,7 +20,9 @@ protocol RecoveryRepository {
 final class SupabaseRecoveryRepository: RecoveryRepository {
     private let client: SupabaseClient
     private let data: SupabaseDataService
-    init(client: SupabaseClient) { self.client = client; self.data = SupabaseDataService(client: client) }
+    init(client: SupabaseClient, data: SupabaseDataService? = nil) {
+        self.client = client; self.data = data ?? SupabaseDataService(client: client)
+    }
 
     func identity(for user: ExecuteUser) throws -> RecoveryIdentity {
         guard let session = client.auth.currentSession, session.user.id == user.id else { throw CancellationError() }
@@ -37,11 +39,7 @@ final class SupabaseRecoveryRepository: RecoveryRepository {
         var offset = 0
         while true {
             try validate(identity)
-            var query = client.from(table.rawValue).select()
-            for key in fields.keys.sorted() {
-                query = query.eq("data->>\(key)", value: fields[key]!)
-            }
-            let page: [BackendRow] = try await query.order("id").range(from: offset, to: offset + 199).execute().value
+            let page = try await data.readPage(table, matching: fields, orderBy: "id", limit: 200, offset: offset)
             try validate(identity)
             result += page
             if page.count < 200 { return result }

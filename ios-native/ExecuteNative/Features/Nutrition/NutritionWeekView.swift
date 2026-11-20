@@ -128,17 +128,21 @@ struct NutritionWeekHydrationView: View {
     init(environment: AppEnvironment, date: String) {
         _appState = ObservedObject(wrappedValue: environment.appState)
         _model = StateObject(wrappedValue: NutritionWeekViewModel(date: date, repository: environment.makeRecoveryRepository(),
-            active: { environment.appState.allowsDraftWrites(for: $0) }, hydrationOnly: true))
+            active: { environment.appState.allowsDraftWrites(for: $0) }, hydrationOnly: true, cache: environment.cache))
     }
     private var user: ExecuteUser? { if case .signedIn(let user) = appState.launchState { return user }; return nil }
     var body: some View {
         ExecuteCard {
             VStack(alignment: .leading, spacing: ExecuteSpacing.sm) {
                 Text("Water").font(ExecuteTypography.title(20)).accessibilityAddTraits(.isHeader)
-                Text(verbatim: String(format: "%.2f L logged", model.water) + (model.waterGoal.map { " / \(String(format: "%.1f", $0)) L goal" } ?? ""))
-                    .font(ExecuteTypography.body(15)).accessibilityIdentifier("nutrition-water.amount")
-                if let goal = model.waterGoal { ProgressView(value: min(1, model.water / goal)); if model.water >= goal { Text("Daily water goal reached") } }
-                if model.working { ProgressView(model.isLoadingWater ? "Loading water…" : "Updating water…") }
+                if model.hasVerifiedWater {
+                    Text(verbatim: String(format: "%.2f L logged", model.water) + (model.waterGoal.map { " / \(String(format: "%.1f", $0)) L goal" } ?? ""))
+                        .font(ExecuteTypography.body(15)).accessibilityIdentifier("nutrition-water.amount")
+                    if let goal = model.waterGoal { ProgressView(value: min(1, model.water / goal)); if model.water >= goal { Text("Daily water goal reached") } }
+                } else {
+                    Text("Water total unavailable").font(ExecuteTypography.body(15))
+                }
+                if model.working && !model.isLoadingWater { ProgressView("Updating water…") }
                 if model.isToday {
                     ViewThatFits(in: .horizontal) {
                         HStack { controls }
@@ -146,7 +150,7 @@ struct NutritionWeekHydrationView: View {
                     }
                 } else { Text("Water can only be logged on today's date").font(ExecuteTypography.body(13)) }
                 if let error = model.error {
-                    ExecuteErrorState(error: error) { if let user { Task { await model.start(for: user) } } }
+                    ExecuteErrorState(error: error, retry: nil)
                 }
                 if model.pendingWater != nil {
                     Button("Retry water confirmation") { Task { await model.retryWater() } }.frame(minHeight: 44)

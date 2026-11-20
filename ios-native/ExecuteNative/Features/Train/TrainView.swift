@@ -14,7 +14,7 @@ private struct TrainScreen: View {
 
     init(environment: AppEnvironment) {
         _appState = ObservedObject(wrappedValue: environment.appState)
-        _model = StateObject(wrappedValue: TrainViewModel(dataService: environment.dataService, router: environment.router, repository: environment.makeRecoveryRepository()))
+        _model = StateObject(wrappedValue: TrainViewModel(dataService: environment.dataService, router: environment.router, repository: environment.makeRecoveryRepository(), cache: environment.cache))
     }
 
     var body: some View {
@@ -62,8 +62,8 @@ struct TrainDashboardView: View {
                 if let error = model.error {
                     TrainInlineError(error: error) { Task { await model.refresh() } }
                 }
-                if model.isInitialLoading && model.activePlan == nil {
-                    TrainLoadingState()
+                if !model.hasVerifiedToday && selectedTab != .library && selectedTab != .history {
+                    if model.error == nil { TrainMessageCard(text: "Checking your training plan…") }
                 } else {
                     switch selectedTab {
                     case .today: todayContent
@@ -465,10 +465,6 @@ private struct TrainSectionHeading: View {
 private struct TrainMessageCard: View {
     let text: String
     var body: some View { Text(text).font(ExecuteTypography.body(13)).foregroundStyle(ExecuteColor.olive).frame(maxWidth: .infinity, alignment: .leading).padding(ExecuteSpacing.md).background(ExecuteColor.parchmentLight.opacity(0.94)).clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.cardRadius, style: .continuous)) }
-}
-
-private struct TrainLoadingState: View {
-    var body: some View { VStack(spacing: ExecuteSpacing.sm) { ProgressView().tint(ExecuteColor.chartreuseDark); Text("Loading your training...").font(ExecuteTypography.body(14)).foregroundStyle(ExecuteColor.olive) }.frame(maxWidth: .infinity).padding(.vertical, 90) }
 }
 
 private struct TrainInlineError: View {

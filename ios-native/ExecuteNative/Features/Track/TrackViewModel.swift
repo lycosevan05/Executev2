@@ -1,10 +1,16 @@
 import Foundation
 
+private struct CachedTrackingDay: Codable, Sendable {
+    let snapshot: TrackSnapshot
+    let units: ProfileUnitSystem?
+}
+
 @MainActor final class TrackViewModel: ObservableObject {
     @Published private(set) var snapshot = TrackSnapshot.empty
     @Published private(set) var activeMetrics = Set(TrackMetric.defaultOrder)
     @Published private(set) var customTrackers: [CustomTrackerDefinition] = []
     @Published private(set) var isInitialLoading = true
+    @Published private(set) var hasVerifiedDay = false
     @Published private(set) var isRefreshing = false
     @Published private(set) var savingMetrics = Set<TrackMetric>()
     @Published private(set) var working = false
@@ -45,7 +51,7 @@ import Foundation
         var log = TrackDailyLog.empty(date: HomeDate.todayString)
         log.sleepHours = 7.5; log.waterLiters = 1.8; log.steps = 6820; log.weightKg = 78.4; log.mood = 4; log.energy = 7
         model.snapshot = TrackSnapshot(dailyLogID: nil, dailyLog: log, lastKnownWeight: 78.4, history: [])
-        model.isInitialLoading = false; return model
+        model.isInitialLoading = false; model.hasVerifiedDay = true; return model
     }
     var accountLabel: String { user?.email ?? "your signed-in account" }
     var currentOwner: UUID? { user?.id }
@@ -77,13 +83,25 @@ import Foundation
         if self.user?.id == user.id, loadedDate != nil { return }
         await stop()
         guard !Task.isCancelled else { return }
-        self.user = user; loadSettings(user); await reload()
-        guard self.user?.id == user.id, canWrite(user.id), !Task.isCancelled else { return }
+        self.user = user; loadSettings(user)
         let request = generation
+        let date = today()
+        if !includeHistory {
+            let cached = await cache.read(CacheKey("track", date), as: CachedTrackingDay.self, userID: user.id)
+            guard request == generation, self.user?.id == user.id, canWrite(user.id), !Task.isCancelled else { return }
+            switch cached {
+            case .fresh(let day), .stale(let day):
+                snapshot = day.snapshot; unitSystem = day.units; isInitialLoading = false; hasVerifiedDay = true
+            case .missing: break
+            }
+        }
+        await reload()
+        guard self.user?.id == user.id, canWrite(user.id), !Task.isCancelled else { return }
+        let subscriptionRequest = generation
         if let realtimeService, let subscription = try? await realtimeService.subscribe(to: .dailyLogs, onChange: { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
         }) {
-            if generation == request, self.user?.id == user.id, !Task.isCancelled { subscriptions.append(subscription) }
+            if generation == subscriptionRequest, self.user?.id == user.id, !Task.isCancelled { subscriptions.append(subscription) }
             else { await subscription.cancel() }
         }
     }
@@ -91,7 +109,7 @@ import Foundation
         generation = UUID(); user = nil; identity = nil; snapshot = .empty; loadedDate = nil; unitSystem = nil
         working = false; writable = false; savingMetrics = []; pending = nil; reviewedPending = false; reviewRow = nil
         reviewSummary = nil; currentWarnings = []; customTrackers = []; activeMetrics = Set(TrackMetric.defaultOrder)
-        settingsError = nil; pendingStorageUnreadable = false; error = nil; isInitialLoading = true; isRefreshing = false
+        settingsError = nil; pendingStorageUnreadable = false; error = nil; isInitialLoading = true; hasVerifiedDay = false; isRefreshing = false
         let old = subscriptions; subscriptions = []
         for subscription in old { await subscription.cancel() }
     }
@@ -167,16 +185,28 @@ import Foundation
             } catch {
                 self.error = AppError.from(error, title: "Weight units need review")
             }
-            applyDaily(current); loadedDate = date
+            applyDaily(current); loadedDate = date; hasVerifiedDay = true
             loadPending(user)
-            if let pending, let acknowledged = logs.first(where: { pending.acknowledged($0) }) {
-                try finish(acknowledged, request: request, user: user)
+            if let pending {
+                let receipts = if !includeHistory && pending.date != date {
+                    try await rows(.dailyLogs, fields: ["date": pending.date], request: request, user: user)
+                } else { logs }
+                if let acknowledged = receipts.first(where: { pending.acknowledged($0) }) {
+                    try finish(acknowledged, request: request, user: user)
+                }
             }
+            try check(request, user: user)
             writable = true
+            await storeDay(user, date: date)
         } catch {
             guard generation == request else { return }
             self.error = AppError(title: "Tracking could not load", message: (error as? AppError)?.message ?? "Refresh your signed-in account before making changes.")
         }
+    }
+    private func storeDay(_ user: ExecuteUser, date: String) async {
+        guard !includeHistory else { return }
+        try? await cache.write(CachedTrackingDay(snapshot: snapshot, units: unitSystem),
+                               for: CacheKey("track", date), userID: user.id, ttl: 300)
     }
     private func applyDaily(_ row: BackendRow?) {
         snapshot.dailyLogID = row?.id; snapshot.dailyLog = row.map(TrackPersistence.log); currentWarnings = row.map(TrackPersistence.warnings) ?? []
@@ -241,6 +271,7 @@ import Foundation
         let saved = try await write(id: intent.rowID, patch: .object(patch), request: request, user: user)
         guard intent.acknowledged(saved) else { throw TrackPersistence.invalid("The save acknowledgement was incomplete. Check the saved change before logging again.") }
         try finish(saved, request: request, user: user)
+        await storeDay(user, date: intent.date)
         await cache.invalidate(CacheKey("home", "dashboard"), userID: user.id)
         NotificationCenter.default.post(name: .recoveryDidChange, object: user.id)
     }

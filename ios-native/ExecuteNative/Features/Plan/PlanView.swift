@@ -78,9 +78,7 @@ struct PlanDashboardView: View {
                         PlanInlineError(error: error) { Task { await model.refresh() } }
                     }
 
-                    if model.isInitialLoading && model.plan == nil {
-                        PlanLoadingState()
-                    } else if model.setupPresented {
+                    if model.setupPresented {
                         PlanGenerationView(model: model, isPremium: isPremium)
                     } else if let plan = model.plan {
                         if model.hasInitialPreview { PlanGenerationView(model: model, isPremium: isPremium) }
@@ -102,8 +100,11 @@ struct PlanDashboardView: View {
                                 PlanMessageCard(text: "Personalized plan changes are included with Execute Premium. Open Premium & Billing in your profile to manage your membership.")
                             }
                         }
-                    } else {
+                    } else if model.hasVerifiedPlan || model.hasInitialPreview {
                         PlanGenerationView(model: model, isPremium: isPremium)
+                    } else if model.error == nil {
+                        PlanMessageCard(text: "Checking for your saved plan…")
+                            .accessibilityIdentifier("plan.loading")
                     }
                 }
                 .padding(.horizontal, ExecuteHomeStyle.screenInset)
@@ -489,19 +490,6 @@ private struct PlanMessageCard: View {
             .padding(ExecuteSpacing.md)
             .background(ExecuteColor.parchmentLight.opacity(0.9))
             .clipShape(RoundedRectangle(cornerRadius: ExecuteHomeStyle.cardRadius, style: .continuous))
-    }
-}
-
-private struct PlanLoadingState: View {
-    var body: some View {
-        VStack(spacing: ExecuteSpacing.sm) {
-            ProgressView().tint(ExecuteColor.chartreuseDark)
-            Text("Loading your plan...")
-                .font(ExecuteTypography.body(14))
-                .foregroundStyle(ExecuteColor.mist)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, ExecuteSpacing.xxl)
     }
 }
 

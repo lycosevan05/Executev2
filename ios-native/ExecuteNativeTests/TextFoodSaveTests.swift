@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 import Supabase
 @testable import ExecuteNative
@@ -294,6 +295,30 @@ private final class TextFoodRepository: RecoveryRepository, EntityDataServicing 
         await loading.value
         XCTAssertFalse(fixture.model.isInitialLoading)
         XCTAssertNil(fixture.model.error)
+    }
+
+    func testVerifiedFoodAppearsWhileMealPlanRequestIsStillWaiting() async throws {
+        let fixture = try await NutritionSessionFixture()
+        defer { fixture.close() }
+        let planWaiting = expectation(description: "The optional meal plan request is waiting")
+        let intakeReady = expectation(description: "Verified intake has already rendered")
+        let observer = fixture.model.$hasVerifiedIntake.filter { $0 }.prefix(1).sink { _ in intakeReady.fulfill() }
+        defer { observer.cancel() }
+        var finishPlan: CheckedContinuation<Void, Never>?
+        fixture.data.beforeReturn = { table in
+            guard table == .mealPlans else { return }
+            await withCheckedContinuation { continuation in
+                finishPlan = continuation
+                planWaiting.fulfill()
+            }
+        }
+        let loading = Task { await fixture.model.start(for: fixture.owner) }
+        await fulfillment(of: [planWaiting, intakeReady], timeout: 3)
+        XCTAssertFalse(fixture.model.hasVerifiedPlanContext)
+        XCTAssertEqual(fixture.model.snapshot.foodLogs.count, 1)
+        finishPlan?.resume()
+        await loading.value
+        XCTAssertTrue(fixture.model.hasVerifiedPlanContext)
     }
 
     func testSDKSwitchDuringReadRejectsRowsAndErrorsWithoutOverwritingNextOwnersCache() async throws {

@@ -485,9 +485,7 @@ final class HomeViewModel: ObservableObject {
             catch { _ = abandonCancelledLoad(CancellationError(), request: trackingRequest, owner: loadingUserID); return }
             guard customizationReadRevision == customizationRevision else { return }
             guard !abandonCancelledLoad(error, request: trackingRequest, owner: loadingUserID) else { return }
-            if snapshot.activePlan == nil && snapshot.dailyLog == nil && snapshot.userProfile == nil {
-                self.error = AppError.from(error, title: "Couldn't load your dashboard")
-            }
+            self.error = AppError.from(error, title: "Couldn't refresh your dashboard")
         }
         do { try checkRead() }
         catch { _ = abandonCancelledLoad(CancellationError(), request: trackingRequest, owner: loadingUserID); return }

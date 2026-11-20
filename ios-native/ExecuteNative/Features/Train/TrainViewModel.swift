@@ -1,5 +1,10 @@
 import Foundation
 
+private struct CachedTrainToday: Codable, Sendable {
+    let master: BackendRow?
+    let workouts: [BackendRow]
+}
+
 @MainActor
 final class TrainViewModel: ObservableObject {
     @Published private(set) var masterRecord: BackendRow?
@@ -7,6 +12,7 @@ final class TrainViewModel: ObservableObject {
     @Published private(set) var workoutPlans: [EntityRecord<TrainWorkoutPlan>] = []
     @Published private(set) var workoutHistory: [EntityRecord<TrainWorkoutLog>] = []
     @Published private(set) var isInitialLoading = true
+    @Published private(set) var hasVerifiedToday = false
     @Published private(set) var isRefreshing = false
     @Published private(set) var isHistoryLoading = false
     @Published private(set) var error: AppError?
@@ -14,20 +20,23 @@ final class TrainViewModel: ObservableObject {
     private let dataService: EntityDataServicing?
     private let router: AppRouter
     private let repository: RecoveryRepository?
+    private let cache: UserScopedCacheStore?
+    private let todayKey = CacheKey("train", "today")
     private var user: ExecuteUser?
     private var hasStarted = false
     private var activePlanID: UUID?
     private var generation = UUID()
 
-    init(dataService: EntityDataServicing?, router: AppRouter, repository: RecoveryRepository? = nil) {
+    init(dataService: EntityDataServicing?, router: AppRouter, repository: RecoveryRepository? = nil, cache: UserScopedCacheStore? = nil) {
         self.dataService = dataService
         self.router = router
         self.repository = repository
+        self.cache = cache
     }
 
     static func preview() -> TrainViewModel {
         let model = TrainViewModel(dataService: nil, router: AppRouter())
-        model.isInitialLoading = false
+        model.isInitialLoading = false; model.hasVerifiedToday = true
         model.activePlan = HomeAIPlan(
             planType: "daily",
             status: "active",
@@ -46,13 +55,31 @@ final class TrainViewModel: ObservableObject {
 
     func start(for user: ExecuteUser) async {
         guard !hasStarted || self.user?.id != user.id else { return }
-        generation = UUID(); masterRecord = nil; activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = []; isInitialLoading = true
+        generation = UUID(); masterRecord = nil; activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = []; isInitialLoading = true; hasVerifiedToday = false
         self.user = user
         hasStarted = true
+        if let cache {
+            let request = generation
+            let cached = await cache.read(todayKey, as: CachedTrainToday.self, userID: user.id)
+            guard request == generation, self.user?.id == user.id, !Task.isCancelled else { return }
+            if let repository, (try? repository.identity(for: user)) == nil { return }
+            switch cached {
+            case .fresh(let view), .stale(let view):
+                if view.master.map({ WorkoutRecoveryPrompt.owned($0, by: user) }) != false,
+                   view.workouts.allSatisfy({ WorkoutRecoveryPrompt.owned($0, by: user) }) {
+                    masterRecord = view.master
+                    activePlanID = view.master?.id
+                    activePlan = view.master.flatMap { try? $0.data.decoded(as: HomeAIPlan.self) }
+                    workoutPlans = view.workouts.compactMap { try? EntityRecord(row: $0) }
+                    isInitialLoading = false; hasVerifiedToday = true
+                }
+            case .missing: break
+            }
+        }
         await reload()
     }
 
-    func stop() { hasStarted = false; generation = UUID(); user = nil; masterRecord = nil; activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = [] }
+    func stop() { hasStarted = false; generation = UUID(); user = nil; masterRecord = nil; activePlan = nil; activePlanID = nil; workoutPlans = []; workoutHistory = []; hasVerifiedToday = false }
 
     func refresh() async { await reload(isRefresh: true) }
 
@@ -131,7 +158,9 @@ final class TrainViewModel: ObservableObject {
             activePlanID = canonical?.id
             activePlan = planRecords.first { $0.id == canonical?.id }?.payload
             workoutPlans = workoutRecords.filter { WorkoutRecoveryPrompt.owned($0.metadata, by: user) }
-            isInitialLoading = false; isRefreshing = false
+            isInitialLoading = false; isRefreshing = false; hasVerifiedToday = true
+            try? await cache?.write(CachedTrainToday(master: masterRecord, workouts: workoutPlans.map(\.metadata)),
+                                    for: todayKey, userID: user.id, ttl: 300)
             let logRecords = try await logs
             guard request == generation, !Task.isCancelled else { return }
             workoutHistory = TrainHistoryDetails.completedRecords(logRecords, user: user)

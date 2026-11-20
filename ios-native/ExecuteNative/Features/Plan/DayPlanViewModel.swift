@@ -8,6 +8,12 @@ struct DayPlanDraft: Codable {
     let generatedAt: Date
 }
 
+private struct CachedDayPlan: Codable, Sendable {
+    let master: BackendRow
+    let saved: BackendRow?
+    let isRest: Bool
+}
+
 @MainActor
 final class DayPlanViewModel: ObservableObject {
     let kind: DayPlanKind
@@ -25,17 +31,19 @@ final class DayPlanViewModel: ObservableObject {
     private let data: EntityDataServicing?
     private let ai: AIResponding?
     private let cache: UserScopedCacheStore
+    private let repository: RecoveryRepository?
     private let defaults: UserDefaults
     private let premium: () -> Bool
     private let canWrite: (UUID) -> Bool
     private var user: ExecuteUser?
     private var generation = UUID()
     private var draft: DayPlanDraft?
+    private var snapshotKey: CacheKey { CacheKey("day-plan-snapshot", "\(kind.rawValue).\(date)") }
 
     init(kind: DayPlanKind, date: String, data: EntityDataServicing?, ai: AIResponding?, cache: UserScopedCacheStore,
-         defaults: UserDefaults = .standard, premium: @escaping () -> Bool, canWrite: @escaping (UUID) -> Bool = { _ in true }) {
+         defaults: UserDefaults = .standard, repository: RecoveryRepository? = nil, premium: @escaping () -> Bool, canWrite: @escaping (UUID) -> Bool = { _ in true }) {
         self.kind = kind; self.date = date; self.data = data; self.ai = ai; self.cache = cache
-        self.defaults = defaults; self.premium = premium; self.canWrite = canWrite
+        self.defaults = defaults; self.repository = repository; self.premium = premium; self.canWrite = canWrite
     }
 
     var busy: Bool { isLoading || isGenerating || isSaving }
@@ -53,6 +61,20 @@ final class DayPlanViewModel: ObservableObject {
             effectiveTargets = DayPlanLogic.targets(master: restored.master, context: restored.context)
             status = "Your unsaved preview was restored. Save checks your current plan before continuing."
         }
+        let request = generation
+        let cached = await cache.read(snapshotKey, as: CachedDayPlan.self, userID: user.id)
+        guard current(request), canWrite(user.id) else { return }
+        switch cached {
+        case .fresh(let view), .stale(let view):
+            if WorkoutRecoveryPrompt.owned(view.master, by: user),
+               view.saved.map({ WorkoutRecoveryPrompt.owned($0, by: user) }) != false,
+               let cachedMaster = try? EntityRecord<JSONValue>(row: view.master) {
+                master = cachedMaster
+                saved = view.saved.flatMap { try? EntityRecord(row: $0) }
+                isRest = view.isRest
+            }
+        case .missing: break
+        }
         await refresh()
     }
 
@@ -68,16 +90,38 @@ final class DayPlanViewModel: ObservableObject {
         defer { if request == generation { isLoading = false } }
         do {
             guard DayPlanLogic.date(date) != nil else { throw DayPlanLogic.invalid("Choose a valid date.") }
-            let active = try await loadMaster(data, request: request)
-            let rows: [EntityRecord<JSONValue>] = try await data.listAll(kind.table, isCurrent: { request == self.generation }).filter { row in
-                guard let user = self.user else { return false }
-                return WorkoutRecoveryPrompt.owned(row.metadata, by: user)
+            let active: EntityRecord<JSONValue>
+            let rows: [EntityRecord<JSONValue>]
+            if let repository, let user {
+                let identity = try repository.identity(for: user)
+                async let plans = readOpeningRows(.aiPlans, fields: ["plan_type": "daily", "status": "active"], identity: identity)
+                async let children = readOpeningRows(kind.table, fields: ["date": date], identity: identity)
+                let (masters, matching) = try await (plans, children)
+                try repository.validate(identity)
+                active = try selectMaster(masters, user: user)
+                rows = matching.filter { WorkoutRecoveryPrompt.owned($0.metadata, by: user) }
+            } else {
+                active = try await loadMaster(data, request: request)
+                rows = try await data.listAll(kind.table, isCurrent: { request == self.generation }).filter { row in
+                    guard let user = self.user else { return false }
+                    return WorkoutRecoveryPrompt.owned(row.metadata, by: user)
+                }
             }
-            guard current(request) else { return }
-            master = active
-            isRest = kind == .workout ? try DayPlanLogic.isRest(active.payload, date: date) : false
-            saved = isRest ? nil : DayPlanLogic.existing(rows, masterID: active.id, date: date, kind: kind)
-        } catch { if request == generation { self.error = AppError.from(error, title: "Could not load \(kind.title.lowercased())") } }
+            guard current(request), let user, canWrite(user.id) else { return }
+            let rest = kind == .workout ? try DayPlanLogic.isRest(active.payload, date: date) : false
+            let existing = rest ? nil : DayPlanLogic.existing(rows, masterID: active.id, date: date, kind: kind)
+            master = active; isRest = rest; saved = existing
+            try? await cache.write(CachedDayPlan(master: active.metadata, saved: existing?.metadata, isRest: rest),
+                                   for: snapshotKey, userID: user.id, ttl: 300)
+        } catch {
+            guard request == generation, !Task.isCancelled else { return }
+            self.error = AppError.from(error, title: "Could not refresh \(kind.title.lowercased())")
+        }
+    }
+
+    private func readOpeningRows(_ table: EntityTable, fields: [String: String], identity: RecoveryIdentity) async throws -> [EntityRecord<JSONValue>] {
+        guard let repository else { throw CancellationError() }
+        return try await repository.rows(table, fields: fields, identity: identity).map { try EntityRecord(row: $0) }
     }
 
     func generate() async {
@@ -203,6 +247,8 @@ final class DayPlanViewModel: ObservableObject {
             try requireWrite(user.id, request: request, requiresPremium: false)
             saved = record; preview = nil; self.draft = nil; defaults.removeObject(forKey: key(user.id))
             status = acknowledged == nil && existing != nil ? "An existing saved day was loaded. No additional daily plan was created." : (kind == .workout ? "Your workout is saved." : "Your meals are saved.")
+            try? await cache.write(CachedDayPlan(master: active.metadata, saved: record.metadata, isRest: false),
+                                   for: snapshotKey, userID: user.id, ttl: 300)
             await cache.invalidate(CacheKey("home", "dashboard"), userID: user.id)
             await cache.invalidate(CacheKey("nutrition", date), userID: user.id)
         } catch { if request == generation { self.error = AppError.from(error, title: "Could not save \(kind.title.lowercased())") } }
@@ -218,6 +264,10 @@ final class DayPlanViewModel: ObservableObject {
         let records: [EntityRecord<JSONValue>] = try await data.listAll(.aiPlans, isCurrent: { request == self.generation })
         guard current(request) else { throw CancellationError() }
         guard let user else { throw CancellationError() }
+        return try selectMaster(records, user: user)
+    }
+
+    private func selectMaster(_ records: [EntityRecord<JSONValue>], user: ExecuteUser) throws -> EntityRecord<JSONValue> {
         let active = records.filter { WorkoutRecoveryPrompt.owned($0.metadata, by: user) && $0.payload["status"] == .string("active") && $0.payload["plan_type"] == .string("daily") }
         guard let canonical = RecoverySelection.canonical(active.map(\.metadata)), let selected = active.first(where: { $0.id == canonical.id }) else {
             throw DayPlanLogic.invalid("Save a performance plan in Plan before building this day.")

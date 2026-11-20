@@ -39,6 +39,7 @@ private struct NutritionScreen: View {
             router: environment.router,
             initialDate: initialDate,
             textFoodRepository: environment.makeRecoveryRepository(),
+            sharedDailyRead: true,
             canSaveTextFood: { environment.appState.allowsDraftWrites(for: $0) }
         ))
         self.presentation = presentation
@@ -123,7 +124,12 @@ struct NutritionDashboardView: View {
                     }
                 }
 
-                NutritionSummaryCard(model: model)
+                if model.hasVerifiedIntake {
+                    NutritionSummaryCard(model: model)
+                } else {
+                    Text("Food totals are unavailable until this day loads.")
+                        .font(ExecuteTypography.body(14)).frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 if let hydrationContent { hydrationContent(model.dateString) }
                 if browseWeekContent != nil {
@@ -139,7 +145,7 @@ struct NutritionDashboardView: View {
                     ExecuteSecondaryButton(title: "My cookbook") { activeSheet = .recipes }
                 }
 
-                ExecuteSecondaryButton(title: model.snapshot.mealPlan == nil ? "Build meals for this day" : "View meal plan details") {
+                ExecuteSecondaryButton(title: model.snapshot.mealPlan != nil ? "View meal plan details" : model.hasVerifiedPlanContext ? "Build meals for this day" : "Open meals for this day") {
                     model.openMealPlan()
                 }
 
@@ -168,13 +174,15 @@ struct NutritionDashboardView: View {
                     openBarcode: { activeSheet = .barcode }
                 )
 
-                NutritionLoggedSection(
-                    logs: model.snapshot.foodLogs,
-                    deletingIDs: model.deletingIDs,
-                    dateLabel: model.dateLabel,
-                    delete: { pendingDelete = $0 },
-                    edit: { pendingEdit = $0 }
-                )
+                if model.hasVerifiedIntake {
+                    NutritionLoggedSection(
+                        logs: model.snapshot.foodLogs,
+                        deletingIDs: model.deletingIDs,
+                        dateLabel: model.dateLabel,
+                        delete: { pendingDelete = $0 },
+                        edit: { pendingEdit = $0 }
+                    )
+                }
             }
             .padding(.horizontal, ExecuteHomeStyle.screenInset)
             .padding(.top, ExecuteSpacing.md)
@@ -375,7 +383,7 @@ private struct NutritionSummaryCard: View {
                             .font(ExecuteTypography.title(17))
                             .foregroundStyle(ExecuteColor.charcoal)
                     }
-                    Text(model.snapshot.targets.calories.map { "Target: \(NutritionFormat.whole($0)) kcal" } ?? "Add targets in your nutrition profile")
+                    Text(model.snapshot.targets.calories.map { "Target: \(NutritionFormat.whole($0)) kcal" } ?? (model.hasVerifiedPlanContext ? "Add targets in your nutrition profile" : "Targets unavailable"))
                         .font(ExecuteTypography.caption(10))
                         .foregroundStyle(ExecuteColor.olive)
                 }

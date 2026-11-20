@@ -40,6 +40,7 @@ enum ExecuteColorValue: Sendable {
 final class PlanViewModel: ObservableObject {
     @Published private(set) var plan: HomeAIPlan?
     @Published private(set) var isInitialLoading = true
+    @Published private(set) var hasVerifiedPlan = false
     @Published private(set) var isRefreshing = false
     @Published private(set) var error: AppError?
     @Published var changeRequest = ""
@@ -144,10 +145,23 @@ final class PlanViewModel: ObservableObject {
         generation = UUID()
         setupPresented = false; draftRestored = false; setupBaseID = nil; setupBasePayload = nil
         questionnaire = PlanQuestionnaireAnswers(); generationContext = .object([:])
-        plan = nil; activeRecord = nil; isSaving = false; isRefining = false; discardRevision()
+        plan = nil; activeRecord = nil; hasVerifiedPlan = false; error = nil; isSaving = false; isRefining = false; discardRevision()
         isInitialLoading = true
         self.user = user
         hasStarted = true
+        let request = generation
+        let cached = await cache.read(planCacheKey, as: BackendRow.self, userID: user.id)
+        guard request == generation, self.user?.id == user.id, canPersistDraft(user.id), !Task.isCancelled else { return }
+        switch cached {
+        case .fresh(let row), .stale(let row):
+            if NutritionWeekSelection.owned(row, by: user),
+               let record = try? EntityRecord<JSONValue>(row: row),
+               let decoded = try? row.data.decoded(as: HomeAIPlan.self) {
+                activeRecord = record; plan = decoded; hasVerifiedPlan = true
+                isInitialLoading = false
+            }
+        case .missing: break
+        }
         await reload()
         if self.user?.id == user.id { restoreSetupDraft() }
     }
@@ -156,7 +170,7 @@ final class PlanViewModel: ObservableObject {
         persistSetupDraft()
         hasStarted = false
         generation = UUID()
-        user = nil; activeRecord = nil; plan = nil
+        user = nil; activeRecord = nil; plan = nil; hasVerifiedPlan = false
         setupPresented = false; pendingPDF = nil; pdfNeedsAI = false; isImporting = false; byoQuestions = []; importStatus = nil; draftRestored = false
         questionnaire = PlanQuestionnaireAnswers(); generationContext = .object([:])
         isRefining = false; isSaving = false; discardRevision()
@@ -344,11 +358,19 @@ final class PlanViewModel: ObservableObject {
             try checkSave()
             let savedPlan = try saved.payload.decoded(as: HomeAIPlan.self)
             await cache.invalidate(CacheKey("home", "dashboard"), userID: user.id)
+            await cache.invalidate(CacheKey("train", "today"), userID: user.id)
+            await cache.invalidate(namespace: "day-plan-snapshot", userID: user.id)
+            await cache.invalidate(namespace: "nutrition", userID: user.id)
             try checkSave()
-            await cache.invalidate(planCacheKey, userID: user.id)
+            if NutritionWeekSelection.owned(saved.metadata, by: user) {
+                try? await cache.write(saved.metadata, for: planCacheKey, userID: user.id, ttl: 300)
+            } else {
+                await cache.invalidate(planCacheKey, userID: user.id)
+            }
             try checkSave()
             self.activeRecord = saved
             plan = savedPlan
+            hasVerifiedPlan = true
             // Leave preview and batch intact on incomplete cleanup so Save retries never create another plan.
             if cleanupFailed {
                 editStatus = "Your plan is saved. Some related updates need another attempt; use Save to finish."
@@ -454,7 +476,7 @@ final class PlanViewModel: ObservableObject {
                 let active = try await saveRepository.rows(.aiPlans, fields: ["plan_type": "daily", "status": "active"], identity: identity)
                 try saveRepository.validate(identity)
                 guard active.allSatisfy({ NutritionWeekSelection.owned($0, by: user) }) else {
-                    throw TrackPersistence.invalid("Plan records from another account were preserved.")
+                    throw AppError(title: "Could not load your plan", message: "The returned plan could not be verified for your account.")
                 }
                 records = try active.map { try EntityRecord(row: $0) }
             } else {
@@ -464,13 +486,20 @@ final class PlanViewModel: ObservableObject {
             guard let active = Self.selectActiveRecord(records) else {
                 activeRecord = nil
                 plan = nil
+                hasVerifiedPlan = true
+                if let user { await cache.invalidate(planCacheKey, userID: user.id) }
                 return
             }
+            let decoded = try active.payload.decoded(as: HomeAIPlan.self)
             activeRecord = active
-            plan = try active.payload.decoded(as: HomeAIPlan.self)
+            plan = decoded
+            hasVerifiedPlan = true
+            if let user, NutritionWeekSelection.owned(active.metadata, by: user) {
+                try? await cache.write(active.metadata, for: planCacheKey, userID: user.id, ttl: 300)
+            }
         } catch {
-            guard request == generation else { return }
-            if plan == nil { self.error = AppError.from(error, title: "Could not load your plan") }
+            guard request == generation, !Task.isCancelled else { return }
+            self.error = AppError.from(error, title: "Could not refresh your plan")
         }
     }
 

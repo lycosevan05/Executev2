@@ -1,5 +1,6 @@
 import Foundation
 import Supabase
+import OSLog
 
 enum EntityFilter: Sendable {
     case id(UUID)
@@ -92,8 +93,27 @@ extension EntityDataServicing {
 @MainActor
 final class SupabaseDataService: EntityDataServicing {
     private let client: SupabaseClient
+    private let readTimeout: Duration
+    private let readLogger = Logger(subsystem: "com.executelabs.execute.native-dev", category: "EntityRead")
+    private struct ReadKey: Hashable {
+        let owner: UUID
+        let token: String
+        let table: EntityTable
+        let fields: [String: String]
+        let order: String
+        let limit: Int
+        let offset: Int
+    }
+    private struct PendingRead {
+        let id = UUID()
+        let task: Task<[BackendRow], Error>
+    }
+    private var reads: [ReadKey: PendingRead] = [:]
 
-    init(client: SupabaseClient) { self.client = client }
+    init(client: SupabaseClient, readTimeout: Duration = .seconds(6)) {
+        self.client = client
+        self.readTimeout = readTimeout
+    }
 
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String = "-created_date", limit: Int = 100) async throws -> [EntityRecord<Payload>] {
         try await listPage(table, orderBy: orderBy, limit: limit, offset: 0)
@@ -108,19 +128,67 @@ final class SupabaseDataService: EntityDataServicing {
     }
 
     private func queryPage<Payload: Codable & Sendable>(_ table: EntityTable, matching fields: [String: String], orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
+        let rows = try await readPage(table, matching: fields, orderBy: orderBy, limit: limit, offset: offset)
+        return try rows.map { try EntityRecord<Payload>(row: $0) }
+    }
+
+    func readPage(_ table: EntityTable, matching fields: [String: String], orderBy: String, limit: Int, offset: Int) async throws -> [BackendRow] {
+        try Task.checkCancellation()
+        guard let session = client.auth.currentSession else {
+            return try await fetchPage(table, matching: fields, orderBy: orderBy, limit: limit, offset: offset)
+        }
+        let key = ReadKey(owner: session.user.id, token: session.accessToken, table: table, fields: fields, order: orderBy, limit: limit, offset: offset)
+        let pending: PendingRead
+        if let existing = reads[key] {
+            pending = existing
+        } else {
+            pending = PendingRead(task: Task { [self] in
+                try await fetchPage(table, matching: fields, orderBy: orderBy, limit: limit, offset: offset)
+            })
+            reads[key] = pending
+        }
+        defer { if reads[key]?.id == pending.id { reads[key] = nil } }
+        let rows = try await pending.task.value
+        try Task.checkCancellation()
+        guard !pending.task.isCancelled, let current = client.auth.currentSession, current.user.id == key.owner,
+              current.accessToken == key.token else { throw CancellationError() }
+        return rows
+    }
+
+    private func fetchPage(_ table: EntityTable, matching fields: [String: String], orderBy: String, limit: Int, offset: Int) async throws -> [BackendRow] {
         let descending = orderBy.hasPrefix("-")
         let column = descending ? String(orderBy.dropFirst()) : orderBy
         var query = client.from(table.rawValue).select()
-        for key in fields.keys.sorted() {
-            query = query.eq("data->>\(key)", value: fields[key]!)
+        for (field, value) in fields.sorted(by: { $0.key < $1.key }) {
+            query = query.eq("data->>\(field)", value: value)
         }
-        let rows: [BackendRow] = try await query
-            .order(column, ascending: !descending)
-            .order("id", ascending: !descending)
-            .range(from: offset, to: offset + limit - 1)
-            .execute()
-            .value
-        return try rows.map { try EntityRecord<Payload>(row: $0) }
+        var sorted = query.order(column, ascending: !descending)
+        if column != "id" { sorted = sorted.order("id", ascending: !descending) }
+        let request = sorted.range(from: offset, to: offset + limit - 1).retry(enabled: false)
+        let start = ContinuousClock.now
+        defer { readLogger.debug("Read \(table.rawValue, privacy: .public) finished in \(String(describing: start.duration(to: .now)), privacy: .public)") }
+        let timeout = readTimeout
+        do {
+            return try await withThrowingTaskGroup(of: [BackendRow].self) { group in
+                group.addTask { try await request.execute().value }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw AppError(title: "Connection is taking longer than expected", message: "Try again when your connection is ready.")
+                }
+                defer { group.cancelAll() }
+                guard let rows = try await group.next() else { throw CancellationError() }
+                return rows
+            }
+        } catch let error as PostgrestError where ["PGRST000", "PGRST001", "PGRST002", "PGRST003"].contains(error.code ?? "") {
+            readLogger.error("Read \(table.rawValue, privacy: .public) reported \(error.code ?? "unknown", privacy: .public)")
+            throw AppError(title: "Could not refresh", message: "Execute’s server is temporarily unavailable. Try again in a moment.")
+        }
+    }
+
+    private func invalidateReads(_ table: EntityTable) {
+        for key in Array(reads.keys) where key.table == table {
+            reads.removeValue(forKey: key)?.task.cancel()
+        }
     }
 
     func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload> {
@@ -143,6 +211,7 @@ final class SupabaseDataService: EntityDataServicing {
             .single()
             .execute()
             .value
+        invalidateReads(table)
         return try EntityRecord(row: row)
     }
 
@@ -152,12 +221,14 @@ final class SupabaseDataService: EntityDataServicing {
             .rpc("patch_record", params: parameters)
             .execute()
             .value
+        invalidateReads(table)
         let row = try PatchRecordResponse.row(response, expectedID: id)
         return try EntityRecord(row: row)
     }
 
     func delete(_ table: EntityTable, id: UUID) async throws {
         try await client.from(table.rawValue).delete().eq("id", value: id.uuidString).execute()
+        invalidateReads(table)
     }
 }
 

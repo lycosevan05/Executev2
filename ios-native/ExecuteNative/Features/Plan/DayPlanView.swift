@@ -18,7 +18,7 @@ private struct DayPlanScreen: View {
     init(kind: DayPlanKind, date: String, environment: AppEnvironment) {
         _appState = ObservedObject(wrappedValue: environment.appState)
         _model = StateObject(wrappedValue: DayPlanViewModel(kind: kind, date: date, data: environment.dataService, ai: environment.aiService,
-            cache: environment.cache, premium: { environment.appState.premiumState.isPremium }, canWrite: { environment.appState.allowsDraftWrites(for: $0) }))
+            cache: environment.cache, repository: environment.makeRecoveryRepository(), premium: { environment.appState.premiumState.isPremium }, canWrite: { environment.appState.allowsDraftWrites(for: $0) }))
         router = environment.router
         editEnvironment = environment
     }
@@ -29,7 +29,11 @@ private struct DayPlanScreen: View {
                 Text(model.date).font(ExecuteTypography.label(14))
                 if let error = model.error { ExecuteErrorState(error: error, retry: model.preview == nil ? { Task { await model.refresh() } } : nil) }
                 if let status = model.status { Text(status).font(ExecuteTypography.body(14)) }
-                if model.busy { ProgressView(model.isGenerating ? "Generating preview…" : model.isSaving ? "Saving…" : "Loading…").frame(maxWidth: .infinity) }
+                if model.isGenerating || model.isSaving {
+                    ProgressView(model.isGenerating ? "Generating preview…" : "Saving…")
+                } else if model.isLoading && model.displayed == nil {
+                    Text("Checking this day’s saved plan…").font(ExecuteTypography.body(14))
+                }
                 if let payload = model.displayed {
                     if model.kind == .workout { workout(payload) } else { meals(payload) }
                 }
@@ -58,7 +62,7 @@ private struct DayPlanScreen: View {
                     ExecutePrimaryButton(title: "Generate \(model.kind.title.lowercased()) preview") { Task { await model.generate() } }
                         .disabled(model.busy || (model.requiresPremiumGeneration && !appState.premiumState.isPremium)).accessibilityIdentifier("day-plan.generate")
                 }
-                if model.requiresPremiumGeneration && !appState.premiumState.isPremium {
+                if model.master != nil && model.requiresPremiumGeneration && !appState.premiumState.isPremium {
                     Text("Generating and saving personalized daily plans requires Premium.").font(ExecuteTypography.body(13))
                     ExecuteSecondaryButton(title: "Premium & Billing") { router.navigate(to: .billing) }
                 }

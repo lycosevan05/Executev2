@@ -363,6 +363,72 @@ import Supabase
     }
 }
 
+@MainActor final class ScreenReadTransportTests: XCTestCase {
+    func testSlowReadStopsAtConfiguredDeadline() async throws {
+        let fixture = HomeCancellationFixture(body: Data("[]".utf8))
+        fixture.block(table: "daily_logs", onBlocked: {})
+        try await withService(fixture, timeout: .milliseconds(50)) { service, _ in
+            do {
+                let _: [EntityRecord<JSONValue>] = try await service.list(.dailyLogs)
+                XCTFail("A stalled request published an empty result")
+            } catch let error as AppError {
+                XCTAssertEqual(error.title, "Connection is taking longer than expected")
+            }
+        }
+    }
+
+    func testSchemaCache503ReturnsRetryableErrorWithoutReissuingRead() async throws {
+        let fixture = HomeCancellationFixture(body: Data("""
+        {"code":"PGRST002","message":"Could not query the database for the schema cache. Retrying."}
+        """.utf8), statusCode: 503)
+        try await withService(fixture, timeout: .seconds(1)) { service, _ in
+            do {
+                let _: [EntityRecord<JSONValue>] = try await service.list(.dailyLogs)
+                XCTFail("A failed request published data")
+            } catch let error as AppError {
+                XCTAssertEqual(error.title, "Could not refresh")
+            }
+            XCTAssertEqual(fixture.readCount, 1)
+        }
+    }
+
+    func testNutritionAndWaterShareTheSameAuthenticatedDayRead() async throws {
+        let owner = ExecuteUser(id: UUID(), email: "shared-day@example.invalid", displayName: "Fixture")
+        let fixture = HomeCancellationFixture(body: Data("[]".utf8), signedInOwner: owner)
+        let waiting = expectation(description: "The common day read has started")
+        fixture.blockRead(table: "daily_logs") { waiting.fulfill() }
+        try await withService(fixture, timeout: .seconds(2)) { service, client in
+            _ = try await client.auth.verifyOTP(email: owner.email, token: "fixture", type: .email)
+            let nutrition = SupabaseRecoveryRepository(client: client, data: service)
+            let water = SupabaseRecoveryRepository(client: client, data: service)
+            let identity = try nutrition.identity(for: owner)
+            let first = Task { try await nutrition.rows(.dailyLogs, fields: ["date": "2026-11-19"], identity: identity) }
+            await fulfillment(of: [waiting], timeout: 1)
+            let second = Task { try await water.rows(.dailyLogs, fields: ["date": "2026-11-19"], identity: identity) }
+            try await Task.sleep(for: .milliseconds(30))
+            fixture.releaseRead(failing: false)
+            let (foodRows, waterRows) = try await (first.value, second.value)
+            XCTAssertEqual(foodRows, waterRows)
+            XCTAssertEqual(fixture.readCount, 1)
+        }
+    }
+
+    private func withService(_ fixture: HomeCancellationFixture, timeout: Duration,
+                             run: (SupabaseDataService, SupabaseClient) async throws -> Void) async throws {
+        let host = "\(UUID().uuidString.lowercased()).home-cancellation.invalid"
+        HomeCancellationProtocol.registry.set(fixture, host: host)
+        defer { HomeCancellationProtocol.registry.set(nil, host: host) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HomeCancellationProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = SupabaseClient(supabaseURL: URL(string: "https://\(host)")!, supabaseKey: "public-fixture-only", options: .init(
+            auth: .init(storage: HomeCancellationStorage(), autoRefreshToken: false, emitLocalSessionAsInitialSession: true),
+            global: .init(session: session)))
+        try await run(SupabaseDataService(client: client, readTimeout: timeout), client)
+    }
+}
+
 @MainActor final class HomeReadBoundaryTests: XCTestCase {
     func testUnchangedRepositoryIdentityPublishesOwnedReadAndCachesIt() async throws {
         try await exerciseRead()
@@ -537,9 +603,11 @@ import Supabase
 }
 
 private final class HomeCancellationStorage: AuthLocalStorage, @unchecked Sendable {
-    func store(key: String, value: Data) throws { }
-    func retrieve(key: String) throws -> Data? { nil }
-    func remove(key: String) throws { }
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+    func store(key: String, value: Data) throws { lock.withLock { values[key] = value } }
+    func retrieve(key: String) throws -> Data? { lock.withLock { values[key] } }
+    func remove(key: String) throws { lock.withLock { values[key] = nil } }
 }
 
 private final class HomeCancellationFixture: @unchecked Sendable {
@@ -555,7 +623,13 @@ private final class HomeCancellationFixture: @unchecked Sendable {
     private var blockedLimit: String?
     private var onBlocked: (() -> Void)?
     private var writes = 0
-    init(body: Data) { self.responseBody = body }
+    private var reads = 0
+    let statusCode: Int
+    let signedInOwner: ExecuteUser?
+    init(body: Data, statusCode: Int = 200, signedInOwner: ExecuteUser? = nil) {
+        self.responseBody = body; self.statusCode = statusCode; self.signedInOwner = signedInOwner
+    }
+    var readCount: Int { lock.lock(); defer { lock.unlock() }; return reads }
     func replaceBody(_ body: Data) { lock.lock(); defer { lock.unlock() }; responseBody = body }
     func blockWrite(_ onBlocked: @escaping () -> Void) { lock.lock(); defer { lock.unlock() }; onWriteBlocked = onBlocked }
     func suspendWrite(_ response: @escaping (Bool) -> Void) -> Bool {
@@ -587,7 +661,7 @@ private final class HomeCancellationFixture: @unchecked Sendable {
     }
     func shouldSuspend(_ request: URLRequest) -> Bool {
         lock.lock()
-        if request.httpMethod != "GET" { writes += 1 }
+        if request.httpMethod == "GET" { reads += 1 } else { writes += 1 }
         let limit = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
             .queryItems?.first { $0.name == "limit" }?.value
         let blocked = request.url?.lastPathComponent == blockedTable && (blockedLimit == nil || blockedLimit == limit)
@@ -614,11 +688,24 @@ private final class HomeCancellationProtocol: URLProtocol, @unchecked Sendable {
         guard let url = request.url, let fixture = Self.registry.get(url.host ?? "") else {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
+        if url.path == "/auth/v1/verify", let owner = fixture.signedInOwner {
+            let auth = """
+            {"access_token":"local-fixture-only","refresh_token":"local-refresh-only","token_type":"bearer",
+            "expires_in":3600,"expires_at":\(Int(Date().timeIntervalSince1970) + 3600),
+            "user":{"id":"\(owner.id.uuidString)","email":"\(owner.email)","aud":"authenticated","role":"authenticated",
+            "app_metadata":{},"user_metadata":{},"created_at":"2026-11-19T00:00:00Z","updated_at":"2026-11-19T00:00:00Z"}}
+            """
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(auth.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         if fixture.shouldSuspend(request) { return }
         let body = ["daily_logs", "patch_record"].contains(url.lastPathComponent) ? fixture.body : Data("[]".utf8)
         let respond: (Bool) -> Void = { [self] failing in
             if failing { client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return }
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: fixture.statusCode, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: body)
             client?.urlProtocolDidFinishLoading(self)

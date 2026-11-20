@@ -457,6 +457,29 @@ final class PlanGenerationTests: XCTestCase {
         model.questionnaire = answers()
         return (data, ai, model)
     }
+    func testOfflineReopenRetainsOnlyThisAccountsVerifiedPlan() async {
+        let data = PlanFixtureData(), cache = UserScopedCacheStore(suiteName: "VerifiedPlan.\(UUID())")
+        let original = data.rows[.aiPlans]![0]
+        data.rows[.aiPlans] = [BackendRow(id: original.id, ownerID: user.id, ownerEmail: nil, createdBy: nil,
+                                        userEmail: nil, createdDate: original.createdDate, updatedDate: original.updatedDate, data: original.data)]
+        await cache.activate(userID: user.id)
+        func view() -> PlanViewModel { PlanViewModel(dataService: data, cache: cache, router: AppRouter()) }
+        let initial = view()
+        await initial.start(for: user)
+        XCTAssertNotNil(initial.plan)
+        data.failReads = true
+        let reopened = view()
+        await reopened.start(for: user)
+        XCTAssertNotNil(reopened.plan)
+        XCTAssertTrue(reopened.hasVerifiedPlan)
+        XCTAssertNotNil(reopened.error)
+        let other = ExecuteUser(id: UUID(), email: "other-plan@example.invalid", displayName: "Other")
+        await cache.activate(userID: other.id)
+        await reopened.start(for: other)
+        XCTAssertNil(reopened.plan)
+        XCTAssertFalse(reopened.hasVerifiedPlan)
+    }
+
     func testOpeningPlanWithoutSavedPlanDefersProfileReadsUntilSetup() async {
         let data = PlanFixtureData()
         data.rows[.aiPlans] = []

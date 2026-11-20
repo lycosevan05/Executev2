@@ -76,7 +76,7 @@ struct HomeDashboardView: View {
                     if let error = model.error {
                         HomeInlineError(error: error) { Task { await model.refresh() } }
                     }
-                    ForEach(model.visibleWidgets) { widget in
+                    ForEach(model.isInitialLoading ? model.visibleWidgets.filter { $0 == .aiSummary || $0 == .quickLinks } : model.visibleWidgets) { widget in
                         widgetView(for: widget)
                             .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }

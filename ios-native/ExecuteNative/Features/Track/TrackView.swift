@@ -114,11 +114,15 @@ struct TrackDashboardView: View {
             TrackPendingCard(model: model)
             ForEach(model.currentWarnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
 
-            TrackFoodSummaryCard(
-                caloriesConsumed: model.snapshot.dailyLog?.caloriesConsumed ?? 0,
-                caloriesBurned: model.snapshot.dailyLog?.caloriesBurned ?? 0,
-                action: model.openFoodLog
-            )
+            if model.hasVerifiedDay {
+                TrackFoodSummaryCard(
+                    caloriesConsumed: model.snapshot.dailyLog?.caloriesConsumed ?? 0,
+                    caloriesBurned: model.snapshot.dailyLog?.caloriesBurned ?? 0,
+                    action: model.openFoodLog
+                )
+            } else {
+                ExecuteSecondaryButton(title: "Open food log") { model.openFoodLog() }
+            }
 
             LazyVGrid(columns: columns, spacing: ExecuteSpacing.sm) {
                 ForEach(model.visibleMetrics) { metric in
@@ -141,11 +145,13 @@ struct TrackDashboardView: View {
                 TrackAddMetricCard { isManagePresented = true }
             }
 
-            TrackCompletionCard(
-                completed: model.loggedMetricCount,
-                total: model.visibleMetrics.count + model.visibleCustomTrackers.count,
-                progress: model.completionProgress
-            )
+            if model.hasVerifiedDay {
+                TrackCompletionCard(
+                    completed: model.loggedMetricCount,
+                    total: model.visibleMetrics.count + model.visibleCustomTrackers.count,
+                    progress: model.completionProgress
+                )
+            }
         }
         .padding(.horizontal, ExecuteHomeStyle.screenInset)
         .padding(.top, ExecuteSpacing.md)

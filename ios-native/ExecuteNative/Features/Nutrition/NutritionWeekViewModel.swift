@@ -1,11 +1,17 @@
 import Foundation
 
+private struct CachedWater: Codable, Sendable {
+    let liters: Double
+    let goal: Double?
+}
+
 @MainActor
 final class NutritionWeekViewModel: ObservableObject {
     @Published private(set) var days: [NutritionWeekDay] = []
     @Published private(set) var history: [NutritionWeekHistoryDay] = []
     @Published private(set) var master: BackendRow?
     @Published private(set) var water: Double = 0
+    @Published private(set) var hasVerifiedWater = false
     @Published private(set) var waterGoal: Double?
     @Published private(set) var working = false
     @Published private(set) var error: AppError?
@@ -13,6 +19,8 @@ final class NutritionWeekViewModel: ObservableObject {
     @Published private(set) var waterReview: NutritionWeekWaterReview?
     let date: String
     private let hydrationOnly: Bool
+    private let cache: UserScopedCacheStore?
+    private var waterKey: CacheKey { CacheKey("nutrition-water", date) }
     private let repository: RecoveryRepository
     private let defaults: UserDefaults
     private let active: (UUID) -> Bool
@@ -24,8 +32,8 @@ final class NutritionWeekViewModel: ObservableObject {
     private var waterLoaded = false
 
     init(date: String, repository: RecoveryRepository, defaults: UserDefaults = .standard,
-         active: @escaping (UUID) -> Bool, hydrationOnly: Bool = false, today: @escaping () -> String = { RecoverySelection.date(Date(), timeZone: .current) }) {
-        self.date = date; self.repository = repository; self.defaults = defaults; self.active = active; self.today = today; self.hydrationOnly = hydrationOnly
+         active: @escaping (UUID) -> Bool, hydrationOnly: Bool = false, cache: UserScopedCacheStore? = nil, today: @escaping () -> String = { RecoverySelection.date(Date(), timeZone: .current) }) {
+        self.date = date; self.repository = repository; self.defaults = defaults; self.active = active; self.today = today; self.hydrationOnly = hydrationOnly; self.cache = cache
     }
     var isToday: Bool { date == today() }
     var isLoadingWater: Bool { hydrationOnly && working && !waterLoaded && pendingWater == nil }
@@ -48,7 +56,7 @@ final class NutritionWeekViewModel: ObservableObject {
     }
     func stop() {
         generation = UUID(); user = nil; identity = nil; days = []; history = []; master = nil
-        working = false; waterLoaded = false; pendingWater = nil; waterReview = nil; daily = nil; water = 0; waterGoal = nil; error = nil
+        working = false; waterLoaded = false; hasVerifiedWater = false; pendingWater = nil; waterReview = nil; daily = nil; water = 0; waterGoal = nil; error = nil
     }
     func start(for user: ExecuteUser) async {
         stop(); self.user = user
@@ -58,6 +66,15 @@ final class NutritionWeekViewModel: ObservableObject {
         do {
             guard DayPlanLogic.date(date) != nil else { throw DayPlanLogic.invalid("Choose a valid nutrition date.") }
             let identity = try repository.identity(for: user); self.identity = identity
+            if hydrationOnly, let cache {
+                let cached = await cache.read(waterKey, as: CachedWater.self, userID: user.id)
+                try check(request, identity)
+                switch cached {
+                case .fresh(let last), .stale(let last):
+                    water = last.liters; waterGoal = last.goal; hasVerifiedWater = true
+                case .missing: break
+                }
+            }
             try check(request, identity)
             async let profileRead = read(.userProfiles, request: request, identity: identity)
             let currentDaily: [BackendRow]
@@ -94,11 +111,19 @@ final class NutritionWeekViewModel: ObservableObject {
             guard currentDaily.count <= 1 else { throw DayPlanLogic.invalid("More than one DailyLog exists for this date. Water changes are paused to preserve both records.") }
             water = try NutritionWeekWater.liters(daily?.data["water_liters"])
             waterLoaded = true
+            await storeWater(identity, request: request)
             if pendingWater != nil { error = AppError(title: "Water change awaiting confirmation", message: "Retry confirmation before adding more water. Your saved activity is preserved.") }
         } catch {
             if request == generation { self.error = AppError(title: "Nutrition could not load", message: (error as? AppError)?.message ?? "Refresh your signed-in nutrition before making changes.") }
         }
     }
+    private func storeWater(_ identity: RecoveryIdentity, request: UUID) async {
+        guard (try? check(request, identity)) != nil else { return }
+        hasVerifiedWater = true
+        try? await cache?.write(CachedWater(liters: water, goal: waterGoal), for: waterKey,
+                               userID: identity.user.id, ttl: 300)
+    }
+
     func adjustWater(by delta: Double) async {
         guard canAdjustWater, let user, let identity, delta.isFinite, [0.25, 0.33, 0.5, -0.25].contains(delta) else { return }
         let request = generation
@@ -133,7 +158,7 @@ final class NutritionWeekViewModel: ObservableObject {
         guard isToday, intent.owner == identity.user.id, intent.date == date else { throw CancellationError() }
         let rows = try await read(.dailyLogs, fields: ["date": date], request: request, identity: identity)
         guard rows.count <= 1 else { throw DayPlanLogic.invalid("Duplicate DailyLogs need review; the pending change was preserved.") }
-        if let row = rows.first, NutritionWeekWater.acknowledged(row, intent: intent) { try finish(row, intent: intent, request: request, identity: identity); return }
+        if let row = rows.first, NutritionWeekWater.acknowledged(row, intent: intent) { try await finish(row, intent: intent, request: request, identity: identity); return }
         guard rows.first?.id == intent.rowID, (rows.first?.data["water_liters"] ?? .null) == intent.original else {
             throw DayPlanLogic.invalid("Water changed elsewhere. The pending change was preserved for review; it was not applied again.")
         }
@@ -146,12 +171,13 @@ final class NutritionWeekViewModel: ObservableObject {
         guard NutritionWeekSelection.owned(row, by: identity.user), NutritionWeekWater.acknowledged(row, intent: intent) else {
             throw DayPlanLogic.invalid("The server acknowledgement was incomplete. Retry confirmation before adding water.")
         }
-        try finish(row, intent: intent, request: request, identity: identity)
+        try await finish(row, intent: intent, request: request, identity: identity)
     }
-    private func finish(_ row: BackendRow, intent: NutritionWeekWaterIntent, request: UUID, identity: RecoveryIdentity) throws {
+    private func finish(_ row: BackendRow, intent: NutritionWeekWaterIntent, request: UUID, identity: RecoveryIdentity) async throws {
         try check(request, identity)
         defaults.removeObject(forKey: key(identity.user)); pendingWater = nil; waterReview = nil; daily = row; water = intent.liters; waterLoaded = true; error = nil
-        NotificationCenter.default.post(name: .recoveryDidChange, object: identity.user.id)
+        await storeWater(identity, request: request)
+        if (try? check(request, identity)) != nil { NotificationCenter.default.post(name: .recoveryDidChange, object: identity.user.id) }
     }
     /// Read-only reconciliation is available even after midnight. It never changes a past day's server data.
     func reviewPendingWater() async {
@@ -163,7 +189,7 @@ final class NutritionWeekViewModel: ObservableObject {
             let rows = try await read(.dailyLogs, fields: ["date": date], request: request, identity: identity)
             guard rows.count <= 1 else { throw DayPlanLogic.invalid("Duplicate DailyLogs need review before discarding the local change.") }
             if let row = rows.first, NutritionWeekWater.acknowledged(row, intent: intent) {
-                try finish(row, intent: intent, request: request, identity: identity); return
+                try await finish(row, intent: intent, request: request, identity: identity); return
             }
             guard pendingWater?.token == intent.token else { throw CancellationError() }
             waterReview = NutritionWeekWaterReview(token: intent.token, current: rows.first,
@@ -180,7 +206,7 @@ final class NutritionWeekViewModel: ObservableObject {
             let rows = try await read(.dailyLogs, fields: ["date": date], request: request, identity: identity)
             guard rows.count <= 1 else { throw DayPlanLogic.invalid("Duplicate DailyLogs need review; the local pending change was retained.") }
             if let row = rows.first, NutritionWeekWater.acknowledged(row, intent: intent) {
-                try finish(row, intent: intent, request: request, identity: identity); return
+                try await finish(row, intent: intent, request: request, identity: identity); return
             }
             guard pendingWater?.token == intent.token, waterReview?.token == intent.token else { throw CancellationError() }
             guard rows.first?.id == review.current?.id,
@@ -192,6 +218,7 @@ final class NutritionWeekViewModel: ObservableObject {
             try check(request, identity)
             defaults.removeObject(forKey: key(identity.user)); pendingWater = nil; waterReview = nil
             daily = rows.first; water = review.liters; waterLoaded = true; error = nil
+            await storeWater(identity, request: request)
         } catch { failedWater(error, request: request) }
     }
     private func failedWater(_ failure: Error, request: UUID) {

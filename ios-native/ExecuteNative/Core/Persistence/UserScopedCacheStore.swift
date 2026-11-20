@@ -60,6 +60,18 @@ actor UserScopedCacheStore {
         removePersistedValue(for: key)
     }
 
+    func invalidate(namespace: String, userID: UUID) {
+        guard activeUserID == userID else { return }
+        for key in Set(memory.keys).union(optimisticSnapshots.keys) where key.namespace == namespace {
+            memory[key] = nil
+            optimisticSnapshots[key] = nil
+        }
+        let prefix = "execute.cache.\(userID.uuidString).\(namespace)."
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     func deactivate() {
         memory.removeAll()
         optimisticSnapshots.removeAll()
