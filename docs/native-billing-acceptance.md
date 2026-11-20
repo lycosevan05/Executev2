@@ -603,3 +603,34 @@ the app. The acceptance target is Free within 15 minutes when neither
 provider still grants access. Valid grace, renewed App Store, active Stripe,
 and retired-owner fixtures cover the other branches. Hosted timing still
 requires independent provider and database evidence.
+
+#### Hosted results, November 19 Vancouver time
+
+The original RevenueCat destination was the Executev2 function endpoint.
+A matching renewal around 09:39:58 UTC returned HTTP 200 and had both a
+request and an execution ID in the retained function logs. The latest
+matching invocation before expiry was another HTTP 200 at 09:44:57 UTC.
+The gateway and function search found no matching invocation for the
+09:50:42 UTC expiration through 10:10 UTC. RevenueCat reported no response.
+The logs do not establish where the delivery stopped.
+
+In the isolated rehearsal the actual App Store cancellation projected
+Premium while the last paid period was still active. The later expiration
+was withheld from the isolated webhook. The period ended at
+01:41:51 UTC on November 20. The scheduled request returned HTTP 200 and
+updated exactly one row. The persisted row became Free at 01:45:05.965 UTC,
+3 minutes 15 seconds after expiry. Its last webhook remained CANCELLATION.
+No app launch or direct row edit was part of this measurement.
+
+The separate mixed control used one real card-free Stripe Sandbox trial.
+After the untouched Free result was recorded, the verified fixture was
+staged with the expired App Store deadline and the actual Stripe trial.
+At 01:50:04.456 UTC the scheduled worker wrote App Store Free and preserved
+effective Premium from the Stripe trial. After cancellation, a verified
+read returned both sources to Free. The temporary restricted key was
+revoked and its next request returned HTTP 401.
+
+The signed Free-gate probe is prepared. The device was released before
+that follow-up. The hosted evidence covers the verified Sandbox cohort.
+The legacy web reader still filters by email and needs a compatible
+path before rollout to owner-bound rows.

@@ -127,6 +127,25 @@ final class SignedDeletionUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Profile"].exists)
     }
 
+    func testHostedWitnessShowsFreeAfterScheduledExpiry() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["EXECUTE_HOSTED_WITNESS_EXPIRED"] == "1" else {
+            throw XCTSkip("Requires an independently verified hosted expiry")
+        }
+        let origin = "https://rnhwzvliewgsxhqysiom.supabase.co"
+        guard environment["EXECUTE_STAGED_DELETION_ORIGIN"] == origin,
+              let email = environment["EXECUTE_STAGED_QA_SIGN_IN_EMAIL"],
+              email.range(of: #"^w09-[a-f0-9]{32}-witness@example\.invalid$"#, options: .regularExpression) != nil else {
+            throw Failure.fixture
+        }
+
+        let app = XCUIApplication()
+        app.launch()
+        try openProfile(email, app)
+        let upgrade = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Upgrade to Premium")).firstMatch
+        try require(upgrade, "Free plan after scheduled backend expiry")
+    }
+
     private func requireFixture() async throws -> Fixture {
         guard ProcessInfo.processInfo.environment["EXECUTE_E68_SIGNED_DELETION"] == "1" else {
             throw XCTSkip("Requires the isolated signed E68 deletion fixture")
