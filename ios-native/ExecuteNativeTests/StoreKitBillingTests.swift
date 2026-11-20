@@ -347,12 +347,7 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
               (phase != .recovered || previousTransaction.map { $0 > 0 } == true) else {
             throw SandboxFixtureError.invalidInputs
         }
-        let config = try AppConfiguration.load()
-        guard Bundle.main.bundleIdentifier == "com.executelabs.execute.native-dev",
-              config.revenueCatAPIKey.hasPrefix("appl_"),
-              config.revenueCatMonthlyProductID == "execute_native_dev_premium_month" else {
-            throw SandboxFixtureError.unexpectedAppConfiguration
-        }
+        let config = try loadMonthlySandboxConfiguration()
         try await waitForCustomer(customer)
         let products = try await Product.products(for: [config.revenueCatMonthlyProductID])
         let product = try XCTUnwrap(products.first { $0.id == config.revenueCatMonthlyProductID })
@@ -383,6 +378,58 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
         XCTAssertEqual(entitlement?.productIdentifier, product.id)
         XCTAssertEqual(entitlement?.store, .appStore)
         XCTAssertEqual(entitlement?.isSandbox, true)
+    }
+
+    func testReadApprovedSandboxRenewalHistory() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["EXECUTE_SANDBOX_RENEWAL_HISTORY"] == "1" else {
+            throw XCTSkip("Requires approval to read the exact Sandbox renewal history")
+        }
+        guard #available(iOS 17.0, *) else {
+            throw XCTSkip("Verified renewal transaction reasons require iOS 17 or later for this probe")
+        }
+
+        let dates = ISO8601DateFormatter()
+        guard let after = env["EXECUTE_SANDBOX_RENEWAL_AFTER_UTC"].flatMap(dates.date(from:)),
+              let through = env["EXECUTE_SANDBOX_RENEWAL_THROUGH_UTC"].flatMap(dates.date(from:)),
+              after < through, through <= .now, through.timeIntervalSince(after) <= 24 * 60 * 60,
+              let originalID = env["EXECUTE_SANDBOX_RENEWAL_ORIGINAL_ID"].flatMap(UInt64.init), originalID > 0,
+              let customer = env["EXECUTE_HOSTED_APPLE_REFUND_CUSTOMER"],
+              EmailOTPInput.email(customer) == customer else {
+            throw SandboxFixtureError.invalidInputs
+        }
+
+        let config = try loadMonthlySandboxConfiguration()
+        try await waitForCustomer(customer)
+        var observedIDs: Set<UInt64> = []
+        var periods: [(startsAt: Date, expiresAt: Date)] = []
+        for await result in Transaction.all {
+            try Task.checkCancellation()
+            guard Purchases.shared.appUserID == customer else { throw SandboxFixtureError.unexpectedCustomer }
+            guard case .verified(let transaction) = result,
+                  transaction.productID == config.revenueCatMonthlyProductID,
+                  transaction.originalID == originalID, transaction.id != originalID,
+                  transaction.environment == .sandbox, transaction.ownershipType == .purchased,
+                  transaction.productType == .autoRenewable, transaction.reason == .renewal,
+                  !transaction.isUpgraded, transaction.revocationDate == nil,
+                  transaction.purchaseDate > after, transaction.purchaseDate <= through,
+                  let expiration = transaction.expirationDate, expiration > transaction.purchaseDate,
+                  observedIDs.insert(transaction.id).inserted else { continue }
+            periods.append((transaction.purchaseDate, expiration))
+        }
+        guard Purchases.shared.appUserID == customer else { throw SandboxFixtureError.unexpectedCustomer }
+
+        periods.sort { $0.startsAt < $1.startsAt }
+        let monthlyCadence: TimeInterval = 5 * 60
+        let tolerance: TimeInterval = 2
+        let consecutive = zip(periods, periods.dropFirst()).filter { current, next in
+            abs(current.expiresAt.timeIntervalSince(current.startsAt) - monthlyCadence) <= tolerance
+                && abs(next.startsAt.timeIntervalSince(current.expiresAt)) <= tolerance
+                && abs(next.expiresAt.timeIntervalSince(next.startsAt) - monthlyCadence) <= tolerance
+        }
+        print("SANDBOX_RENEWAL_HISTORY matched=\(periods.count) contiguous_pairs=\(consecutive.count)")
+        let pair = try XCTUnwrap(consecutive.last, "No two verified consecutive five-minute Sandbox renewals")
+        print("SANDBOX_RENEWAL_PERIOD first_start=\(pair.0.startsAt.ISO8601Format()) first_end=\(pair.0.expiresAt.ISO8601Format()) second_start=\(pair.1.startsAt.ISO8601Format()) second_end=\(pair.1.expiresAt.ISO8601Format())")
     }
 
     private enum GracePhase: String { case purchase, grace, recovered }
@@ -448,6 +495,16 @@ final class HostedAppleSandboxRefundTests: XCTestCase {
         guard Purchases.isConfigured, !Purchases.shared.isAnonymous, Purchases.shared.appUserID == customer else {
             throw SandboxFixtureError.unexpectedCustomer
         }
+    }
+
+    private func loadMonthlySandboxConfiguration() throws -> AppConfiguration {
+        let config = try AppConfiguration.load()
+        guard Bundle.main.bundleIdentifier == "com.executelabs.execute.native-dev",
+              config.revenueCatAPIKey.hasPrefix("appl_"),
+              config.revenueCatMonthlyProductID == "execute_native_dev_premium_month" else {
+            throw SandboxFixtureError.unexpectedAppConfiguration
+        }
+        return config
     }
 
     private enum SandboxFixtureError: Error {

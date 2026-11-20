@@ -501,3 +501,22 @@ times below are UTC.
   With the owner's explicit approval for Apple's combined switch, the
   temporary Sandbox grace setting was turned off. App Store Connect returned
   to Set Up Billing Grace Period.
+
+### Read-only follow-up for later renewals
+
+Use `HostedAppleSandboxRefundTests/testReadApprovedSandboxRenewalHistory`
+on the approved signed Native Dev QA device running iOS 17 or later. Set
+`EXECUTE_SANDBOX_RENEWAL_HISTORY=1`, `EXECUTE_SANDBOX_RENEWAL_ORIGINAL_ID`, and
+`EXECUTE_HOSTED_APPLE_REFUND_CUSTOMER` in the private test target environment.
+Set `EXECUTE_SANDBOX_RENEWAL_AFTER_UTC` and
+`EXECUTE_SANDBOX_RENEWAL_THROUGH_UTC` to ISO 8601 timestamps bounding the
+approved historical window. The upper bound must be in the past and within
+24 hours of the lower bound. For E72, the lower bound is
+`2026-11-19T08:52:54Z`, when the second billing issue appeared.
+
+The probe requires two consecutive Apple-verified monthly Sandbox renewal
+transactions on the same lineage, each with a five-minute period and with
+the second beginning at the first expiration, within two seconds. It reads
+StoreKit history and the app's existing customer identity. It prints
+period timestamps only. Match those timestamps independently against the
+provider and the projected billing row. [StoreKit transaction history](https://developer.apple.com/documentation/storekit/transaction/all)
