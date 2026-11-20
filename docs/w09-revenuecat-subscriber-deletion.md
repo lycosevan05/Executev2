@@ -40,8 +40,8 @@ app, existing customers and production restore settings out of the rehearsal.
 ## 2. Stage UUID ownership before changing client identity
 
 1. Add a service-owned mapping from the immutable Auth UUID to a single
-   canonical RevenueCat ID in the exact project. Use the UUID for new
-   customers. Keep a separate, verified binding for each existing email or
+   canonical RevenueCat ID in the exact project. Generate an opaque UUID for
+   new customers. Keep a separate, verified binding for each existing email or
    alias and a durable retirement marker that survives Auth deletion. Check
    case-sensitive provider IDs and email normalization for collisions. Require
    durable owner evidence such as historical UUID binding and verified
@@ -80,6 +80,32 @@ app, existing customers and production restore settings out of the rehearsal.
    or its recovery cannot be scoped.
    [SDK identification](https://www.revenuecat.com/docs/customers/identifying-customers)
    · [v2 transfer contract](https://www.revenuecat.com/docs/api-v2/customer)
+
+### Optional identity ledger foundation
+
+The isolated [ledger SQL](../supabase/tests/account-deletion/revenuecat-identity-ledger.sql)
+requires the existing billing projection fence. Service code can register a new
+opaque RevenueCat UUID for one Auth UUID, attach an alias after independent
+ownership verification, look up the binding, and retire it after the fence
+closes. The exact canonical ID and all aliases share one case-sensitive
+namespace per RevenueCat project. Retirement keeps salted fingerprints and
+removes the stored raw UUIDs. Auth removal preserves the fingerprints.
+
+A lookup is a snapshot. The future projection writer must recheck ownership
+under the admission locks in the same database transaction as the write.
+Install this foundation before connecting providers, changing client
+identities or enabling linked deletion. Historical email identities still
+require independent ownership verification before enrollment.
+
+Run the local fixture over its private Unix socket.
+
+```sh
+python3 supabase/tests/account-deletion/test_revenuecat_identity_ledger.py --pg-bin /path/to/postgres/bin
+```
+
+Withdraw all ledger consumers first. The [empty-ledger reversal](../supabase/tests/account-deletion/reverse-revenuecat-identity-ledger.sql)
+refuses to remove active or retired bindings. Reverse the empty ledger before
+attempting to reverse the billing fence.
 
 ## 3. Rehearse deletion with a signed Sandbox build
 
