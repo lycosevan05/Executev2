@@ -573,5 +573,16 @@ physical receipt probe remains pending.
 The release owner approved using the staged reconciliation fixtures for
 Apple refund reversal. The fixtures cover restoring eligibility on fresh
 provider evidence after a reversal. No live Apple reversal was observed.
-This resolves the refund-reversal acceptance item. The missing Sandbox
-expiration delivery and signed renewal history remain open.
+This resolves the refund-reversal acceptance item.
+
+The read-only StoreKit test passed on the signed physical QA iPhone. It
+found ten verified Sandbox renewals and seven contiguous five-minute
+pairs for the exact approved monthly lineage. The final pair covered
+09:40:42–09:45:42 UTC and 09:45:42–09:50:42 UTC. The normal signed app was
+reinstalled and launched after the test.
+
+An independent read of the exact Executev2 QA row still showed
+`premium/active` after the 09:50:42 UTC period ended. The last projected
+event was a renewal observed at 09:44:57 UTC. This closes the signed
+renewal-history check. Delivery of the Sandbox expiration and backend
+reconciliation remain open.
