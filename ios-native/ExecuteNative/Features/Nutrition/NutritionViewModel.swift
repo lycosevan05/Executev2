@@ -523,11 +523,11 @@ final class NutritionViewModel: ObservableObject {
         }
         do {
             try check()
-            async let foodResult: [EntityRecord<NutritionFoodLog>] = readNutritionRecords(.foodLogs, orderBy: "-created_date", limit: 300)
-            async let dailyResult: [EntityRecord<NutritionDailyLog>] = readNutritionRecords(.dailyLogs, orderBy: "-updated_date", limit: 100)
+            async let foodResult: [EntityRecord<NutritionFoodLog>] = readNutritionRecords(.foodLogs, matching: ["date": loadingDate], orderBy: "-created_date", limit: 300)
+            async let dailyResult: [EntityRecord<NutritionDailyLog>] = readNutritionRecords(.dailyLogs, matching: ["date": loadingDate], orderBy: "-updated_date", limit: 100)
             async let profileResult: [EntityRecord<HomeNutritionProfile>] = readNutritionRecords(.nutritionProfiles, orderBy: "-updated_date", limit: 10)
-            async let planResult: [EntityRecord<HomeAIPlan>] = readNutritionRecords(.aiPlans, orderBy: "-updated_date", limit: 25)
-            async let mealResult: [EntityRecord<NutritionMealPlan>] = readNutritionRecords(.mealPlans, orderBy: "-updated_date", limit: 100)
+            async let planResult: [EntityRecord<HomeAIPlan>] = readNutritionRecords(.aiPlans, matching: ["plan_type": "daily", "status": "active"], orderBy: "-updated_date", limit: 25)
+            async let mealResult: [EntityRecord<NutritionMealPlan>] = readNutritionRecords(.mealPlans, matching: ["date": loadingDate], orderBy: "-updated_date", limit: 100)
             let (foodLogs, dailyLogs, profiles, plans, mealPlans) = try await (foodResult, dailyResult, profileResult, planResult, mealResult)
             try check()
             if let identity = scope.identity {
@@ -570,12 +570,12 @@ final class NutritionViewModel: ObservableObject {
     }
 
     private func readNutritionRecords<Payload: Codable & Sendable>(
-        _ table: EntityTable, orderBy: String, limit: Int
+        _ table: EntityTable, matching fields: [String: String] = [:], orderBy: String, limit: Int
     ) async throws -> [EntityRecord<Payload>] {
         // Keep the injected service on the main actor while its network requests overlap.
         guard let dataService else { throw CancellationError() }
         try Task.checkCancellation()
-        return try await dataService.list(table, orderBy: orderBy, limit: limit)
+        return try await dataService.list(table, matching: fields, orderBy: orderBy, limit: limit)
     }
 
     private func restoreCachedSnapshot() async {

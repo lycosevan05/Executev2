@@ -457,6 +457,23 @@ final class PlanGenerationTests: XCTestCase {
         model.questionnaire = answers()
         return (data, ai, model)
     }
+    func testOpeningPlanWithoutSavedPlanDefersProfileReadsUntilSetup() async {
+        let data = PlanFixtureData()
+        data.rows[.aiPlans] = []
+        data.rows[.userProfiles] = [PlanFixtureData.row(id: UUID(), payload: .object(["age": .number(31)]), created: Date())]
+        let model = PlanViewModel(dataService: data, cache: UserScopedCacheStore(suiteName: "PlanSetupLoad.\(UUID())"),
+                                  router: AppRouter(), hasPremiumAccess: { true })
+        await model.start(for: user)
+        XCTAssertFalse(model.isInitialLoading)
+        XCTAssertNil(model.plan)
+        XCTAssertTrue(model.questionnaire.age.isEmpty)
+        XCTAssertNil(data.offsets[.userProfiles])
+        await model.beginSetup()
+        XCTAssertTrue(model.setupPresented)
+        XCTAssertEqual(Double(model.questionnaire.age), 31)
+        XCTAssertEqual(data.offsets[.userProfiles], [0])
+    }
+
     func testGenerationSchemaDefinesNestedCalendarAndTargets() throws {
         let schema = PlanRefinement.schema
         XCTAssertNotNil(schema["properties"]?["weekly_overview"]?["properties"]?["days"]?["items"]?["properties"]?["date"])

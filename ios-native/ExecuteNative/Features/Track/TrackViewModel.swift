@@ -23,6 +23,7 @@ import Foundation
     private let defaults: UserDefaults
     private let canWrite: (UUID) -> Bool
     private let today: () -> String
+    private let includeHistory: Bool
     private var generation = UUID()
     private var user: ExecuteUser?
     private var identity: RecoveryIdentity?
@@ -35,9 +36,9 @@ import Foundation
 
     init(dataService: EntityDataServicing?, cache: UserScopedCacheStore, realtimeService: RealtimeSubscribing?,
          router: AppRouter, defaults: UserDefaults = .standard, canWrite: @escaping (UUID) -> Bool = { _ in true },
-         repository: RecoveryRepository? = nil, today: @escaping () -> String = { HomeDate.todayString }) {
+         repository: RecoveryRepository? = nil, includeHistory: Bool = false, today: @escaping () -> String = { HomeDate.todayString }) {
         self.dataService = dataService; self.cache = cache; self.realtimeService = realtimeService
-        self.router = router; self.defaults = defaults; self.canWrite = canWrite; self.repository = repository; self.today = today
+        self.router = router; self.defaults = defaults; self.canWrite = canWrite; self.repository = repository; self.today = today; self.includeHistory = includeHistory
     }
     static func preview() -> TrackViewModel {
         let model = TrackViewModel(dataService: nil, cache: UserScopedCacheStore(), realtimeService: nil, router: AppRouter())
@@ -139,25 +140,38 @@ import Foundation
         defer { if generation == request { isInitialLoading = false; isRefreshing = false } }
         do {
             if let repository { identity = try repository.identity(for: user) }
-            let date = today(), profiles = try await rows(.userProfiles, request: request, user: user)
-            guard profiles.count <= 1 else { throw TrackPersistence.invalid("Multiple profiles need review before weight can be logged.") }
-            let units = try ProfileUnitSystem.saved(profiles.first?.data["units"]?.stringValue)
-            let logs = try await rows(.dailyLogs, request: request, user: user)
+            let date = today()
+            async let profileRows = rows(.userProfiles, request: request, user: user)
+            async let logRows = rows(.dailyLogs, fields: includeHistory ? [:] : ["date": date], request: request, user: user)
+            let (profiles, logs) = try await (profileRows, logRows)
             try check(request, user: user)
-            // Preserve all historical rows, including null/zero-only records and duplicate dates.
-            let past = logs.filter { row in
-                guard let day = row.data["date"]?.stringValue else { return false }
-                return DayPlanLogic.date(day) != nil && day < date && TrackPersistence.hasStoredTracking(row)
-            }.sorted { ($0.data["date"]?.stringValue ?? "", $0.id.uuidString) > ($1.data["date"]?.stringValue ?? "", $1.id.uuidString) }
-            let groups = Dictionary(grouping: past, by: { $0.data["date"]?.stringValue ?? "" })
-            snapshot.history = past.map { row in
-                TrackHistoryEntry(id: row.id, log: TrackPersistence.log(row), warnings: TrackPersistence.warnings(row) + (groups[row.data["date"]?.stringValue ?? ""]!.count > 1 ? ["Multiple records for this date were preserved."] : []))
+            guard date == today() else { throw TrackPersistence.invalid("The date changed. Refresh to load today’s tracking.") }
+            if includeHistory {
+                // Preserve all historical rows, including null/zero-only records and duplicate dates.
+                let past = logs.filter { row in
+                    guard let day = row.data["date"]?.stringValue else { return false }
+                    return DayPlanLogic.date(day) != nil && day < date && TrackPersistence.hasStoredTracking(row)
+                }.sorted { ($0.data["date"]?.stringValue ?? "", $0.id.uuidString) > ($1.data["date"]?.stringValue ?? "", $1.id.uuidString) }
+                let groups = Dictionary(grouping: past, by: { $0.data["date"]?.stringValue ?? "" })
+                snapshot.history = past.map { row in
+                    TrackHistoryEntry(id: row.id, log: TrackPersistence.log(row), warnings: TrackPersistence.warnings(row) + (groups[row.data["date"]?.stringValue ?? ""]!.count > 1 ? ["Multiple records for this date were preserved."] : []))
+                }
+                snapshot.lastKnownWeight = past.compactMap { try? TrackPersistence.number($0.data["weight_kg"]) }.first { $0 > 0 }
             }
-            snapshot.lastKnownWeight = past.compactMap { try? TrackPersistence.number($0.data["weight_kg"]) }.first { $0 > 0 }
-            unitSystem = units
-            applyDaily(try TrackPersistence.uniqueDaily(logs, date: date)); loadedDate = date
+            let current = try TrackPersistence.uniqueDaily(logs, date: date)
+            do {
+                guard profiles.count <= 1 else {
+                    throw TrackPersistence.invalid("Multiple profiles need review before weight can be logged.")
+                }
+                unitSystem = try ProfileUnitSystem.saved(profiles.first?.data["units"]?.stringValue)
+            } catch {
+                self.error = AppError.from(error, title: "Weight units need review")
+            }
+            applyDaily(current); loadedDate = date
             loadPending(user)
-            if let pending, let acknowledged = logs.first(where: { pending.acknowledged($0) }) { try finish(acknowledged, request: request, user: user) }
+            if let pending, let acknowledged = logs.first(where: { pending.acknowledged($0) }) {
+                try finish(acknowledged, request: request, user: user)
+            }
             writable = true
         } catch {
             guard generation == request else { return }

@@ -4,9 +4,9 @@ import XCTest
 @MainActor final class TrackTests: XCTestCase {
     private let user = ExecuteUser(id: UUID(), email: "track-fixture@example.invalid", displayName: "Fixture")
     private let date = "2026-11-16"
-    private func model(_ repo: TrackFixtureRepository, defaults: UserDefaults? = nil, today: (() -> String)? = nil) -> TrackViewModel {
+    private func model(_ repo: TrackFixtureRepository, defaults: UserDefaults? = nil, today: (() -> String)? = nil, includeHistory: Bool = false) -> TrackViewModel {
         TrackViewModel(dataService: nil, cache: UserScopedCacheStore(suiteName: "TrackTests.Cache.\(UUID())"), realtimeService: nil,
-            router: AppRouter(), defaults: defaults ?? UserDefaults(suiteName: "TrackTests.\(UUID())")!, repository: repo, today: today ?? { self.date })
+            router: AppRouter(), defaults: defaults ?? UserDefaults(suiteName: "TrackTests.\(UUID())")!, repository: repo, includeHistory: includeHistory, today: today ?? { self.date })
     }
     func testAllEightMetricsPatchSameRowAndPreserveOtherActivityAndSource() async {
         let repo = TrackFixtureRepository(user: user), id = UUID()
@@ -40,13 +40,29 @@ import XCTest
         XCTAssertEqual(repo.records[.dailyLogs]![0].data["native_water_mutation_id"], .string("nutrition-receipt"))
         XCTAssertEqual(repo.records[.dailyLogs]![0].data["water_units"], .string("L"))
     }
+    func testTodayUsesDateFilterAndInvalidWeightPreferenceDoesNotDisableOtherMetrics() async {
+        let repo = TrackFixtureRepository(user: user)
+        repo.records[.userProfiles] = [repo.row(["units": .string("legacy-unrecognized")])]
+        repo.records[.dailyLogs] = [repo.row(["date": .string(date), "steps": .number(7)]),
+                                   repo.row(["date": .string("2026-11-15"), "steps": .number(100)])]
+        let model = model(repo)
+        await model.start(for: user)
+        XCTAssertEqual(repo.dailyLogFilters, [["date": date]])
+        XCTAssertTrue(model.snapshot.history.isEmpty)
+        XCTAssertEqual(model.numericValue(for: .steps), 7)
+        XCTAssertTrue(model.canLog(.steps))
+        XCTAssertFalse(model.canLog(.weight))
+        XCTAssertNotNil(model.error)
+        XCTAssertEqual(repo.writes, 0)
+    }
+
     func testHistoryRetainsZeroNullMalformedAndDuplicateRowsBeyondOldLimit() async {
         let repo = TrackFixtureRepository(user: user)
         let zero = repo.row(["date": .string("2026-11-15"), "steps": .number(0), "habits_completed": .array([])])
         let null = repo.row(["date": .string("2026-11-14"), "weight_kg": .null])
         let malformed = repo.row(["date": .string("2026-11-14"), "water_liters": .string("bad"), "energy": .number(3)])
         repo.records[.dailyLogs] = (0..<120).map { _ in repo.row(["date": .string("2026-11-13"), "steps": .number(1)]) } + [zero, null, malformed]
-        let before = repo.records, model = model(repo); await model.start(for: user)
+        let before = repo.records, model = model(repo, includeHistory: true); await model.start(for: user)
         XCTAssertEqual(model.snapshot.history.count, 123)
         XCTAssertTrue(model.snapshot.history.first { $0.id == zero.id }!.log.isLogged(.steps))
         XCTAssertEqual(model.snapshot.history.first { $0.id == zero.id }!.log.habitsCompleted, [])
@@ -137,6 +153,7 @@ import XCTest
     var user: ExecuteUser
     var records: [EntityTable: [BackendRow]] = [:]
     var writes = 0
+    var dailyLogFilters: [[String: String]] = []
     var valid = true
     var loseAck = false
     var failBeforeWrite = false
@@ -151,6 +168,7 @@ import XCTest
     func validate(_ identity: RecoveryIdentity) throws { guard valid, identity.user.id == user.id else { throw CancellationError() } }
     func rows(_ table: EntityTable, fields: [String: String], identity: RecoveryIdentity) async throws -> [BackendRow] {
         try validate(identity)
+        if table == .dailyLogs { dailyLogFilters.append(fields) }
         let result = (records[table] ?? []).filter { row in fields.allSatisfy { row.data[$0.key] == .string($0.value) } }
         await afterRead?(); return result
     }

@@ -54,6 +54,7 @@ enum PatchRecordResponse {
 @MainActor
 protocol EntityDataServicing {
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>]
+    func list<Payload: Codable & Sendable>(_ table: EntityTable, matching fields: [String: String], orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>]
     func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>]
     func create<Payload: Codable & Sendable>(_ table: EntityTable, payload: Payload, user: ExecuteUser) async throws -> EntityRecord<Payload>
     func update<Payload: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<Payload>
@@ -61,6 +62,11 @@ protocol EntityDataServicing {
 }
 
 extension EntityDataServicing {
+    func list<Payload: Codable & Sendable>(_ table: EntityTable, matching fields: [String: String], orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>] {
+        let records: [EntityRecord<Payload>] = try await list(table, orderBy: orderBy, limit: limit)
+        return records.filter { row in fields.allSatisfy { row.metadata.data[$0.key] == .string($0.value) } }
+    }
+
     func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
         guard offset == 0 else {
             throw AppError(title: "More records need loading", message: "This data service does not support another page.")
@@ -93,12 +99,22 @@ final class SupabaseDataService: EntityDataServicing {
         try await listPage(table, orderBy: orderBy, limit: limit, offset: 0)
     }
 
+    func list<Payload: Codable & Sendable>(_ table: EntityTable, matching fields: [String: String], orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>] {
+        try await queryPage(table, matching: fields, orderBy: orderBy, limit: limit, offset: 0)
+    }
+
     func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
+        try await queryPage(table, matching: [:], orderBy: orderBy, limit: limit, offset: offset)
+    }
+
+    private func queryPage<Payload: Codable & Sendable>(_ table: EntityTable, matching fields: [String: String], orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
         let descending = orderBy.hasPrefix("-")
         let column = descending ? String(orderBy.dropFirst()) : orderBy
-        let rows: [BackendRow] = try await client
-            .from(table.rawValue)
-            .select()
+        var query = client.from(table.rawValue).select()
+        for key in fields.keys.sorted() {
+            query = query.eq("data->>\(key)", value: fields[key]!)
+        }
+        let rows: [BackendRow] = try await query
             .order(column, ascending: !descending)
             .order("id", ascending: !descending)
             .range(from: offset, to: offset + limit - 1)

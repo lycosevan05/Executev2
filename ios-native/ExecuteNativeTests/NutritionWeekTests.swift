@@ -96,6 +96,20 @@ import XCTest
         XCTAssertEqual(model.days.count, 7); XCTAssertEqual(model.days.compactMap(\.plan).count, 2)
         XCTAssertEqual(repo.records, before); XCTAssertEqual(repo.writes, 0)
     }
+    func testWaterCardDoesNotLoadMealPlanOrFoodHistory() async {
+        let repo = TrackFixtureRepository(user: user)
+        repo.records[.dailyLogs] = [repo.row(["date": .string(today), "water_liters": .number(1.2)])]
+        let model = NutritionWeekViewModel(date: today, repository: repo, active: { _ in true },
+                                           hydrationOnly: true, today: { self.today })
+        await model.start(for: user)
+        XCTAssertEqual(repo.dailyLogFilters, [["date": today]])
+        XCTAssertEqual(model.water, 1.2)
+        XCTAssertTrue(model.canAdjustWater)
+        XCTAssertTrue(model.days.isEmpty)
+        XCTAssertTrue(model.history.isEmpty)
+        XCTAssertEqual(repo.writes, 0)
+    }
+
     func testWaterUpdatesSameDailyRowAndPreservesAllUnrelatedFieldsTables() async {
         let repo = repository(), id = UUID()
         repo.records[.dailyLogs] = [row(["date": .string(today), "water_liters": .number(1), "water_units": .string("L"),

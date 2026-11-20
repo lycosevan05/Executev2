@@ -128,7 +128,7 @@ struct NutritionWeekHydrationView: View {
     init(environment: AppEnvironment, date: String) {
         _appState = ObservedObject(wrappedValue: environment.appState)
         _model = StateObject(wrappedValue: NutritionWeekViewModel(date: date, repository: environment.makeRecoveryRepository(),
-            active: { environment.appState.allowsDraftWrites(for: $0) }))
+            active: { environment.appState.allowsDraftWrites(for: $0) }, hydrationOnly: true))
     }
     private var user: ExecuteUser? { if case .signedIn(let user) = appState.launchState { return user }; return nil }
     var body: some View {
@@ -138,14 +138,16 @@ struct NutritionWeekHydrationView: View {
                 Text(verbatim: String(format: "%.2f L logged", model.water) + (model.waterGoal.map { " / \(String(format: "%.1f", $0)) L goal" } ?? ""))
                     .font(ExecuteTypography.body(15)).accessibilityIdentifier("nutrition-water.amount")
                 if let goal = model.waterGoal { ProgressView(value: min(1, model.water / goal)); if model.water >= goal { Text("Daily water goal reached") } }
-                if model.working { ProgressView("Updating water…") }
+                if model.working { ProgressView(model.isLoadingWater ? "Loading water…" : "Updating water…") }
                 if model.isToday {
                     ViewThatFits(in: .horizontal) {
                         HStack { controls }
                         VStack(alignment: .leading) { controls }
                     }
                 } else { Text("Water can only be logged on today's date").font(ExecuteTypography.body(13)) }
-                if let error = model.error { ExecuteErrorState(error: error, retry: nil) }
+                if let error = model.error {
+                    ExecuteErrorState(error: error) { if let user { Task { await model.start(for: user) } } }
+                }
                 if model.pendingWater != nil {
                     Button("Retry water confirmation") { Task { await model.retryWater() } }.frame(minHeight: 44)
                         .disabled(model.working || !model.isToday)
@@ -160,6 +162,8 @@ struct NutritionWeekHydrationView: View {
                     Button("Refresh water") { if let user { Task { await model.start(for: user) } } }.frame(minHeight: 44).disabled(model.working)
                 }
             }
+            .padding(ExecuteSpacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: user?.id) { if let user { await model.start(for: user) } else { model.stop() } }
         .onDisappear { model.stop() }

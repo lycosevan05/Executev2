@@ -12,6 +12,7 @@ final class NutritionWeekViewModel: ObservableObject {
     @Published private(set) var pendingWater: NutritionWeekWaterIntent?
     @Published private(set) var waterReview: NutritionWeekWaterReview?
     let date: String
+    private let hydrationOnly: Bool
     private let repository: RecoveryRepository
     private let defaults: UserDefaults
     private let active: (UUID) -> Bool
@@ -23,10 +24,11 @@ final class NutritionWeekViewModel: ObservableObject {
     private var waterLoaded = false
 
     init(date: String, repository: RecoveryRepository, defaults: UserDefaults = .standard,
-         active: @escaping (UUID) -> Bool, today: @escaping () -> String = { RecoverySelection.date(Date(), timeZone: .current) }) {
-        self.date = date; self.repository = repository; self.defaults = defaults; self.active = active; self.today = today
+         active: @escaping (UUID) -> Bool, hydrationOnly: Bool = false, today: @escaping () -> String = { RecoverySelection.date(Date(), timeZone: .current) }) {
+        self.date = date; self.repository = repository; self.defaults = defaults; self.active = active; self.today = today; self.hydrationOnly = hydrationOnly
     }
     var isToday: Bool { date == today() }
+    var isLoadingWater: Bool { hydrationOnly && working && !waterLoaded && pendingWater == nil }
     var canAdjustWater: Bool { isToday && waterLoaded && !working && pendingWater == nil }
     private func key(_ user: ExecuteUser) -> String {
         UserScopedCacheStore.nutritionWaterIntentPrefix(for: user.id) + date
@@ -57,17 +59,28 @@ final class NutritionWeekViewModel: ObservableObject {
             guard DayPlanLogic.date(date) != nil else { throw DayPlanLogic.invalid("Choose a valid nutrition date.") }
             let identity = try repository.identity(for: user); self.identity = identity
             try check(request, identity)
-            let masters = try await read(.aiPlans, request: request, identity: identity)
-            let plans = try await read(.mealPlans, request: request, identity: identity)
-            let logs = try await read(.dailyLogs, request: request, identity: identity)
-            let foods = try await read(.foodLogs, request: request, identity: identity)
-            let profiles = try await read(.userProfiles, request: request, identity: identity)
-            let selected = NutritionWeekSelection.master(rows: masters, user: user)
-            let currentDaily = logs.filter { $0.data["date"] == .string(date) }
+            async let profileRead = read(.userProfiles, request: request, identity: identity)
+            let currentDaily: [BackendRow]
+            let profiles: [BackendRow]
+            if hydrationOnly {
+                async let dailyRead = read(.dailyLogs, fields: ["date": date], request: request, identity: identity)
+                (currentDaily, profiles) = try await (dailyRead, profileRead)
+            } else {
+                async let masterRead = read(.aiPlans, request: request, identity: identity)
+                async let planRead = read(.mealPlans, request: request, identity: identity)
+                async let logRead = read(.dailyLogs, request: request, identity: identity)
+                async let foodRead = read(.foodLogs, request: request, identity: identity)
+                let (masters, plans, logs, foods, savedProfiles) = try await (masterRead, planRead, logRead, foodRead, profileRead)
+                try check(request, identity)
+                let selected = NutritionWeekSelection.master(rows: masters, user: user)
+                master = selected
+                days = NutritionWeekSelection.days(rows: plans, master: selected, dates: DayPlanLogic.rollingDates(starting: date), user: user)
+                history = NutritionWeekHistory.days(daily: logs, foods: foods, plans: plans, master: selected, today: today(), user: user)
+                currentDaily = logs.filter { $0.data["date"] == .string(date) }
+                profiles = savedProfiles
+            }
+            try check(request, identity)
             // Duplicate same-day DailyLogs need review; never choose one arbitrarily for a water write.
-            self.master = selected
-            days = NutritionWeekSelection.days(rows: plans, master: selected, dates: DayPlanLogic.rollingDates(starting: date), user: user)
-            history = NutritionWeekHistory.days(daily: logs, foods: foods, plans: plans, master: selected, today: today(), user: user)
             daily = currentDaily.count == 1 ? currentDaily.first : nil
             waterGoal = RecoverySelection.sorted(profiles).first?.data["water_goal_liters"]?.doubleValue.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
             if let encoded = defaults.data(forKey: key(user)) {
@@ -138,7 +151,7 @@ final class NutritionWeekViewModel: ObservableObject {
     private func finish(_ row: BackendRow, intent: NutritionWeekWaterIntent, request: UUID, identity: RecoveryIdentity) throws {
         try check(request, identity)
         defaults.removeObject(forKey: key(identity.user)); pendingWater = nil; waterReview = nil; daily = row; water = intent.liters; waterLoaded = true; error = nil
-        NotificationCenter.default.post(name: .recoveryDidChange, object: nil)
+        NotificationCenter.default.post(name: .recoveryDidChange, object: identity.user.id)
     }
     /// Read-only reconciliation is available even after midnight. It never changes a past day's server data.
     func reviewPendingWater() async {

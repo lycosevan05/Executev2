@@ -329,6 +329,7 @@ final class WeightUnitTests: XCTestCase {
     var patches: [JSONValue] = []
     var loseAck = false, wrongAck = false, failRead = false
     var beforeAck: (() -> Void)?, beforeRead: (() -> Void)?
+    var beforeTableRead: ((EntityTable) async -> Void)?
     init() {
         for table in [EntityTable.userProfiles, .workoutProfiles, .nutritionProfiles] { rows[table] = [Self.row(["custom": .string("preserve")])] }
         rows[.aiPlans] = [Self.row(["status": .string("active"), "plan_type": .string("daily"), "nutrition_targets": .object(["calories": .number(2200)])])]
@@ -340,7 +341,8 @@ final class WeightUnitTests: XCTestCase {
     func replace(_ table: EntityTable, _ fields: [String: JSONValue], owner: UUID? = nil) { rows[table] = [Self.row(fields, id: rows[table]?.first?.id ?? UUID(), owner: owner)] }
     func list<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int) async throws -> [EntityRecord<Payload>] { try await listPage(table, orderBy: orderBy, limit: limit, offset: 0) }
     func listPage<Payload: Codable & Sendable>(_ table: EntityTable, orderBy: String, limit: Int, offset: Int) async throws -> [EntityRecord<Payload>] {
-        reads += 1; beforeRead?(); if failRead { throw URLError(.notConnectedToInternet) }
+        reads += 1; beforeRead?(); await beforeTableRead?(table)
+        if failRead { throw URLError(.notConnectedToInternet) }
         return try (rows[table] ?? []).dropFirst(offset).prefix(limit).map { try EntityRecord(row: $0) }
     }
     func update<Payload: Codable & Sendable>(_ table: EntityTable, id: UUID, patch: JSONValue) async throws -> EntityRecord<Payload> {
@@ -2553,6 +2555,32 @@ final class WorkoutHistoryTests: XCTestCase {
 
 @MainActor final class WorkoutHistoryLoadingTests: XCTestCase {
     private let user = ExecuteUser(id: UUID(), email: "history@example.invalid", displayName: "QA")
+    func testTrainShowsTodayWhileWorkoutHistoryIsWaiting() async {
+        let data = PreferenceData()
+        data.rows[.aiPlans] = [PreferenceData.row(["status": .string("active"), "plan_type": .string("daily")], owner: user.id)]
+        let model = TrainViewModel(dataService: data, router: AppRouter())
+        let historyStarted = expectation(description: "Workout history is held")
+        let dashboardReady = expectation(description: "Today is ready")
+        let observer = model.$isInitialLoading.dropFirst().filter { !$0 }.prefix(1).sink { _ in dashboardReady.fulfill() }
+        defer { observer.cancel() }
+        var finishHistory: CheckedContinuation<Void, Never>?
+        data.beforeTableRead = { table in
+            guard table == .workoutLogs else { return }
+            await withCheckedContinuation {
+                finishHistory = $0
+                historyStarted.fulfill()
+            }
+        }
+        let loading = Task { await model.start(for: user) }
+        await fulfillment(of: [historyStarted, dashboardReady], timeout: 3)
+        XCTAssertNotNil(model.activePlan)
+        XCTAssertFalse(model.isInitialLoading)
+        XCTAssertTrue(model.isHistoryLoading)
+        finishHistory?.resume()
+        await loading.value
+        XCTAssertFalse(model.isHistoryLoading)
+    }
+
     func testCompletedHistoryBehindMoreThanOnePageOfDraftsLoadsWithoutWrites() async {
         let data = PreferenceData()
         let completed = PreferenceData.row(["status": .string("completed"), "workout_name": .string("Saved session")], owner: user.id)

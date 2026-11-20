@@ -448,12 +448,22 @@ final class PlanViewModel: ObservableObject {
         }
 
         do {
-            let records: [EntityRecord<JSONValue>] = try await dataService.listAll(.aiPlans, isCurrent: { request == self.generation })
+            let records: [EntityRecord<JSONValue>]
+            if let saveRepository, let user {
+                let identity = try saveRepository.identity(for: user)
+                let active = try await saveRepository.rows(.aiPlans, fields: ["plan_type": "daily", "status": "active"], identity: identity)
+                try saveRepository.validate(identity)
+                guard active.allSatisfy({ NutritionWeekSelection.owned($0, by: user) }) else {
+                    throw TrackPersistence.invalid("Plan records from another account were preserved.")
+                }
+                records = try active.map { try EntityRecord(row: $0) }
+            } else {
+                records = try await dataService.listAll(.aiPlans, isCurrent: { request == self.generation })
+            }
             guard request == generation, !Task.isCancelled else { return }
             guard let active = Self.selectActiveRecord(records) else {
                 activeRecord = nil
                 plan = nil
-                try await loadSetupContext(dataService, request: request)
                 return
             }
             activeRecord = active

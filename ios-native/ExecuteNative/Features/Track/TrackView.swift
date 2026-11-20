@@ -680,7 +680,8 @@ private struct TrackHistoryScreen: View {
             realtimeService: nil,
             router: environment.router,
             canWrite: { environment.appState.allowsDraftWrites(for: $0) },
-            repository: environment.makeRecoveryRepository()
+            repository: environment.makeRecoveryRepository(),
+            includeHistory: true
         ))
     }
 

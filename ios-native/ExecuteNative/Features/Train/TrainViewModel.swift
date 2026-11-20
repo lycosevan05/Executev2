@@ -8,18 +8,21 @@ final class TrainViewModel: ObservableObject {
     @Published private(set) var workoutHistory: [EntityRecord<TrainWorkoutLog>] = []
     @Published private(set) var isInitialLoading = true
     @Published private(set) var isRefreshing = false
+    @Published private(set) var isHistoryLoading = false
     @Published private(set) var error: AppError?
 
     private let dataService: EntityDataServicing?
     private let router: AppRouter
+    private let repository: RecoveryRepository?
     private var user: ExecuteUser?
     private var hasStarted = false
     private var activePlanID: UUID?
     private var generation = UUID()
 
-    init(dataService: EntityDataServicing?, router: AppRouter) {
+    init(dataService: EntityDataServicing?, router: AppRouter, repository: RecoveryRepository? = nil) {
         self.dataService = dataService
         self.router = router
+        self.repository = repository
     }
 
     static func preview() -> TrainViewModel {
@@ -104,7 +107,7 @@ final class TrainViewModel: ObservableObject {
     }
 
     private func reload(isRefresh: Bool = false) async {
-        guard let dataService, let user else {
+        guard dataService != nil, let user else {
             isInitialLoading = false
             return
         }
@@ -112,31 +115,43 @@ final class TrainViewModel: ObservableObject {
         if isRefresh { isRefreshing = true }
         let request = generation
         error = nil
+        isHistoryLoading = true
         defer {
-            if request == generation { isInitialLoading = false; isRefreshing = false }
+            if request == generation { isInitialLoading = false; isRefreshing = false; isHistoryLoading = false }
         }
 
         do {
-            // EntityDataServicing is main-actor isolated; keep these reads on the
-            // actor rather than sending the service through child tasks.
-            let planRecords: [EntityRecord<HomeAIPlan>] = try await dataService.listAll(.aiPlans, isCurrent: { request == self.generation })
-            let workoutRecords: [EntityRecord<TrainWorkoutPlan>] = try await dataService.listAll(.workoutPlans, isCurrent: { request == self.generation })
-            let logRecords: [EntityRecord<TrainWorkoutLog>] = try await dataService.listAll(.workoutLogs, isCurrent: { request == self.generation })
+            async let plans = readActivePlans(user: user, request: request)
+            async let workouts: [EntityRecord<TrainWorkoutPlan>] = read(.workoutPlans, request: request)
+            async let logs: [EntityRecord<TrainWorkoutLog>] = read(.workoutLogs, request: request)
+            let (planRecords, workoutRecords) = try await (plans, workouts)
             guard request == generation, !Task.isCancelled else { return }
             let canonical = RecoverySelection.canonical(planRecords.filter { WorkoutRecoveryPrompt.owned($0.metadata, by: user) && $0.payload.planType == "daily" && $0.payload.status == "active" }.map(\.metadata))
             masterRecord = canonical
             activePlanID = canonical?.id
             activePlan = planRecords.first { $0.id == canonical?.id }?.payload
             workoutPlans = workoutRecords.filter { WorkoutRecoveryPrompt.owned($0.metadata, by: user) }
+            isInitialLoading = false; isRefreshing = false
+            let logRecords = try await logs
+            guard request == generation, !Task.isCancelled else { return }
             workoutHistory = TrainHistoryDetails.completedRecords(logRecords, user: user)
         } catch {
             if request == generation { self.error = AppError.from(error, title: "Could not load training") }
         }
     }
 
-    private func selectActivePlan(_ records: [EntityRecord<HomeAIPlan>]) -> EntityRecord<HomeAIPlan>? {
-        records.filter { $0.payload.planType == "daily" && $0.payload.status == "active" }
-            .max { ($0.createdDate ?? .distantPast) < ($1.createdDate ?? .distantPast) }
+    private func read<P: Codable & Sendable>(_ table: EntityTable, request: UUID) async throws -> [EntityRecord<P>] {
+        guard let dataService else { throw CancellationError() }
+        return try await dataService.listAll(table, isCurrent: { request == self.generation })
+    }
+
+    private func readActivePlans(user: ExecuteUser, request: UUID) async throws -> [EntityRecord<HomeAIPlan>] {
+        guard let repository else { return try await read(.aiPlans, request: request) }
+        guard request == generation else { throw CancellationError() }
+        let identity = try repository.identity(for: user)
+        let rows = try await repository.rows(.aiPlans, fields: ["plan_type": "daily", "status": "active"], identity: identity)
+        try repository.validate(identity)
+        return try rows.filter { WorkoutRecoveryPrompt.owned($0, by: user) }.map { try EntityRecord(row: $0) }
     }
 }
 

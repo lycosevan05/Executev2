@@ -14,7 +14,7 @@ private struct TrainScreen: View {
 
     init(environment: AppEnvironment) {
         _appState = ObservedObject(wrappedValue: environment.appState)
-        _model = StateObject(wrappedValue: TrainViewModel(dataService: environment.dataService, router: environment.router))
+        _model = StateObject(wrappedValue: TrainViewModel(dataService: environment.dataService, router: environment.router, repository: environment.makeRecoveryRepository()))
     }
 
     var body: some View {
@@ -196,7 +196,9 @@ struct TrainDashboardView: View {
 
     @ViewBuilder private var historyContent: some View {
         TrainSectionHeading(title: "Completed sessions", subtitle: "Your recent training record.")
-        if model.workoutHistory.isEmpty {
+        if model.isHistoryLoading && model.workoutHistory.isEmpty {
+            ProgressView("Loading completed sessions…")
+        } else if model.workoutHistory.isEmpty {
             TrainMessageCard(text: "Completed workouts will appear here.")
         } else {
             ForEach(model.workoutHistory) { record in
