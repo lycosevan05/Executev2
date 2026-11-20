@@ -15,19 +15,26 @@ function verifiedWriter(): StripeDependencies["verified"] {
   const project = Deno.env.get("EXECUTE_VERIFIED_BILLING_PROJECT");
   const approvedURL = Deno.env.get("EXECUTE_VERIFIED_BILLING_SUPABASE_URL");
   const environment = Deno.env.get("EXECUTE_VERIFIED_BILLING_ENVIRONMENT");
+  const productList = Deno.env.get("EXECUTE_VERIFIED_REVENUECAT_PRODUCTS");
   if (
-    project === undefined && approvedURL === undefined &&
-    environment === undefined
+    [project, approvedURL, environment, productList].every((value) =>
+      value === undefined
+    )
   ) {
     return undefined;
   }
+  const products = productList?.split(",").map((product) => product.trim()) ??
+    [];
   if (
     !project || !/^[A-Za-z0-9_-]{1,100}$/.test(project) || !approvedURL ||
     approvedURL !== Deno.env.get("SUPABASE_URL") ||
-    (environment !== "SANDBOX" && environment !== "PRODUCTION")
+    (environment !== "SANDBOX" && environment !== "PRODUCTION") ||
+    !products.length || products.length > 24 ||
+    products.some((product) => !/^[A-Za-z0-9_.-]{1,100}$/.test(product))
   ) return false;
   return {
     environment,
+    products: new Set(products),
     async read(ownerId) {
       const { data, error } = await serviceClient().rpc(
         "read_verified_billing_subject",
@@ -35,6 +42,14 @@ function verifiedWriter(): StripeDependencies["verified"] {
           p_project: project,
           p_owner_id: ownerId,
         },
+      );
+      if (error) throw error;
+      return data;
+    },
+    async readIdentifier(identifier) {
+      const { data, error } = await serviceClient().rpc(
+        "read_verified_billing_subject",
+        { p_project: project, p_identifier: identifier },
       );
       if (error) throw error;
       return data;

@@ -188,6 +188,7 @@ function verifiedFixture() {
     "cus_fixture",
     { id: "cus_fixture", livemode: false, metadata },
   ]]);
+  f.rows.get(email)!.data.user_id = owner;
   const subject: Data = {
     state: "active",
     owner_id: owner,
@@ -198,12 +199,28 @@ function verifiedFixture() {
   };
   const projects: VerifiedStripeChange[][] = [];
   const ownerReads: string[] = [];
-  let provider = revenueCat(true);
+  const identifierReads: string[] = [];
+  const aliases = new Map<string, Data>();
+  const attachOriginal = (value: Data): Data & { subscriber: Data } => ({
+    ...value,
+    subscriber: {
+      original_app_user_id: canonicalCustomer,
+      ...(value.subscriber as Data),
+    },
+  });
+  let provider = attachOriginal(revenueCat(true));
   f.deps.verified = {
     environment: "SANDBOX",
+    products: new Set(["native_month"]),
     read(id) {
       ownerReads.push(id);
       return Promise.resolve(subject);
+    },
+    readIdentifier(identifier) {
+      identifierReads.push(identifier);
+      return Promise.resolve(
+        aliases.get(identifier) ?? { state: "unresolved" },
+      );
     },
     apply(changes) {
       projects.push(structuredClone(changes));
@@ -244,11 +261,16 @@ function verifiedFixture() {
     owned,
     projects,
     ownerReads,
+    identifierReads,
+    aliases,
     subject,
     customers,
     handle: () => createStripeHandler(f.deps)(f.request()),
     setProvider(value: Data) {
-      provider = value;
+      provider = attachOriginal(value);
+    },
+    setOriginal(original: string | undefined) {
+      provider.subscriber.original_app_user_id = original;
     },
   };
 }
@@ -270,6 +292,74 @@ Deno.test("verified Stripe commits through the owner-bound writer and preserves 
   equal(record.data.revenuecat_environment, "SANDBOX");
   equal(record.data.plan, "premium");
   equal(record.data.store, "app_store");
+  deepEqual(f.identifierReads, []);
+});
+
+Deno.test("verified Stripe accepts the same bound original and standard unresolved RevenueCat anonymous IDs", async () => {
+  const bound = verifiedFixture();
+  bound.setOriginal("legacy-verified-customer");
+  bound.aliases.set("legacy-verified-customer", structuredClone(bound.subject));
+  equal((await bound.handle()).status, 200);
+  deepEqual(bound.identifierReads, ["legacy-verified-customer"]);
+  equal(bound.projects.length, 1);
+
+  const anonymous = verifiedFixture();
+  const standardID = "$RCAnonymousID:1234567890abcdef1234567890abcdef";
+  anonymous.setOriginal(standardID);
+  equal((await anonymous.handle()).status, 200);
+  deepEqual(anonymous.identifierReads, [standardID]);
+  equal(anonymous.projects.length, 1);
+});
+
+Deno.test("verified Stripe fails closed for foreign, retired or stale RevenueCat originals", async () => {
+  for (
+    const state of [
+      "foreign",
+      "retired",
+      "blocked",
+      "outdated",
+      "unresolved",
+      "missing",
+    ]
+  ) {
+    const f = verifiedFixture();
+    const standardID = "$RCAnonymousID:1234567890abcdef1234567890abcdef";
+    const original = state === "blocked" ? standardID : "disputed-owner";
+    f.setOriginal(state === "missing" ? undefined : original);
+    if (state === "foreign") {
+      f.aliases.set(original, { ...f.subject, owner_id: otherOwner });
+    } else if (state === "outdated") {
+      f.aliases.set(original, {
+        ...f.subject,
+        subscription: { ...f.rows.get(email), updated_date: now },
+      });
+    } else if (state !== "missing") {
+      f.aliases.set(original, { state });
+    }
+    equal((await f.handle()).status, 503, state);
+    deepEqual(f.projects, [], state);
+  }
+});
+
+Deno.test("verified Stripe accepts paid RevenueCat only for an explicitly scoped App Store product", async () => {
+  for (const condition of ["other product", "other store", "missing store"]) {
+    const f = verifiedFixture();
+    if (condition === "other product") {
+      const mode = f.deps.verified;
+      if (!mode) throw new Error("Missing verified fixture mode");
+      mode.products = new Set(["native_annual"]);
+    } else {
+      f.setProvider(revenueCat(true, {}, {
+        store: condition === "other store" ? "play_store" : undefined,
+      }));
+    }
+    equal((await f.handle()).status, 503, condition);
+    deepEqual(f.projects, [], condition);
+  }
+  const foreignRow = verifiedFixture();
+  foreignRow.rows.get(email)!.data.user_id = otherOwner;
+  equal((await foreignRow.handle()).status, 503);
+  deepEqual(foreignRow.projects, []);
 });
 
 Deno.test("verified Stripe never falls back to email when mode is incomplete or provider ownership is unverified", async () => {

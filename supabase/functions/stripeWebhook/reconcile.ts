@@ -29,7 +29,9 @@ export interface VerifiedStripeChange {
 
 interface VerifiedStripeWriter {
   environment: BillingEnvironment;
+  products: ReadonlySet<string>;
   read(ownerId: string): Promise<unknown>;
+  readIdentifier(identifier: string): Promise<unknown>;
   apply(changes: VerifiedStripeChange[]): Promise<void>;
 }
 
@@ -82,6 +84,8 @@ function emailFor(subscription: BillingData): string {
 }
 
 const canonicalUUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const revenueCatAnonymousID =
+  /^\$RCAnonymousID:(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/;
 
 function ownerFor(stripeObject: BillingData): string {
   const owner = object(stripeObject.metadata).execute_owner_uuid;
@@ -159,6 +163,62 @@ async function verifyStripeCustomer(
   }
 }
 
+function verifiedProjectionRow(
+  value: unknown,
+  owner: string,
+): SubscriptionRow | null {
+  if (value === null) return null;
+  const row = object(value);
+  const data = object(row.data);
+  if (
+    data.user_id !== owner || typeof row.updated_date !== "string" ||
+    !Number.isFinite(Date.parse(row.updated_date))
+  ) throw new Error("Invalid owner-bound billing projection");
+  return { data, updated_date: row.updated_date };
+}
+
+async function verifiedRevenueCatProjection(
+  writer: VerifiedStripeWriter,
+  body: BillingData,
+  customer: string,
+  owner: string,
+  email: string,
+  revision: string | null,
+): Promise<BillingData> {
+  const subscriber = object(body.subscriber);
+  const original = subscriber.original_app_user_id;
+  if (
+    typeof original !== "string" || !original.length || original.length > 100 ||
+    original !== original.trim() || /[\p{Cc}/]/u.test(original)
+  ) throw new Error("Invalid RevenueCat customer ID");
+
+  if (original !== customer) {
+    const alias = object(await writer.readIdentifier(original));
+    const unresolvedAnonymous = alias.state === "unresolved" &&
+      revenueCatAnonymousID.test(original);
+    if (
+      !unresolvedAnonymous && (
+        alias.state !== "active" || alias.owner_id !== owner ||
+        alias.customer_id !== customer || alias.email !== email ||
+        alias.environment !== writer.environment ||
+        (verifiedProjectionRow(alias.subscription, owner)?.updated_date ??
+            null) !== revision
+      )
+    ) throw new Error("RevenueCat subscriber ownership mismatch");
+  }
+
+  const projection = revenueCatProjection(body, customer);
+  if (projection.revenuecat_plan === "premium") {
+    const product = projection.revenuecat_product_id;
+    if (
+      typeof product !== "string" || !writer.products.has(product) ||
+      projection.revenuecat_environment !== writer.environment ||
+      object(object(subscriber.subscriptions)[product]).store !== "app_store"
+    ) throw new Error("Unconfirmed RevenueCat entitlement scope");
+  }
+  return projection;
+}
+
 async function reconcileVerifiedStripe(
   deps: StripeDependencies,
   writer: VerifiedStripeWriter,
@@ -197,21 +257,9 @@ async function reconcileVerifiedStripe(
     typeof rcCustomer !== "string" || !canonicalUUID.test(rcCustomer) ||
     rcCustomer === owner
   ) throw new Error("Verified billing subject is unavailable");
-  const row = subject.subscription === null
-    ? null
-    : object(subject.subscription);
-  const previous = row ? object(row.data) : {};
-  const updatedDate = row === null ? null : row.updated_date;
-  if (
-    updatedDate !== null &&
-    (typeof updatedDate !== "string" ||
-      !Number.isFinite(Date.parse(updatedDate)))
-  ) {
-    throw new Error("Invalid billing projection revision");
-  }
-  if (row && updatedDate === null) {
-    throw new Error("Missing billing projection revision");
-  }
+  const row = verifiedProjectionRow(subject.subscription, owner);
+  const previous = row?.data ?? {};
+  const updatedDate = row?.updated_date ?? null;
 
   // Read provider state again after the projection revision is known, and
   // validate every Stripe customer represented by the resulting batch.
@@ -251,13 +299,14 @@ async function reconcileVerifiedStripe(
       environment,
     ),
   ]);
-  const rcProjection = revenueCatProjection(rcBody, rcCustomer);
-  if (
-    rcProjection.revenuecat_plan === "premium" &&
-    rcProjection.revenuecat_environment !== environment
-  ) {
-    throw new Error("RevenueCat environment mismatch");
-  }
+  const rcProjection = await verifiedRevenueCatProjection(
+    writer,
+    rcBody,
+    rcCustomer,
+    owner,
+    email,
+    updatedDate,
+  );
   const projection = mergeProviderProjections(
     rcProjection,
     projectStripeSubscriptions(snapshots, previous, new Date().toISOString()),
